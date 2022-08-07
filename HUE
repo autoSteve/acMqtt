@@ -1,0 +1,31 @@
+--[[
+Event-based, execute during ramping, name: "HUE"
+
+Pushes CBus events to MQTT resident scripts via internal sockets.
+
+Tag required objects with the "HUE" keyword and this script will run whenever one of those objects change.
+--]]
+
+server = require('socket').udp()
+
+sKey = 'pre'..event.dst
+toSet = true
+val = event.getvalue()
+
+parts = string.split(event.dst, '/')
+app = tonumber(parts[2])
+
+pre = storage.get(sKey)
+if val == pre then
+  toSet = false
+else
+  storage.set(sKey, val)
+end
+
+if toSet then
+  -- Send an event to publish to broker
+  server:sendto(event.dst .. "/" .. val, '127.0.0.1', 5432)
+
+  -- Send an event to monitor for lastlevel (aplications other than lighting will be ignored)
+  server:sendto(event.dst, '127.0.0.1', 5433)
+end
