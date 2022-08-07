@@ -1,0 +1,38 @@
+--[[
+Event-based, execute during ramping, name: "MQTT"
+
+Pushes CBus events to MQTT resident scripts via internal sockets. Used with Home Assistant.
+
+Tag required objects with the "MQTT" keyword and this script will run whenever one of those objects change.
+
+It seems that this script must be disabled/enabled to enable it to be tied to new objects assigned the MQTT
+keyword, and the MQTT send/receive script does this automatically every time a change is detected.
+--]]
+
+logging = false
+server = require('socket').udp()
+
+sKey = 'pre'..event.dst
+toSet = true
+val = event.getvalue()
+
+parts = string.split(event.dst, '/')
+app = tonumber(parts[2])
+
+pre = storage.get(sKey)
+if val == pre then
+  toSet = false
+  local v = tonumber(val)
+  -- if v ~= nil and v == 0 then toSet = true end -- Always publish zero/off
+  if logging and not toSet then log('Not setting '..event.dst..', previous value is '..tostring(pre)) end
+end
+
+if toSet then
+  if logging then log('Setting '..event.dst..' to '..tostring(val)) end
+
+  -- Send an event to publish to broker
+  server:sendto(event.dst .. "/" .. val, '127.0.0.1', 5432)
+
+  -- Send an event to monitor for lastlevel (aplications other than lighting will be ignored)
+  server:sendto(event.dst, '127.0.0.1', 5433)
+end
