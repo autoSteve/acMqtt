@@ -125,3 +125,32 @@ Once the container is running, go press the button on your Hue bridge, then drop
 It's probaly advisable to configure container restart options in Portainer, so that the hue2mqtt container gets restarted on any error condition. I've encountered this, so don't leave the default setting.
 
 If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. If using Hue, then MQTT Explorer should show 'hue' topics after connection.
+
+~~~
+### configuration.yaml example:
+mqtt:
+  client_id: haos
+  keepalive: 20
+  discovery_prefix: cbus
+
+cloud:
+  google_actions:
+    filter:
+      include_domains:
+        - switch
+        - binary_sensor
+        - camera
+        - climate
+        - cover
+        - fan
+        - group
+        - input_boolean
+        - input_select
+        - light
+        - lock
+        - scene
+        - script
+        - sensor
+        - switch
+        - vacuum
+~~~
