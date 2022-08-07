@@ -9,6 +9,13 @@ The pieces of the puzzle include:
 - A container created with Portainer to run hue2mqtt.js
 - LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2) Script names are important for the LUA code, given keep-alive and other re-starts, so adjust as necessary by examining thoroughly if you need to change the names.
 
+LUA scripts for the automation controller:
+- *MQTT send/receive*: resident, zero sleep
+- *MQTT lastlevel*: resident, zero sleep
+- *MQTT*: event-based, execute during ramping
+- *HUE*: event-based, execute during ramping
+- *AC*: event-based, execute during ramping
+
 If you don't care for integrating Philips Hue/AC/environmental devices with CBus, then ignore Portainer and hue2mqtt.js, and the LUA Hue/AC/ENV code can stay there and will just be unused.
 
 Plus SSH & Web terminal and File Editor is not required, just nice to have.
