@@ -1,5 +1,5 @@
 # acMqtt
-Home Assistant, CBus Automation Controller, MQTT, Philips Hue and more
+CBus Automation Controller: Home Assistant, MQTT, Philips Hue and more
 
 Get Home Assistant talking to CBus, with MQTT discovery for Home Assistant, to eliminate any manual CBus config there. Plus return to previously set lighting levels when a 'turn on' command is issued, and optionally include Philips Hue hub devices in CBus scenes, like having 'All Off' from a button, plus Panasonic air conditioners and ESPHome sensors for temperature and relative humidity integrated with the CBus Automation Controller.
 
