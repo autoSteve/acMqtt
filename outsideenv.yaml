@@ -1,0 +1,45 @@
+# Example ESPHome configuration - Outside Environment Sensor
+
+esphome:
+  name: outsideenv
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  level: INFO
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "Pgefixa5xxxxxxxa0i8fKPGh9+KrKxxxxxxxGqZN96Q="
+
+ota:
+  password: "aa5ce34aaca9961e0xxxxxxx1bdf20ca"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+mqtt:
+  broker: 192.168.10.21
+  username: !secret mqtt_user
+  password: !secret mqtt_password
+  
+i2c:
+  sda: 21
+  scl: 22
+  scan: true
+  id: bus_a
+
+sensor:
+  - platform: sht3xd
+    temperature:
+      name: "Outside Temperature"
+    humidity:
+      name: "Outside Humidity"
+    address: 0x44
+    update_interval: 15s
