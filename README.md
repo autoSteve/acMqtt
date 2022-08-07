@@ -29,8 +29,8 @@ Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
 Keyword examples:
 
-MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb, 
-MQTT, switch, sa=Outside, img=mdi:gate-open, 
+MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb,
+MQTT, switch, sa=Outside, img=mdi:gate-open,
 MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
 MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
