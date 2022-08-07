@@ -1,0 +1,141 @@
+--[[
+Resident, zero sleep, name: "MQTT lastlevel"
+
+Maintain CBus 'lastlevels'
+
+Used so that MQTT 'on' events can return a light/fan/blind to the last known set level.
+Only monitors application 56 'lighting'.
+
+Home Assistant with an MQTT integration and Google assistant only allows for on/off
+("Hey Google, turn on the dunny light"), and not remembering the previous level set, so
+this script, in conjunction with the MQTT script works around that. Setting another level
+is not affected - just "on" commands.
+
+This script also monitors keepalive messages from MQTT, and disables/enables that script
+should it fail for whatever reason.
+--]]
+
+function loadLastLevel()
+  local lls = storage.get('lastLevel', '')
+  local llt = string.split(lls, ',')
+  local v
+  for _, v in ipairs(llt) do
+    local parts = string.split(v, '=')
+    lastLevel[parts[1]] = tonumber(parts[2])
+  end
+end
+
+if not initialised then
+  logging = false
+  maxHeartbeat = 20 -- Max period without a received heartbeat (seconds)
+
+  server = require('socket').udp()
+  server:settimeout(0.1)
+  server:setsockname('127.0.0.1', 5433)
+
+  monitoring = {}
+
+  lastLevel = {}
+  loadLastLevel()
+
+  log('MQTT lastlevel initialised')
+
+  initialised = true
+end
+
+function saveLastLevel()
+  local ll = {}
+  local k, v
+  for k, v in pairs(lastLevel) do
+    table.insert(ll, k..'='..v)
+  end
+  table.sort(ll)
+  local lls = table.concat(ll, ',')
+  local old = storage.get('lastLevel', '')
+  if lls ~= old then
+    storage.set('lastLevel', lls)
+    log('Saved last levels')
+  end
+end
+
+
+function checkQueue()
+  local remove = {}
+  local g, ts
+
+  for g, ts in pairs(monitoring) do
+    local current = grp.getvalue(g)
+    local parts = string.split(g, '/')
+    local target = GetCBusTargetLevel(tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3]))
+
+    if current == target then
+      table.insert(remove, g)
+      if target > 0 then -- Only if the target value is non-zero then save it as the lastLevel
+        if target ~= lastLevel[g] then
+          lastLevel[g] = target
+          if logging then log('Set lastLevel to '..target..' for '..g) end
+          saveLastLevel()
+        end
+      end
+    end
+  
+    if os.time() - ts > 60 then -- Something has gone wrong, so terminate the monitor
+      log('Warning: Terminate monitor for '..g..' (60 second timeout)')
+      table.insert(remove, g)
+    end
+  end
+
+  local i
+  for i=1,#remove do
+    if logging then log('Stop monitor for '..remove[i]..' after '..os.time() - monitoring[remove[i]]..' seconds') end
+    monitoring[remove[i]] = nil -- Clean up removed monitors
+  end
+end
+
+
+function contains(prefix, text) local pos = text:find(prefix, 1, true) if pos then return pos >= 1 else return false end end
+
+-- Look for lastlevel values
+checkQueue()
+cmd = server:receive()
+if cmd and type(cmd) == 'string' then
+
+  -- If the command contains a slash it's to start monitoring a group
+  if contains('/', cmd) then
+	  parts = string.split(cmd, '/')
+    if parts[2] == '56' then -- Only monitor the lighting application
+      if not monitoring[cmd] then
+        monitoring[cmd] = os.time()
+        if logging then log('Start monitor for '..cmd) end
+      end
+    end
+
+  -- If it contains a plus then it's a heartbeat
+  elseif contains('+', cmd) then
+    parts = string.split(cmd, '+')
+    if parts[1] == 'MQTT' then
+      MQTTheartbeat = tonumber(parts[2])
+    end
+  end
+end
+
+
+--[[
+Heartbeats:
+
+The MQTT script can fail, stopping that script. To ensure it gets restarted without
+intervention, this script listens for a heartbeat from it every second. If heartbeats
+are not received within maxHeartbeat seconds then that script is disabled and re-enabled.
+--]]
+
+-- If last heartbeat is nil (i.e. not yet received) then initialise it
+if not MQTTheartbeat then
+  MQTTheartbeat = os.time()
+end
+
+MQTTsecondsSince = os.time() - MQTTheartbeat
+if MQTTsecondsSince > maxHeartbeat then -- No heartbeat received for a while, so re-start the MQTT script
+  log('Missed MQTT script heartbeats (last received '..MQTTsecondsSince..' seconds ago) - Re-starting MQTT script')
+  script.disable('MQTT send/receive'); script.enable('MQTT send/receive')
+  MQTTheartbeat = nil
+end
