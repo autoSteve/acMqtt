@@ -126,7 +126,7 @@ It's probaly advisable to configure container restart options in Portainer, so t
 
 If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. If using Hue, then MQTT Explorer should show 'hue' topics after connection.
 
-### configuration.yaml example:
+### Home Assistant configuration.yaml example:
 ~~~
 mqtt:
   client_id: haos
