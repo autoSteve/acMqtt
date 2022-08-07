@@ -1,0 +1,76 @@
+# Example ESPHome configuration - Panasonic Air Conditioner
+
+esphome:
+  name: storeac
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  level: INFO
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "Pgefixa5xxxxxxxa0i8fKPGh9+KrKxxxxxxxGqZN96Q="
+
+ota:
+  password: "aa5ce34aaca9961e0xxxxxxx1bdf20ca"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Storeac Fallback Hotspot"
+    password: "password"
+
+captive_portal:
+    
+uart:
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 9600
+  parity: EVEN
+
+external_components:
+  source: github://DomiStyle/esphome-panasonic-ac
+  components: [panasonic_ac]
+
+mqtt:
+  broker: 192.168.10.21
+  username: !secret mqtt_user
+  password: !secret mqtt_password
+  
+climate:
+  - platform: panasonic_ac
+    # For CZ-TACG1
+    type: cnt
+
+    name: Panasonic
+
+    horizontal_swing_select:
+      name: Horizontal Swing Mode
+    vertical_swing_select:
+      name: Vertical Swing Mode
+    outside_temperature:
+      name: Outside Temperature
+
+    # Enable as needed
+    # eco_switch:
+    #   name: Panasonic AC Eco Switch
+    # econavi_switch:
+    #   name: Panasonic AC Econavi Switch
+    # nanoex_switch:
+    #   name: Panasonic AC NanoeX Switch
+    # mild_dry_switch:
+    #   name: Panasonic AC Mild Dry Switch
+    # current_power_consumption:
+    #   name: Panasonic AC Power Consumption
+
+    # Useful when the ac does not report a current temperature (CZ-TACG1 only)
+    # current_temperature_sensor: temperature_sensor_id
