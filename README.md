@@ -45,7 +45,7 @@ Keyword examples:
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
 
 ### Philips Hue
-For Philips Hue devices, bi-directional sync with CBus occurs. Add the keyword 'HUE' to CBus objects, plus...
+For Philips Hue devices, bi-directional sync with CBus occurs. I run Home Assistant talking directly to the Hue hub, and also the Automation Controller via MQTT. Add the keyword 'HUE' to CBus objects, plus...
 - pn= Preferred name (used as the MQTT topic, which needs to match exactly the name of the Hue device.)
 
 Keyword examples:
