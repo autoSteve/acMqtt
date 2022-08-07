@@ -15,6 +15,7 @@ Plus SSH & Web terminal and File Editor is not required, just nice to have.
 
 ## Keywords used for Automation Controller objects
 
+### CBus
 Lighting, measurement and user parameter applications are implemented.
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
@@ -36,6 +37,7 @@ Keyword examples:
 - MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
 
+### Philips Hue
 For Philips Hue devices, bi-directional sync with CBus occurs. Add the keyword 'HUE' to CBus objects, plus...
 - pn= Preferred name (used as the MQTT topic, which needs to match exactly the name of the Hue device.)
 
@@ -57,7 +59,8 @@ that these CBus Hue groups could be used to also control CBus loads, giving them
 Note: This script only handles on/off, as well as levels for dimmable Hue devices, but not colours/colour
 temperature, as that's not a CBus thing. Colour details will return to previously set values done in the Hue app.
 
-For Panasonic air conditioners connected to MQTT via ESPHome, add the keyword 'AC' to user parameters, plus...
+### Panasonic Ar Conditioners
+For Panasonic air conditioners connected to MQTT via ESPHome (see example .yaml file), add the keyword 'AC' to user parameters, plus...
 
 - dev=   ESPHome device name, required, and one of:
 - func=  Function (mode, target_temperature, fan_mode, swing_mode, which results in {dev}/climate/panasonic/{func}/#)
@@ -83,8 +86,10 @@ Panasonic keyword examples:
 - AC, dev=storeac, sense=current_temperature, topic=climate
 - AC, dev=storeac, sense=outside_temperature
 
-Environment monitors can pass sensor data to CBus (using ESPHome devices). Add the 'ENV' keyword, plus...
+### Environment Monitors
+Environment monitors can pass sensor data to CBus (using ESPHome devices, see example .yaml).
 
+Add the 'ENV' keyword, plus...
 - dev=  Device (the name of the ESPHome board)
 - func= Function (the sensor name configured in ESPHome) defaults to the User Parameter name in lowercase, spaces replaced with underscore
 
