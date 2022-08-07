@@ -61,8 +61,10 @@ For Panasonic air conditioners connected to MQTT via ESPHome, add the keyword 'A
 
 - dev=   ESPHome device name, required, and one of:
 - func=  Function (mode, target_temperature, fan_mode, swing_mode, which results in {dev}/climate/panasonic/{func}/#)
+
 ... or
 - sel=   Select (vertical_swing_mode, horizontal_swing_mode, which results in {dev}/select/{sel}/#)
+
 ... or
 - sense= A read only sensor like current_temperature, plus topic= (e.g. climate or sensor) with sensor as default
 
