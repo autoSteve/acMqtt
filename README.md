@@ -30,11 +30,17 @@ Add the keyword 'MQTT' to groups for CBus discovery, plus...
 Keyword examples:
 
 MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb,
+
 MQTT, switch, sa=Outside, img=mdi:gate-open,
+
 MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
+
 MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
+
 MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
+
 MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
+
 
 For Philips Hue devices, bi-directional sync with CBus occurs. Add the keyword 'HUE' to CBus objects, plus...
   pn= Preferred name (used as the MQTT topic, which needs to match exactly the name of the Hue device.)
@@ -42,6 +48,7 @@ For Philips Hue devices, bi-directional sync with CBus occurs. Add the keyword '
 Keyword examples:
 
 HUE, pn=Steve's bedside light
+
 HUE, pn=Steve's electric blanket
 
 A useful result is that Philips Hue devices can then be added to CBus scenes, like an 'All off' function.
@@ -60,10 +67,15 @@ temperature, as that's not a CBus thing. Colour details will return to previousl
 For Panasonic air conditioners connected to MQTT via ESPHome, add the keyword 'AC' to user parameters, plus...
 
   dev=   ESPHome device name, required, and one of:
+  
   func=  Function (mode, target_temperature, fan_mode, swing_mode, which results in {dev}/climate/panasonic/{func}/#)
+  
 ... or
+
   sel=   Select (vertical_swing_mode, horizontal_swing_mode, which results in {dev}/select/{sel}/#)
+  
 ... or
+
   sense= A read only sensor like current_temperature, plus topic= (e.g. climate or sensor) with sensor as default
 
 Mode strings = ("off", "heat", "cool", "heat_cool", "dry", "fan_only")
