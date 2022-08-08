@@ -61,25 +61,21 @@ end
 
 function checkQueue()
   local remove = {}
-  local g, ts
+  local g, deets, ts
 
-  for g, ts in pairs(monitoring) do
-    local current = grp.getvalue(g)
-    local parts = string.split(g, '/')
-    local target = GetCBusTargetLevel(tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3]))
-
-    if current == target then
+  for g, deets in pairs(monitoring) do
+    if deets.current == deets.target then
       table.insert(remove, g)
-      if target > 0 then -- Only if the target value is non-zero then save it as the lastLevel
-        if target ~= lastLevel[g] then
-          lastLevel[g] = target
-          if logging then log('Set lastLevel to '..target..' for '..g) end
+      if deets.target > 0 then -- Only if the target value is non-zero then save it as the lastLevel
+        if deets.target ~= lastLevel[g] then
+          lastLevel[g] = deets.target
+          if logging then log('Set lastLevel to '..deets.target..' for '..g) end
           saveLastLevel()
         end
       end
     end
   
-    if os.time() - ts > 60 then -- Something has gone wrong, so terminate the monitor
+    if socket.gettime() - deets.ts > 60 then -- Something has gone wrong, so terminate the monitor
       log('Warning: Terminate monitor for '..g..' (60 second timeout)')
       table.insert(remove, g)
     end
@@ -87,7 +83,7 @@ function checkQueue()
 
   local i
   for i=1,#remove do
-    if logging then log('Stop monitor for '..remove[i]..' after '..os.time() - monitoring[remove[i]]..' seconds') end
+    if logging then log('Stop monitor for '..remove[i]..' after '..string.format('%.3f', socket.gettime() - monitoring[remove[i]].ts)..' seconds') end
     monitoring[remove[i]] = nil -- Clean up removed monitors
   end
 end
@@ -96,7 +92,6 @@ end
 function contains(prefix, text) local pos = text:find(prefix, 1, true) if pos then return pos >= 1 else return false end end
 
 -- Look for lastlevel values
-checkQueue()
 cmd = server:receive()
 if cmd and type(cmd) == 'string' then
 
@@ -104,10 +99,18 @@ if cmd and type(cmd) == 'string' then
   if contains('/', cmd) then
 	  parts = string.split(cmd, '/')
     if parts[2] == '56' then -- Only monitor the lighting application
-      if not monitoring[cmd] then
-        monitoring[cmd] = os.time()
-        if logging then log('Start monitor for '..cmd) end
+      local alias = parts[1]..'/56/'..parts[3]
+      local cl = tonumber(parts[4])
+      if not monitoring[alias] then
+        local tl = GetCBusTargetLevel(tonumber(parts[1]), 56, tonumber(parts[3]))
+        if tl > 0 then
+          monitoring[alias] = { ['ts'] = socket.gettime(), ['target'] = tl, ['current'] = cl }
+          if logging then log('Start monitor for '..alias..' target level='..tl..', current level='..cl) end
+        end
+      else
+        monitoring[alias].current = cl
       end
+      checkQueue()
     end
 
   -- If it contains a plus then it's a heartbeat
