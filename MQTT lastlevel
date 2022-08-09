@@ -17,6 +17,7 @@ should it fail for whatever reason.
 
 logging = false
 maxHeartbeat = 20 -- Max period without a received heartbeat (seconds)
+MQTTheartbeat = os.time()
 
 server = require('socket').udp()
 server:settimeout(0.1)
@@ -35,7 +36,10 @@ function saveLastLevel()
   local k, v
 
   for k, v in pairs(lastLevel) do
-    if oldlastlevel[k] == nil or oldlastlevel[k] ~= v then changed[#changed + 1] = k end -- Add to changes
+    if oldlastlevel[k] == nil or oldlastlevel[k] ~= v then -- Add to changes
+      changed[#changed + 1] = k
+      if logging then log('oldlastlevel[k]='..tostring(oldlastlevel[k])..', lastLevel[k]='..v) end
+    end
   end
   
   if #changed then
@@ -80,8 +84,8 @@ function checkRampTermination()
   end
 
   for g, deets in pairs(monitoring) do
-    parts = string.split(g, '/')
-    rr = GetCBusRampRate(tonumber(parts[1]), 56, tonumber(parts[3]))
+    local parts = string.split(g, '/')
+    local rr = GetCBusRampRate(tonumber(parts[1]), 56, tonumber(parts[3]))
     if rr ~= deets.ramp then
       deets.current = grp.getvalue(g)
       deets.target = GetCBusTargetLevel(tonumber(parts[1]), 56, tonumber(parts[3]))
@@ -93,7 +97,6 @@ end
 
 
 lastLevel = storage.get('lastlvl', {})
-MQTTheartbeat = os.time()
 
 log('MQTT lastlevel initialised')
 
@@ -115,7 +118,7 @@ while true do
           local tl = GetCBusTargetLevel(tonumber(parts[1]), 56, tonumber(parts[3]))
           local rr = GetCBusRampRate(tonumber(parts[1]), 56, tonumber(parts[3]))
           if cl > 0 then
-            if tl > 0 and cl ~= tl or cl ~= lastLevel[alias] then
+            if tl > 0 and (cl ~= tl or cl ~= lastLevel[alias]) then
               monitoring[alias] = { ['ts'] = socket.gettime(), ['target'] = tl, ['current'] = cl, ['ramp'] = rr }
               if logging then log('Start monitor for '..alias..' target level='..tl..', current level='..cl..', ramp rate='..rr) end
             end
