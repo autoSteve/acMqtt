@@ -198,21 +198,6 @@ client.ON_MESSAGE = function(mid, topic, payload)
   mqttMessages[#mqttMessages + 1] = { topic=topic, payload=payload } -- Queue the MQTT message
 end
 
---[[
-Load last levels. Storage is used to transfer from the MQTT lastlevel script 
---]]
-lastLevel = {}
-lls = ''
-
-function loadLastLevel()
-  local llsTest = storage.get('lastLevel', '')
-  if llsTest ~= lls then
-    lls = llsTest
-    local llt = string.split(lls, ',')
-    for _, v in ipairs(llt) do parts = string.split(v, '='); lastLevel[parts[1]] = tonumber(parts[2]) end
-  end
-end
-
 
 --[[
 Publish lighting group and user parameter objects to MQTT 
@@ -727,7 +712,7 @@ function outstandingMqttMessage()
       local alias = net..'/'..app..'/'..group
       if logging then logger(topic..' to '..payload) end
 
-      loadLastLevel()
+      local lastLevel = storage.get('lastlvl', '')
 
       if not parts[6] then
         logger('MQTT error: Invalid message format')
