@@ -114,9 +114,11 @@ while true do
         if not monitoring[alias] then
           local tl = GetCBusTargetLevel(tonumber(parts[1]), 56, tonumber(parts[3]))
           local rr = GetCBusRampRate(tonumber(parts[1]), 56, tonumber(parts[3]))
-          if tl > 0 and cl ~= tl or cl ~= lastLevel[alias] then
-            monitoring[alias] = { ['ts'] = socket.gettime(), ['target'] = tl, ['current'] = cl, ['ramp'] = rr }
-            if logging then log('Start monitor for '..alias..' target level='..tl..', current level='..cl..', ramp rate='..rr) end
+          if cl > 0 then
+            if tl > 0 and cl ~= tl or cl ~= lastLevel[alias] then
+              monitoring[alias] = { ['ts'] = socket.gettime(), ['target'] = tl, ['current'] = cl, ['ramp'] = rr }
+              if logging then log('Start monitor for '..alias..' target level='..tl..', current level='..cl..', ramp rate='..rr) end
+            end
           end
         else
           monitoring[alias].current = cl
