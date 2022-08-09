@@ -10,7 +10,7 @@ The pieces of the puzzle include:
 - LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2) Script names are important for the LUA code, given keep-alive and other re-starts, so adjust as necessary by examining thoroughly if you need to change the names.
 
 LUA scripts for the automation controller:
-- *MQTT send/receive*: resident, zero sleep
+- *MQTT send/receive*: resident, zero sleep (note: code here is "MQTT send receive", without the slash...)
 - *MQTT lastlevel*: resident, zero sleep
 - *MQTT*: event-based, execute during ramping
 - *HUE*: event-based, execute during ramping
