@@ -15,46 +15,32 @@ This script also monitors keepalive messages from MQTT, and disables/enables tha
 should it fail for whatever reason.
 --]]
 
-function loadLastLevel()
-  local lls = storage.get('lastLevel', '')
-  local llt = string.split(lls, ',')
-  local v
-  for _, v in ipairs(llt) do
-    local parts = string.split(v, '=')
-    lastLevel[parts[1]] = tonumber(parts[2])
-  end
-end
+logging = false
+maxHeartbeat = 20 -- Max period without a received heartbeat (seconds)
 
-if not initialised then
-  logging = false
-  maxHeartbeat = 20 -- Max period without a received heartbeat (seconds)
+server = require('socket').udp()
+server:settimeout(0.1)
+server:setsockname('127.0.0.1', 5433)
 
-  server = require('socket').udp()
-  server:settimeout(0.1)
-  server:setsockname('127.0.0.1', 5433)
+monitoring = {}
+lastLevel = {}
 
-  monitoring = {}
+function contains(prefix, text) local pos = text:find(prefix, 1, true) if pos then return pos >= 1 else return false end end
 
-  lastLevel = {}
-  loadLastLevel()
-
-  log('MQTT lastlevel initialised')
-
-  initialised = true
-end
 
 function saveLastLevel()
-  local ll = {}
+  -- Get old levels to see if anything changed
+  local oldlastlevel = storage.get('lastlvl', {})
+  local changed = {}
   local k, v
+
   for k, v in pairs(lastLevel) do
-    table.insert(ll, k..'='..v)
+    if oldlastlevel[k] == nil or oldlastlevel[k] ~= v then changed[#changed + 1] = k end -- Add to changes
   end
-  table.sort(ll)
-  local lls = table.concat(ll, ',')
-  local old = storage.get('lastLevel', '')
-  if lls ~= old then
-    storage.set('lastLevel', lls)
-    log('Saved last levels')
+  
+  if #changed then
+    storage.set('lastlvl', lastLevel)
+    log('Saved last levels. Object(s) changed: '..table.concat(changed, ','))
   end
 end
 
@@ -66,12 +52,10 @@ function checkQueue()
   for g, deets in pairs(monitoring) do
     if deets.current == deets.target then
       table.insert(remove, g)
-      if deets.target > 0 then -- Only if the target value is non-zero then save it as the lastLevel
-        if deets.target ~= lastLevel[g] then
-          lastLevel[g] = deets.target
-          if logging then log('Set lastLevel to '..deets.target..' for '..g) end
-          saveLastLevel()
-        end
+      if deets.target ~= lastLevel[g] then
+        lastLevel[g] = deets.target
+        if logging then log('Set lastLevel to '..deets.target..' for '..g) end
+        saveLastLevel()
       end
     end
   
@@ -88,57 +72,86 @@ function checkQueue()
   end
 end
 
+function checkRampTermination()
+  local check = false
+  if socket.gettime() - timeCheck >= 10 then
+    timeCheck = socket.gettime()
+    if #monitoring > 0 then check = true end -- Ensure failed monitors are periodically checked
+  end
 
-function contains(prefix, text) local pos = text:find(prefix, 1, true) if pos then return pos >= 1 else return false end end
-
--- Look for lastlevel values
-cmd = server:receive()
-if cmd and type(cmd) == 'string' then
-
-  -- If the command contains a slash it's to start monitoring a group
-  if contains('/', cmd) then
-	  parts = string.split(cmd, '/')
-    if parts[2] == '56' then -- Only monitor the lighting application
-      local alias = parts[1]..'/56/'..parts[3]
-      local cl = tonumber(parts[4])
-      if not monitoring[alias] then
-        local tl = GetCBusTargetLevel(tonumber(parts[1]), 56, tonumber(parts[3]))
-        if tl > 0 then
-          monitoring[alias] = { ['ts'] = socket.gettime(), ['target'] = tl, ['current'] = cl }
-          if logging then log('Start monitor for '..alias..' target level='..tl..', current level='..cl) end
-        end
-      else
-        monitoring[alias].current = cl
-      end
-      checkQueue()
-    end
-
-  -- If it contains a plus then it's a heartbeat
-  elseif contains('+', cmd) then
-    parts = string.split(cmd, '+')
-    if parts[1] == 'MQTT' then
-      MQTTheartbeat = tonumber(parts[2])
+  for g, deets in pairs(monitoring) do
+    parts = string.split(g, '/')
+    rr = GetCBusRampRate(tonumber(parts[1]), 56, tonumber(parts[3]))
+    if rr ~= deets.ramp then
+      deets.current = grp.getvalue(g)
+      deets.target = GetCBusTargetLevel(tonumber(parts[1]), 56, tonumber(parts[3]))
+      check = true
     end
   end
+  if check then checkQueue() end
 end
 
 
---[[
-Heartbeats:
+lastLevel = storage.get('lastlvl', {})
+MQTTheartbeat = os.time()
 
-The MQTT script can fail, stopping that script. To ensure it gets restarted without
-intervention, this script listens for a heartbeat from it every second. If heartbeats
-are not received within maxHeartbeat seconds then that script is disabled and re-enabled.
---]]
+log('MQTT lastlevel initialised')
 
--- If last heartbeat is nil (i.e. not yet received) then initialise it
-if not MQTTheartbeat then
-  MQTTheartbeat = os.time()
-end
 
-MQTTsecondsSince = os.time() - MQTTheartbeat
-if MQTTsecondsSince > maxHeartbeat then -- No heartbeat received for a while, so re-start the MQTT script
-  log('Missed MQTT script heartbeats (last received '..MQTTsecondsSince..' seconds ago) - Re-starting MQTT script')
-  script.disable('MQTT send/receive'); script.enable('MQTT send/receive')
-  MQTTheartbeat = nil
+while true do
+  timeCheck = socket.gettime()
+
+  -- Look for lastlevel values
+  cmd = server:receive()
+  if cmd and type(cmd) == 'string' then
+
+    -- If the command contains a slash it's to start monitoring a group or provide an update
+    if contains('/', cmd) then
+	    parts = string.split(cmd, '/')
+      if parts[2] == '56' then -- Only monitor the lighting application
+        local alias = parts[1]..'/56/'..parts[3]
+        local cl = tonumber(parts[4])
+        if not monitoring[alias] then
+          local tl = GetCBusTargetLevel(tonumber(parts[1]), 56, tonumber(parts[3]))
+          local rr = GetCBusRampRate(tonumber(parts[1]), 56, tonumber(parts[3]))
+          if tl > 0 and cl ~= tl or cl ~= lastLevel[alias] then
+            monitoring[alias] = { ['ts'] = socket.gettime(), ['target'] = tl, ['current'] = cl, ['ramp'] = rr }
+            if logging then log('Start monitor for '..alias..' target level='..tl..', current level='..cl..', ramp rate='..rr) end
+          end
+        else
+          monitoring[alias].current = cl
+        end
+        checkQueue() -- Check whether monitored groups are at target level
+      end
+
+    -- If the command contains a plus then it's a heartbeat
+    elseif contains('+', cmd) then
+      parts = string.split(cmd, '+')
+      if parts[1] == 'MQTT' then
+        MQTTheartbeat = tonumber(parts[2])
+      end
+    end
+  end
+  
+  checkRampTermination() -- Check for terminated ramps (when ramped using a CBus key)
+
+  --[[
+  Heartbeats:
+
+  The MQTT send/receive script may fail, stopping that script. To ensure it gets restarted without
+  intervention, this script listens for a heartbeat from it every second. If heartbeats are not
+  received within maxHeartbeat seconds then that script will be disabled and re-enabled.
+  This caters for any situation where the Mosquitto library could encounter a race condition. With
+  the current MQTT LUA code it is probably not possible. Probably. Leaving it here as belt/braces.
+  
+  Ironically, a failure in this script will cause heartbeats to stop being received for some reason,
+  causing repeated send/receive restarts. This script is simpler, though. ---- TODO ----
+  --]]
+
+  MQTTsecondsSince = os.time() - MQTTheartbeat
+  if MQTTsecondsSince >= maxHeartbeat then -- No heartbeat received for a while, so re-start the MQTT script
+    log('Missed MQTT script heartbeats (last received '..MQTTsecondsSince..' seconds ago) - Re-starting MQTT script')
+    script.disable('MQTT send/receive'); script.enable('MQTT send/receive')
+    MQTTheartbeat = os.time()
+  end
 end
