@@ -148,7 +148,7 @@ while true do
   This caters for any situation where the Mosquitto library could encounter a race condition. With
   the current MQTT LUA code it is probably not possible. Probably. Leaving it here as belt/braces.
 
-  ---- TODO ---- WTF?
+  ---- TODO ----
   Ironically, a failure in this script will cause heartbeats to stop being received for some reason,
   causing repeated send/receive restarts. This script is simpler, though, so it should break less...
   A failure should cause re-entry because zero sleep, so should be good, but socket turns to custard.
