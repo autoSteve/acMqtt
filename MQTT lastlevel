@@ -37,14 +37,13 @@ function saveLastLevel()
 
   for k, v in pairs(lastLevel) do
     if oldlastlevel[k] == nil or oldlastlevel[k] ~= v then -- Add to changes
-      changed[#changed + 1] = k
-      if logging then log('oldlastlevel[k]='..tostring(oldlastlevel[k])..', lastLevel[k]='..v) end
+      changed[#changed + 1] = k..' '..tostring(oldlastlevel[k])..'->'..tostring(v)
     end
   end
   
   if #changed then
     storage.set('lastlvl', lastLevel)
-    log('Saved last levels. Object(s) changed: '..table.concat(changed, ','))
+    log('Saved last levels. Object(s) changed: '..table.concat(changed, ', '))
   end
 end
 
@@ -148,9 +147,11 @@ while true do
   received within maxHeartbeat seconds then that script will be disabled and re-enabled.
   This caters for any situation where the Mosquitto library could encounter a race condition. With
   the current MQTT LUA code it is probably not possible. Probably. Leaving it here as belt/braces.
-  
+
+  ---- TODO ---- WTF?
   Ironically, a failure in this script will cause heartbeats to stop being received for some reason,
-  causing repeated send/receive restarts. This script is simpler, though. ---- TODO ----
+  causing repeated send/receive restarts. This script is simpler, though, so it should break less...
+  A failure should cause re-entry because zero sleep, so should be good, but socket turns to custard.
   --]]
 
   MQTTsecondsSince = os.time() - MQTTheartbeat
