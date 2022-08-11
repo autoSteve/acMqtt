@@ -970,7 +970,7 @@ function checkRampOrphans()
       table.insert(orphan, k)
     end
   end
-  for _, k in ipairs(orphan) do ramp[k] = nil; logger('Warning: Removing orphaned ramp for '..alias) end
+  for _, k in ipairs(orphan) do ramp[k] = nil; logger('Warning: Removing orphaned ramp for '..k) end
 end
 
 
