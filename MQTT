@@ -19,12 +19,14 @@ val = event.getvalue()
 parts = string.split(event.dst, '/')
 app = tonumber(parts[2])
 
-pre = storage.get(sKey)
-if val == pre then
-  toSet = false
-  local v = tonumber(val)
-  -- if v ~= nil and v == 0 then toSet = true end -- Always publish zero/off
-  if logging and not toSet then log('Not setting '..event.dst..', previous value is '..tostring(pre)) end
+if app ~= 202 then -- Not trigger control, which should be sent every time
+  pre = storage.get(sKey)
+  if val == pre then
+    toSet = false
+    local v = tonumber(val)
+    -- if v ~= nil and v == 0 then toSet = true end -- Always publish zero/off
+    if logging and not toSet then log('Not setting '..event.dst..', previous value is '..tostring(pre)) end
+  end
 end
 
 if toSet then
