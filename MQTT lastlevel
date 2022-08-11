@@ -16,6 +16,8 @@ should it fail for whatever reason.
 --]]
 
 logging = false
+lighting = {['56']=true} -- Array of applications that are used for lighting
+
 maxHeartbeat = 20 -- Max period without a received heartbeat (seconds)
 MQTTheartbeat = os.time()
 
@@ -84,10 +86,10 @@ function checkRampTermination()
 
   for g, deets in pairs(monitoring) do
     local parts = string.split(g, '/')
-    local rr = GetCBusRampRate(tonumber(parts[1]), 56, tonumber(parts[3]))
+    local rr = GetCBusRampRate(tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3]))
     if rr ~= deets.ramp then
       deets.current = grp.getvalue(g)
-      deets.target = GetCBusTargetLevel(tonumber(parts[1]), 56, tonumber(parts[3]))
+      deets.target = GetCBusTargetLevel(tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3]))
       check = true
     end
   end
@@ -110,12 +112,12 @@ while true do
     -- If the command contains a slash it's to start monitoring a group or provide an update
     if contains('/', cmd) then
 	    parts = string.split(cmd, '/')
-      if parts[2] == '56' then -- Only monitor the lighting application
-        local alias = parts[1]..'/56/'..parts[3]
+      if lighting[parts[2]] then -- Only monitor the lighting application
+        local alias = parts[1]..'/'..parts[2]..'/'..parts[3]
         local cl = tonumber(parts[4])
         if not monitoring[alias] then
-          local tl = GetCBusTargetLevel(tonumber(parts[1]), 56, tonumber(parts[3]))
-          local rr = GetCBusRampRate(tonumber(parts[1]), 56, tonumber(parts[3]))
+          local tl = GetCBusTargetLevel(tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3]))
+          local rr = GetCBusRampRate(tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3]))
           if cl > 0 then
             if tl > 0 and (cl ~= tl or cl ~= lastLevel[alias]) then
               monitoring[alias] = { ['ts'] = socket.gettime(), ['target'] = tl, ['current'] = cl, ['ramp'] = rr }
@@ -148,7 +150,7 @@ while true do
   This caters for any situation where the Mosquitto library could encounter a race condition. With
   the current MQTT LUA code it is probably not possible. Probably. Leaving it here as belt/braces.
 
-  ---- TODO ----
+  ---- TODO ---- WTF?
   Ironically, a failure in this script will cause heartbeats to stop being received for some reason,
   causing repeated send/receive restarts. This script is simpler, though, so it should break less...
   A failure should cause re-entry because zero sleep, so should be good, but socket turns to custard.
