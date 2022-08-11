@@ -98,15 +98,26 @@ Changes:
 1.09 - 11/07/2022 Consolidate MQTT send and receive scripts into a single script
 1.10 - 18/07/2022 Prevent MQTT publish of initial zero level for CBus ramp off
 1.11 - 24/07/2022 Fixed bugs related to MQTT publish of string user parameters, and suppression of sending values already set
-1.12 - 25/07/2022 Fixed bugs in rampToOff detection, plus minor code optimisation
+1.12 - 25/07/2022 Fixed bugs in ramp detection, plus minor code optimisation
 1.13 - 29/07/2022 Handle multiple networks, and add air conditioner sensors
 1.14 - 07/08/2022 Add some error checks for nil values, and add timestamp to log messages with millisecond accuracy
+1.15 - 09/08/2022 Change last level storage to array (not string), plus MQTT lastlevel bug fixes
+1.16 - 11/08/2022 Revised ramp tracking for MQTT publish and improved comments
 --]]
 
-logging = false
+logging = false        -- Enable detailed logging
+logms = false          -- Include timestamp in milliseconds for logs
 
 mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
 mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
+lighting = {['56']=true} -- Array of applications that are used for lighting (ramp detection only applies to lighting)
+blindKey = nil         -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
+fanKey = 'Fan'         -- Sweep fan objects must contain this (case sensitive) string
+checkChanges = 60      -- Interval in seconds to check for changes to object keywords
+socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
+mqttTimeout = 0        -- In milliseconds
+ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
+sendHeartbeat = 1      -- Send a heartbeat to 'MQTT lastlevel' every n seconds
 
 mqttReadTopic = 'cbus/read/'
 mqttWriteTopic = 'cbus/write/#'
@@ -114,35 +125,26 @@ mqttDiscoveryTopic = 'cbus/'
 hueTopic = 'hue/#'
 hueSetTopic = 'hue/set/lights/'
 
-blindKey = nil         -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
-fanKey = 'Fan'         -- Sweep fan objects must contain this (case sensitive) string
-
-checkChanges = 60      -- Interval in seconds to check for changes to object keywords
-socketTimeout = 0.01   -- Lower = higher CPU, but better MQTT speed (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
-mqttTimeout = 0        -- In milliseconds
-ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
-sendHeartbeat = 1      -- Send a heartbeat to 'MQTT lastlevel' every second
-
-mqttDevices = {}       -- CBus groups to send MQTT tipcs for
+mqttDevices = {}       -- CBus groups to send MQTT topics for
 hue = {}               -- Hue device details (name, state, dimmable, etc) 
 hueDevices = {}        -- Quick lookup to determine whether an object is a Hue device
 ac = {}                -- AC device details
 acDevices = {}         -- Quick lookup to determine whether an object is an AC device
 acBoards = {}          -- All physical AC boards (esp32)
-env = {}               -- AC select device details 
+env = {}               -- Environment device details
 envDevices = {}        -- Quick lookup to determine whether an object is an environment device
 envBoards = {}         -- All physical environment boards (esp32)
 cbusMessages = {}      -- Message queue
 mqttMessages = {}      -- Message queue
 ignoreCbus = {}        -- To prevent message loops
 ignoreMqtt = {}        -- To prevent message loops
-rampToOff = {}         -- Keeps track of ramping off ignore MQTT publish timestamps in outstandingCbusMessage()
+ramp = {}              -- Keeps track of ramping to ignore some zero level MQTT publish events outstandingCbusMessage()
 tCud = 0               -- Timestamp when create/update/delete was last executed
 cover = {}             -- Quick lookup to determine whether an object is a cover (blind)
 userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 publishAdj = {}        -- For user parameters, holds scale and decimals to apply
 unpublished = {}       -- The current set of objects to publish discovery topics for
-mqttStatus = 2         -- Initially disconnected
+mqttStatus = 2         -- Initially disconnected 1=connected, 2=disconnected
 mqttConnected = 0      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
 
 RETAIN = true
@@ -152,9 +154,9 @@ heartbeat = os.time()
 
 function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
 function trim(s) return s:match "^%s*(.-)%s*$" end -- Remove leading and trailing spaces
-function tNetCBus(net) if net == 0 then return 254 else return net end end
-function tNetAC(net) if net == 254 then return 0 else return net end end
-started = socket.gettime(); function logger(msg) log(string.format('%.3f ', socket.gettime()-started)..msg) end
+function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
+function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
+started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
 
 --[[
 UDP listener - receive messages from the event scripts 'MQTT', 'HUE' and 'AC'
@@ -289,15 +291,17 @@ function publishAc(net, app, group, level, select)
     if not ignoreMqtt[alias] then
       local parts = string.split(ac[alias].name, '-')
       local board = parts[1]
-      local topic
+      local topic = ''
       if select == 'func' then
         topic = board..'/climate/panasonic/'..parts[2]..'/command'
       elseif select == 'sel' then
         topic = board..'/select/'..parts[2]..'/command'
+      elseif select == 'sense' then
+        logger('Warning: Not publishing sensor change for alias='..alias)
       else
-        logger('Invalid AC command')
+        logger('Invalid AC command for alias='..alias..', select='..tostring(select))
       end
-      client:publish(topic, level, mqttQoS, NORETAIN)
+      if topic ~= '' then client:publish(topic, level, mqttQoS, NORETAIN) end
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
       if acState ~= ac[alias].state then ignoreCbus[alias] = os.time() end
@@ -901,7 +905,6 @@ end
 Publish the next queued messages for MQTT
 --]]
 function outstandingCbusMessage()
-  -- logging = true
   local cmd
   for _, cmd in ipairs(cbusMessages) do
     local parts = string.split(cmd, '/')
@@ -915,36 +918,34 @@ function outstandingCbusMessage()
       if not parts[5] then -- i.e. not measurement application
         local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
         local setting = true
-        local payload = tonumber(parts[4]) -- Always a number for lighting app
-        if app == 56 then
+        local payload = tonumber(parts[4]) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
+        if lighting[parts[2]] then
           if logging then logger(
             'Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group))) end
-          -- A CBus ramp off begins with a zero level, then back to steadily decreasing payload from 'on'
-          -- This initial zero should not be published to MQTT, so it is ignored here
-          if rampToOff[alias] and (os.time() - rampToOff[alias] > 60) then -- Ignore older rampToOff timestamps (should never occur)
-            rampToOff[alias] = nil; logger('Warning: Removing orphaned rampToOff for '..alias..' - older than 60s')
-          end
-          if not rampToOff[alias] then
-            if GetCBusRampRate(net, app, group) > 0 and ((payload > GetCBusTargetLevel(net, app, group)) or (payload == 0 and GetCBusTargetLevel(net, app, group) == 0)) then
-              setting = false; rampToOff[alias] = os.time()
-              if logging then logger('rampToOff set for '..alias..' to '..rampToOff[alias]) end
+          -- A CBus ramp up and down annoyingly begins with a zero level, then steadily converges to target. This initial zero should
+          -- not be published to MQTT so it is ignored. It wouldn't happen if the event-based MQTT script were set to not execute
+          -- during ramping, but then progress during the ramp would not be reported to MQTT.
+          if not ramp[alias] then
+            if payload == 0 and GetCBusRampRate(net, app, group) > 0 then
+              setting = false; ramp[alias] = { ['ts'] = os.time(), ['ramp'] = GetCBusRampRate(net, app, group), ['target'] = GetCBusTargetLevel(net, app, group) }
+              if logging then logger('Set ramp for '..alias..' and suppress zero send') end
             end
           else
-            if GetCBusTargetLevel(net, app, group) ~= 0 then -- Was ramping off, but now isn't because target level is now non-zero
-              rampToOff[alias] = nil
-              if logging then logger('rampToOff cancelled for '..alias..', rampToOff='..tostring(rampToOff)) end
-              if payload == 0 then setting = false end -- Ignore initial zero for ramp on
+            if ramp[alias].target ~= GetCBusTargetLevel(net, app, group) then -- Target level has changed so cancel ramp
+              ramp[alias] = nil
+              if logging then logger('Cancel ramp for '..alias) end
+              if payload == 0 then setting = false end -- Ignore initial zero if ramp on
             end
           end
         else
-          if payload == nil then payload = parts[4] end -- May be a string payload for user parameter
-          -- Assumption that groups other than lighting are never ramped, so setting is always true
+          if payload == nil then payload = parts[4] end -- Possibly a string payload for user parameter
+          -- Groups other than lighting are never ramped, so setting is always true
         end
         if setting then
           publish(tNetCBus(net), app, group, payload)
-          if app == 56 and payload == 0 and rampToOff[alias] then
-            rampToOff[alias] = nil
-            if logging then logger('rampToOff cleared for '..alias..', rampToOff='..tostring(rampToOff)) end
+          if ramp[alias] and payload == ramp[alias].target then
+            ramp[alias] = nil
+            if logging then logger('Clear ramp for '..alias) end
           end
           sKey = 'pre'..alias
           storage.set(sKey, payload) -- Save payload as 'previous' for use in the MQTT event-based script
@@ -957,7 +958,19 @@ function outstandingCbusMessage()
     end
   end
   cbusMessages = {}
-  -- logging = false
+end
+
+--[[
+Remove any orphaned ramp flags
+--]]
+function checkRampOrphans()
+  local k, v; local orphan = {}
+  for k, v in pairs(ramp) do
+    if os.time() > v.ts + v.ramp then -- Is an older ramp timestamp beyond ramp duration (should never occur)
+      table.insert(orphan, k)
+    end
+  end
+  for _, k in ipairs(orphan) do ramp[k] = nil; logger('Warning: Removing orphaned ramp for '..alias) end
 end
 
 
@@ -1011,6 +1024,7 @@ while true do
     if os.time() - tCud >= checkChanges then               -- Periodically create/update/delete MQTT items that change
       cudCBusTopics(); cudHue(); cudAc(); cudEnv()
     end
+    checkRampOrphans()
   elseif mqttStatus == 2 and os.time() - mqttConnected >= 5 then
     -- MQTT is disconnected, so attempt a connection every five seconds
     mqttConnected = os.time()
