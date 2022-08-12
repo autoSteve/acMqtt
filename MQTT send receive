@@ -369,6 +369,7 @@ function addDiscover(net, app, group, channel, tags, name)
   mqttDevices[alias].oid = oid
   mqttDevices[alias].type = dType
 
+  aAlias = alias
   alias = net..'/'..app..'/'..group -- Will adjust for CBus numbered networks
   -- Build the type-specific payload to publish
   if dType == 'light' then
@@ -412,6 +413,7 @@ function addDiscover(net, app, group, channel, tags, name)
     }
     cover[alias] = true
   elseif dType == 'button' and app == 202 then
+    mqttDevices[aAlias].trigger = {}
     for i = 0,255 do
       tag = GetCBusLevelTag(tNetAC(net), 202, group, i)
       if tag then
@@ -430,6 +432,7 @@ function addDiscover(net, app, group, channel, tags, name)
         -- Publish to MQTT broker
         local j = json.encode(payload)
         client:publish(mqttDiscoveryTopic..dType..'/'..boid..'/config', j, mqttQoS, RETAIN)
+        table.insert(mqttDevices[aAlias].trigger, boid)
       end
     end
   elseif dType == 'select' and app == 202 then
@@ -686,17 +689,39 @@ function cudCBusTopics()
     local f = false; for _, vv in ipairs(found) do if k == vv then f = true; break end end
     if not f then
       table.insert(kill, k)
-      local topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
-      client:publish(topic, '', mqttQoS, NORETAIN); logger('Remove discovery topic '..topic)
-      local _, count = k:gsub("/","")
-      if count == 3 then -- Measurement application
-        t = k:gsub("/", "_"); t = t:gsub("_", "/", 2) -- Convert the last slash to an underscore
-        topic = mqttReadTopic..t;
+      local topic, oid, trigger
+      local parts = string.split(k, '/')
+      if parts[2] == '202' then
+        for _, trigger in ipairs(v.trigger) do
+          topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
+      	  client:publish(topic, '', mqttQoS, NORETAIN); logger('Remove discovery topic '..topic)
+          --[[
+          Attempt to clean up write topics needs work... leaving them there won't hurt
+          local t = tonumber(string.match(trigger, '_(%w+)$'))
+          local act
+          local tk, tv
+          for tk, tv in pairs(triggers[tonumber(parts[3])]) do
+            if t == tv then act = tk break end
+          end
+          log(mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press')
+          client:publish(mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press', '', mqttQoS, NORETAIN)
+          --]]
+        end
       else
-        topic = mqttReadTopic..k;
+        topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
+      	client:publish(topic, '', mqttQoS, NORETAIN); logger('Remove discovery topic '..topic)
       end
-      client:publish(topic..'/state', '', mqttQoS, NORETAIN)
-      client:publish(topic..'/level', '', mqttQoS, NORETAIN)
+      if parts[2] ~= '202' then
+        local _, count = k:gsub('/','')
+        if count == 3 then -- Measurement application
+          t = k:gsub('/', '_'); t = t:gsub('_', '/', 2) -- Convert the last slash to an underscore
+          topic = mqttReadTopic..t;
+        else
+          topic = mqttReadTopic..k;
+        end
+        client:publish(topic..'/state', '', mqttQoS, NORETAIN)
+        client:publish(topic..'/level', '', mqttQoS, NORETAIN)
+      end
     end
   end
   for _, k in ipairs(kill) do mqttDevices[k] = nil end
@@ -781,7 +806,7 @@ function outstandingMqttMessage()
         elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then logger('Payload is OFF') end
         end
         
-      elseif parts[7] ~= nil and contains('press', parts[7]) then
+      elseif parts[7] ~= nil and contains('press', parts[7]) and payload == 'PRESS' then
         level = triggers[group][parts[6]]
         SetTriggerLevel(group, level); if logging then logger('Payload is PRESS') end
     
@@ -1010,7 +1035,7 @@ Remove any orphaned ramp flags
 function checkRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do
-    if os.time() > v.ts + v.ramp then -- Is an older ramp timestamp beyond ramp duration (should never occur)
+    if os.time() > v.ts + v.ramp + 15 then -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur)
       table.insert(orphan, k)
     end
   end
