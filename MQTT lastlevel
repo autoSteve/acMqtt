@@ -64,8 +64,8 @@ function checkQueue()
       end
     end
   
-    if socket.gettime() > deets.ts + deets.ramp then -- Something has gone wrong, so terminate the monitor
-      log('Warning: Terminate monitor for '..g..' (beyond ramp duration)')
+    if socket.gettime() > deets.ts + deets.ramp + 15 then -- Something has gone wrong, so terminate the monitor
+      log('Warning: Terminate monitor for '..g..' (well beyond ramp duration)')
       table.insert(remove, g)
     end
   end
