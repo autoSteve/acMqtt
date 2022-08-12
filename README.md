@@ -35,7 +35,7 @@ One of  light, fan, cover, sensor, switch or button, plus...
 - unit=   Unit of measurement
 - scale=  Multiplier / divider
 
-Buttons provide a uni-directional way for Home Assistant to CBus for trigger control (e.g. trigger a scene). For these the preferred name is used as an optional prefix to the trigger level tag to name the button. There is currently no mechanism to rename the button, but this could be implemented.
+Buttons provide a uni-directional way for Home Assistant to set CBus trigger control (e.g. trigger a scene). For these the preferred name is used as an optional prefix to the trigger level tag to name the button. There is currently no mechanism to rename the button, but this could be implemented.
 
 Keyword examples:
 
