@@ -8,17 +8,17 @@ Resident, zero sleep interval, name: 'MQTT send/receive'
 Manage CBus, Philips Hue, Panasonic AC and environment events for MQTT, and publish discovery topics. Used
 with Home Assistant.
 
-Lighting, measurement and user parameter applications are implemented.
+Lighting, measurement, user parameter and trigger applications are implemented.
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-  One of  light, fan, cover, sensor or switch, plus...
+  One of  light, fan, cover, sensor, switch, or for trigger control button, plus...
   sa=     Suggested area
   img=    Image
   pn=     Preferred name (defaults to CBus tag)
-  dec=    Decimal places
-  unit=   Unit of measurement
-  scale=  Multiplier / divider
+  dec=    Decimal places (User param only)
+  unit=   Unit of measurement (User param only)
+  scale=  Multiplier / divider (User param only)
 
 Keyword examples:
 
@@ -103,6 +103,7 @@ Changes:
 1.14 - 07/08/2022 Add some error checks for nil values, and add timestamp to log messages with millisecond accuracy
 1.15 - 09/08/2022 Change last level storage to array (not string), plus MQTT lastlevel bug fixes
 1.16 - 11/08/2022 Revised ramp tracking for MQTT publish, support multiple lighting applications and improve comments
+1.17 - 12/08/2022 Experimental trigger group support, only button implemented
 --]]
 
 logging = false        -- Enable detailed logging
@@ -139,6 +140,7 @@ mqttMessages = {}      -- Message queue
 ignoreCbus = {}        -- To prevent message loops
 ignoreMqtt = {}        -- To prevent message loops
 ramp = {}              -- Keeps track of ramping to ignore some zero level MQTT publish events outstandingCbusMessage()
+triggers = {}          -- Trigger groups and associated levels
 tCud = 0               -- Timestamp when create/update/delete was last executed
 cover = {}             -- Quick lookup to determine whether an object is a cover (blind)
 userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
@@ -328,6 +330,7 @@ function addDiscover(net, app, group, channel, tags, name)
   local sa = ''
   local img = ''
   local units = ''
+  local prefix = ''
   local scale = 1
   local decimals = 2
   local dType = 'light'
@@ -347,6 +350,7 @@ function addDiscover(net, app, group, channel, tags, name)
       elseif tp[1] == 'unit' then units = tp[2]
       elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
       elseif tp[1] == 'scale' then scale = tonumber(tp[2])
+      elseif tp[1] == 'prefix' then prefix = tp[2]
       end
     else
       if tp[1] ~= 'MQTT' then dType = tp[1] end
@@ -359,7 +363,7 @@ function addDiscover(net, app, group, channel, tags, name)
   end
 
   -- Build an OID (measurement application gets a channel as well), also add to mqttDevices
-  oid = 'cbus_mqtt_'..net..'_'.. app..'_'..group; if channel then oid = oid..'_'..channel end
+  oid = 'cbus_mqtt_'..net..'_'.. app..'_'..group; if channel then oid = oid..'_'..channel end;
   mqttDevices[alias].oid = oid
   mqttDevices[alias].type = dType
 
@@ -405,6 +409,29 @@ function addDiscover(net, app, group, channel, tags, name)
       ['set_pos_t'] = 'cbus/write/'..alias..'/ramp',
     }
     cover[alias] = true
+  elseif dType == 'button' and app == 202 then
+    for i = 0,255 do
+      tag = GetCBusLevelTag(tNetAC(net), 202, group, i)
+      if tag then
+        boid = oid..'_'..i
+        action = tag:gsub("%s+", "_"):lower()
+        if triggers[group] == nil then triggers[group] = {} end
+        triggers[group][action] = i
+        if pn == name then prefix = '' else prefix = pn..' ' end
+        payload = {
+          ['name'] = prefix..tag,
+          ['uniq_id'] = boid,
+          ['cmd_t'] = 'cbus/write/'..alias..'/'..action..'/press',
+          ['dev'] = { ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' },
+        }
+        if img ~= '' then payload['ic'] = img end
+        -- Publish to MQTT broker
+        local j = json.encode(payload)
+        client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
+      end
+    end
+  elseif dType == 'select' and app == 202 then
+
   elseif dType == 'sensor' then
     if channel then
       payload = { ['stat_t'] = 'cbus/read/'..alias..'_'..channel..'/state', }
@@ -418,14 +445,16 @@ function addDiscover(net, app, group, channel, tags, name)
   end
 
   -- Add payload common to all
-  payload['name'] = pn
-  payload['uniq_id'] = oid
-  payload['dev'] = { ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' }
-  if img ~= '' then payload['ic'] = img end
+  if app ~= 202 then -- Triggers done above
+    payload['name'] = pn
+    payload['uniq_id'] = oid
+    payload['dev'] = { ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' }
+    if img ~= '' then payload['ic'] = img end
 
-  -- Publish to MQTT broker
-  local j = json.encode(payload)
-  client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
+    -- Publish to MQTT broker
+    local j = json.encode(payload)
+    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
+  end
 end
 
 
@@ -685,7 +714,7 @@ function outstandingPublish()
     -- User parameters
     elseif u.app == 250 then publish(tNetCBus(u.net), u.app, u.group, GetUserParam(u.net, u.group))
     -- Trigger control
-    elseif u.app == 202 then publish(tNetCBus(u.net), u.app, u.group, GetTriggerLevel(u.group))
+    elseif u.app == 202 then -- Do nothing
     -- Lighting and other
     else publish(tNetCBus(u.net), u.app, u.group, GetCBusLevel(u.net, u.app, u.group))
     end
@@ -749,6 +778,10 @@ function outstandingMqttMessage()
         if payload == 'ON' then      SetCBusLevel(net, app, group, 255, 0); if logging then logger('Payload is ON') end
         elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then logger('Payload is OFF') end
         end
+        
+      elseif parts[7] ~= nil and contains('press', parts[7]) then
+        level = triggers[group][parts[6]]
+        SetTriggerLevel(group, level); if logging then logger('Payload is PRESS') end
     
       elseif parts[6] == 'measurement' then SetCBusMeasurement(net, app, group, payload, 0)
 
@@ -792,12 +825,8 @@ function outstandingMqttMessage()
             else
               toSet = num
             end
-            if app ~= 202 then -- Not trigger control
-              if parts[2] ~= nil then ramp = tonumber(parts[2]) else ramp = 0 end
-              SetCBusLevel(net, app, group, toSet, ramp)
-            else
-              SetTriggerLevel(group, toSet)
-            end
+            if parts[2] ~= nil then ramp = tonumber(parts[2]) else ramp = 0 end
+            SetCBusLevel(net, app, group, toSet, ramp)
           end
         end
       end
@@ -932,9 +961,14 @@ function outstandingCbusMessage()
           -- zero should not be published to MQTT so it is ignored. It wouldn't happen if the event-based MQTT script were set to not
           -- execute during ramping, but then progress during the ramp would not be reported to MQTT, which is visually pleasing.
           if not ramp[alias] then
-            if payload == 0 and GetCBusRampRate(net, app, group) > 0 then
-              setting = false; ramp[alias] = { ['ts'] = os.time(), ['ramp'] = GetCBusRampRate(net, app, group), ['target'] = GetCBusTargetLevel(net, app, group) }
-              if logging then logger('Set ramp for '..alias..' and suppress zero send') end
+            if GetCBusRampRate(net, app, group) > 0 then
+              ramp[alias] = { ['ts'] = os.time(), ['ramp'] = GetCBusRampRate(net, app, group), ['target'] = GetCBusTargetLevel(net, app, group) }
+              if payload == 0 then
+                setting = false
+                if logging then logger('Set ramp for '..alias..' and suppress zero send') end
+              else
+                if logging then logger('Set ramp for '..alias) end
+              end
             end
           else
             if ramp[alias].target ~= GetCBusTargetLevel(net, app, group) then -- Target level has changed so cancel ramp
