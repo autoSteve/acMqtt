@@ -796,7 +796,7 @@ function outstandingMqttMessage()
               if parts[2] ~= nil then ramp = tonumber(parts[2]) else ramp = 0 end
               SetCBusLevel(net, app, group, toSet, ramp)
             else
-              SetTriggerLevel(group, toset)
+              SetTriggerLevel(group, toSet)
             end
           end
         end
