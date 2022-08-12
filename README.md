@@ -27,13 +27,15 @@ Lighting, measurement and user parameter applications are implemented.
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-One of  light, fan, cover, sensor or switch, plus...
+One of  light, fan, cover, sensor, switch or button, plus...
 - sa=     Suggested area
 - img=    Image
 - pn=     Preferred name (defaults to CBus tag)
 - dec=    Decimal places
 - unit=   Unit of measurement
 - scale=  Multiplier / divider
+
+Buttons provide a uni-directional way for Home Assistant to CBus for trigger control (e.g. trigger a scene). For these the preferred name is used as an optional prefix to the trigger level tag to name the button. There is currently no mechanism to rename the button, but this could be implemented.
 
 Keyword examples:
 
@@ -43,6 +45,7 @@ Keyword examples:
 - MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
 - MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
+- MQTT, button, pn=Inside, 
 
 ### Philips Hue
 For Philips Hue devices, bi-directional sync with CBus occurs. I run Home Assistant talking directly to the Hue hub, and also the Automation Controller via MQTT. Add the keyword 'HUE' to CBus objects, plus...
