@@ -25,7 +25,6 @@ if app ~= 202 then -- Not trigger app
   if val == pre then
     toSet = false
     local v = tonumber(val)
-    -- if v ~= nil and v == 0 then toSet = true end -- Always publish zero/off
     if logging and not toSet then log('Not setting '..event.dst..', previous value is '..tostring(pre)) end
   end
 else
