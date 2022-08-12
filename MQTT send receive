@@ -20,6 +20,8 @@ Add the keyword 'MQTT' to groups for CBus discovery, plus...
   unit=   Unit of measurement (User param only)
   scale=  Multiplier / divider (User param only)
 
+For buttons, the preferred name is used as an optional prefix to the trigger level tag to name the button.
+
 Keyword examples:
 
 MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb, 
@@ -427,7 +429,7 @@ function addDiscover(net, app, group, channel, tags, name)
         if img ~= '' then payload['ic'] = img end
         -- Publish to MQTT broker
         local j = json.encode(payload)
-        client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
+        client:publish(mqttDiscoveryTopic..dType..'/'..boid..'/config', j, mqttQoS, RETAIN)
       end
     end
   elseif dType == 'select' and app == 202 then
