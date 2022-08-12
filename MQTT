@@ -15,11 +15,12 @@ server = require('socket').udp()
 sKey = 'pre'..event.dst
 toSet = true
 val = event.getvalue()
+pre = -1
 
 parts = string.split(event.dst, '/')
 app = tonumber(parts[2])
 
-if app ~= 202 then -- Not trigger control, which should be sent every time
+if app ~= 202 then -- Not trigger app
   pre = storage.get(sKey)
   if val == pre then
     toSet = false
@@ -27,10 +28,12 @@ if app ~= 202 then -- Not trigger control, which should be sent every time
     -- if v ~= nil and v == 0 then toSet = true end -- Always publish zero/off
     if logging and not toSet then log('Not setting '..event.dst..', previous value is '..tostring(pre)) end
   end
+else
+  toSet = false -- Don't send trigger control. One-way from MQTT to CBus...
 end
 
 if toSet then
-  if logging then log('Setting '..event.dst..' to '..tostring(val)) end
+  if logging then log('Setting '..event.dst..' to '..tostring(val)..', previous='..pre) end
 
   -- Send an event to publish to broker
   server:sendto(event.dst.."/"..val, '127.0.0.1', 5432)
