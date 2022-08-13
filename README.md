@@ -15,6 +15,7 @@ LUA scripts for the automation controller:
 - *MQTT*: event-based, execute during ramping
 - *HUE*: event-based, execute during ramping
 - *AC*: event-based, execute during ramping
+- *Heartbeat*: resident, zero sleep (optional ... monitors for failure of MQTT send/receive and re-starts it)
 
 If you don't care for integrating Philips Hue/AC/environmental devices with CBus, then ignore Portainer and hue2mqtt.js, and the LUA Hue/AC/ENV code can stay there and will just be unused.
 
