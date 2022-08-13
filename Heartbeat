@@ -1,0 +1,64 @@
+--[[
+Resident, zero sleep, name: "Heartbeat"
+
+This script monitors keepalive messages from scripts, and should they fail to be received it disables/enables them.
+
+Receives messages of the format: "[net]/[app]/[group]+[os.time()]"
+--]]
+
+logging = false
+
+-- Scripts to monitor
+scripts = {
+  ['MQTT send/receive'] = { ['max'] = 20, },
+}
+
+server = require('socket').udp()
+server:settimeout(1)
+server:setsockname('127.0.0.1', 5433)
+
+local k, v
+
+for k, v in pairs(scripts) do v.heartbeat = os.time() end
+
+log('Heartbeat initialised')
+
+
+while true do
+  timeCheck = socket.gettime()
+
+  cmd = server:receive()
+  if cmd and type(cmd) == 'string' then
+
+    -- If the command contains a plus then it's a heartbeat
+    if contains('+', cmd) then
+      parts = string.split(cmd, '+')
+      if #parts == 2 then
+        s = scripts[parts[1]]
+        if s then
+          s.heartbeat = tonumber(parts[2])
+          if logging then log('Heartbeat from '..parts[1]..' at '..s.heartbeat) end
+        end
+      end
+    end
+    
+  end
+
+  --[[
+  Heartbeats:
+
+  ---- TODO ---- WTF?
+  Ironically, a failure in this script will cause heartbeats to stop being received for some reason,
+  causing repeated send/receive restarts. This script is simple, though, so it should not break...
+  A failure should cause re-entry because zero sleep, so should be good, but socket turns to custard.
+  --]]
+
+  for k, v in pairs(scripts) do
+    secondsSince = os.time() - v.heartbeat
+    if secondsSince >= v.max then -- No heartbeat received for specified period, so re-start the script
+      log('Missed '..k..' script heartbeat (last received '..secondsSince..' seconds ago) - Re-starting script')
+      script.disable(k); script.enable(k)
+      v.heartbeat = os.time()
+    end
+  end
+end
