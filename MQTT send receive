@@ -14,7 +14,7 @@ Lighting, measurement, user parameter and trigger applications are implemented.
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-  One of  light, fan, cover, sensor, switch, or button, plus...    (button is for trigger control only)
+  One of  light, fan, cover, sensor, switch, or button, plus...    ('button' is for trigger control only, default if not specified is 'light')
   sa=     Suggested area
   img=    Image
   pn=     Preferred name (defaults to CBus tag)
@@ -94,7 +94,7 @@ Environment monitors can pass sensor data to CBus (using ESPHome devices). Add t
 
 Environment examples:
 
-ENV, dev=outsideenv
+ENV, dev=outsideenv, func=outside humidity
 
 Changes:
 1.00 - 25/05/2022 Initial version
@@ -128,7 +128,7 @@ blindKey = nil         -- If blind fully open is desirable instead of lastlevel,
 fanKey = 'Fan'         -- Sweep fan objects must contain this (case sensitive) string
 checkChanges = 60      -- Interval in seconds to check for changes to object keywords
 socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
-mqttTimeout = 0        -- In milliseconds
+mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
 sendHeartbeat = 1      -- Send a heartbeat to 'MQTT lastlevel' every n seconds
 
@@ -333,12 +333,12 @@ end
 
 
 --[[
-Build and publish a MQTT discovery topic for light, switch, fan, cover or sensor 
+Build and publish a MQTT discovery topic for light, switch, fan, cover, sensor or button 
 --]]
 function addDiscover(net, app, group, channel, tags, name)
   if not name then if not channel then do return end else name = 'measurement' end end -- Need a name from tag lookup for everything but measurement app
   local pn = name
-  -- All other keywords except MQTT are optional. Defaults:
+  -- All other keywords except MQTT are optional, with 'light' as default discovery type. Defaults:
   local sa = ''
   local img = ''
   local units = ''
@@ -424,7 +424,7 @@ function addDiscover(net, app, group, channel, tags, name)
     cover[alias] = true
   elseif dType == 'button' and app == 202 then
     mqttDevices[aAlias].trigger = {}
-    if #levels == 0 then for i = 0,255 do levels[#levels + 1] = i end end
+    if #levels == 0 then for i = 0,255 do levels[#levels + 1] = i end end -- If no "lvl=" specified then scan all levels
     for _, i in ipairs(levels) do 
       tag = GetCBusLevelTag(tNetAC(net), 202, group, tonumber(i))
       if tag then
@@ -539,7 +539,7 @@ function cudHue(initial)
     -- retain flag. A re-subscribe here will result in gathering current status.
     client:subscribe(hueTopic, 2)
     -- Ensure that newly tagged/removed groups with the MQTT/HUE keywords send updates.
-    logger('Hue object keywords added, restarting group change script')
+    logger('Hue object keywords added, restarting event script')
     script.disable('HUE'); script.enable('HUE')
   end
 end
@@ -597,7 +597,7 @@ function cudAc(initial)
   if addition then
     if not initial then
       -- Ensure that newly tagged/removed groups with the AC keywords send updates.
-      logger('AC object keywords added, restarting group change script')
+      logger('AC object keywords added, restarting event script')
       script.disable('AC'); script.enable('AC')
     end
     for k, _ in pairs(acBoards) do client:subscribe(k..'/#', 2) end
@@ -708,6 +708,7 @@ function cudCBusTopics()
       	  client:publish(topic, '', mqttQoS, NORETAIN); logger('Remove discovery topic '..topic)
           --[[
           Attempt to clean up write topics needs work... leaving them there won't hurt
+
           local t = tonumber(string.match(trigger, '_(%w+)$'))
           local act
           local tk, tv
@@ -760,7 +761,7 @@ function outstandingPublish()
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT/HUE/AC keywords send updates
     if script.status('MQTT') ~= nil then script.disable('MQTT'); script.enable('MQTT') end
-    logger('Publishing completed for '..#unpublished..' discovery and current level topic'..(#unpublished ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, change scripts restarted')
+    logger('Publishing completed for '..#unpublished..' discovery and current level topic'..(#unpublished ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
     unpublished = {}
   end
 end
@@ -993,11 +994,9 @@ function outstandingCbusMessage()
         local setting = true
         local payload = tonumber(parts[4]) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
         if lighting[parts[2]] then -- Lighting application, so check for ramp
-          if logging then logger(
-            'Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group))) end
+          if logging then logger('Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group))) end
           -- A CBus ramp up and down can annoyingly begin with a zero level, then steadily converge to the target level. This initial
-          -- zero should not be published to MQTT so it is ignored. It wouldn't happen if the event-based MQTT script were set to not
-          -- execute during ramping, but then progress during the ramp would not be reported to MQTT, which is visually pleasing.
+          -- zero should not be published to MQTT so it is ignored. If an initial zero is not seen then the ramp will be orphaned.
           if not ramp[alias] then
             if GetCBusRampRate(net, app, group) > 0 then
               ramp[alias] = { ['ts'] = os.time(), ['ramp'] = GetCBusRampRate(net, app, group), ['target'] = GetCBusTargetLevel(net, app, group) }
@@ -1046,8 +1045,14 @@ Remove any orphaned ramp flags
 function checkRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do
-    if os.time() > v.ts + v.ramp + 15 then -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur)
+    if os.time() > v.ts + v.ramp + 5 then
+      -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur, but does occasionally)
+      -- Remove the orphan, and publish the final target, which will be zero
+      -- Occurs when a ramp to off does not begin with a zero level during the ramp
       table.insert(orphan, k)
+      parts = string.split(k, '/')
+      local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
+      publish(tNetCBus(net), app, group, v.target)
     end
   end
   for _, k in ipairs(orphan) do ramp[k] = nil; logger('Warning: Removing orphaned ramp for '..k) end
@@ -1122,7 +1127,7 @@ while true do
   
   local stat, err = pcall(function ()
     if os.time() - heartbeat >= sendHeartbeat then
-      heartbeat = os.time(); require('socket').udp():sendto('MQTT+'..heartbeat, '127.0.0.1', 5433)
+      heartbeat = os.time(); require('socket').udp():sendto('MQTT send/receive+'..heartbeat, '127.0.0.1', 5433)
     end
   end)
   if not stat then logger('A fault occurred sending heartbeat. Restarting...'); do return end end
