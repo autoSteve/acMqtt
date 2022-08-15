@@ -11,10 +11,10 @@ The pieces of the puzzle include:
 
 LUA scripts for the automation controller:
 - *MQTT send/receive*: resident, zero sleep (note: code here is "MQTT send receive", without the slash...)
-- *MQTT lastlevel*: event-based, do not execute during ramping, or do. Doesn't matter.
-- *MQTT*: event-based, execute during ramping
-- *HUE*: event-based, execute during ramping
-- *AC*: event-based, execute during ramping
+- *MQTT lastlevel*: event-based, do not execute during ramping, or do. Doesn't matter. Trigger on keyword 'MQTT'
+- *MQTT*: event-based, execute during ramping, trigger on keyword 'MQTT'
+- *HUE*: event-based, execute during ramping, trigger on keyword 'HUE'
+- *AC*: event-based, execute during ramping, trigger on keyword 'AC'
 - *Heartbeat*: resident, zero sleep (optional ... monitors for failure of MQTT send/receive and re-starts it)
 
 If you don't care for integrating Philips Hue/AC/environmental devices with CBus, then ignore Portainer and hue2mqtt.js, and the LUA Hue/AC/ENV code can stay there and will just be unused.
