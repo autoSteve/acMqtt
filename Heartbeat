@@ -17,6 +17,8 @@ server = require('socket').udp()
 server:settimeout(1)
 server:setsockname('127.0.0.1', 5433)
 
+function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
+
 local k, v
 
 for k, v in pairs(scripts) do v.heartbeat = os.time() end
