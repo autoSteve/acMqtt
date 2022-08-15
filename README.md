@@ -24,7 +24,7 @@ Plus SSH & Web terminal and File Editor is not required, just nice to have.
 ## Keywords used for Automation Controller objects
 
 ### CBus
-Lighting, measurement and user parameter applications are implemented.
+Lighting, measurement, user parameter and trigger control applications are implemented.
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
