@@ -126,6 +126,7 @@ mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1
 lighting = {['56']=true} -- Array of applications that are used for lighting (ramp detection only applies to lighting)
 blindKey = nil         -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
 fanKey = 'Fan'         -- Sweep fan objects must contain this (case sensitive) string
+rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
 checkChanges = 60      -- Interval in seconds to check for changes to object keywords
 socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
@@ -311,7 +312,7 @@ function publishAc(net, app, group, level, select)
       elseif select == 'sel' then
         topic = board..'/select/'..parts[2]..'/command'
       elseif select == 'sense' then
-        logger('Warning: Not publishing sensor change for alias='..alias)
+        if logging then logger('Warning: Not publishing sensor change for alias='..alias) end
       else
         logger('Invalid AC command for alias='..alias..', select='..tostring(select))
       end
@@ -755,7 +756,9 @@ function outstandingPublish()
     -- Trigger control
     elseif u.app == 202 then -- Do nothing
     -- Lighting and other
-    else publish(tNetCBus(u.net), u.app, u.group, GetCBusLevel(u.net, u.app, u.group))
+    else
+      local level = nil; pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
+      if level ~= nil then publish(tNetCBus(u.net), u.app, u.group, level) end
     end
   end
   if #unpublished > 0 then
@@ -1043,19 +1046,21 @@ end
 Remove any orphaned ramp flags
 --]]
 function checkRampOrphans()
+  if #ramp == 0 then do return end end
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do
-    if os.time() > v.ts + v.ramp + 5 then
+    if os.time() > v.ts + v.ramp + rampTimeout then
       -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur, but does occasionally)
       -- Remove the orphan, and publish the final target, which will be zero
-      -- Occurs when a ramp to off does not begin with a zero level during the ramp
+      -- Occurs when a ramp to off does not begin with a zero level during the ramp, or if a ramp to zero starts
+      -- when the group is already at zero.
       table.insert(orphan, k)
       parts = string.split(k, '/')
       local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
       publish(tNetCBus(net), app, group, v.target)
     end
   end
-  for _, k in ipairs(orphan) do ramp[k] = nil; logger('Warning: Removing orphaned ramp for '..k) end
+  for _, k in ipairs(orphan) do ramp[k] = nil; if logging then logger('Removing orphaned ramp for '..k) end end
 end
 
 
