@@ -750,7 +750,9 @@ function outstandingPublish()
   for _, u in ipairs(unpublished) do
     addDiscover(tNetCBus(u.net), u.app, u.group, u.channel, u.tags, u.name)
     -- Measurement application
-    if u.app == 228 then publishMeasurement(tNetCBus(u.net), u.app, u.group, u.channel, GetCBusMeasurement(u.net, u.group, u.channel))
+    if u.app == 228 then
+      local level = nil; pcall(function () level = GetCBusMeasurement(u.net, u.group, u.channel) end)
+      if level ~= nil then publishMeasurement(tNetCBus(u.net), u.app, u.group, u.channel, level) end
     -- User parameters
     elseif u.app == 250 then publish(tNetCBus(u.net), u.app, u.group, GetUserParam(u.net, u.group))
     -- Trigger control
