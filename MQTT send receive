@@ -337,7 +337,7 @@ end
 Build and publish a MQTT discovery topic for light, switch, fan, cover, sensor or button 
 --]]
 function addDiscover(net, app, group, channel, tags, name)
-  if not name then if not channel then do return end else name = 'measurement' end end -- Need a name from tag lookup for everything but measurement app
+  if not name then if channel == nil then do return end else name = 'measurement' end end -- Need a name from tag lookup for everything but measurement app
   local pn = name
   -- All other keywords except MQTT are optional, with 'light' as default discovery type. Defaults:
   local sa = ''
@@ -349,7 +349,7 @@ function addDiscover(net, app, group, channel, tags, name)
   local dType = 'light'
   
   -- Build an alias to refer to each group
-  alias = tNetAC(net)..'/'..app..'/'..group;  if channel then alias = alias..'/'..channel end
+  alias = tNetAC(net)..'/'..app..'/'..group;  if channel ~= nil then alias = alias..'/'..channel end
 
   -- Extract MQTT topic settings
   for _, t in ipairs(tags) do
@@ -370,13 +370,15 @@ function addDiscover(net, app, group, channel, tags, name)
     end
   end
   
+  if dtype == 'light' and app == 228 then dtype = 'sensor' end -- Measurement app sensor with incorrect/missing type
+  
   if logging then
     if sa == '' then dSa = 'no preferred area' else dSa = sa end
     logger('Publish discovery '..name..' as '..dType..':'..pn..' in area '..dSa)
   end
 
   -- Build an OID (measurement application gets a channel as well), also add to mqttDevices
-  oid = 'cbus_mqtt_'..net..'_'.. app..'_'..group; if channel then oid = oid..'_'..channel end;
+  oid = 'cbus_mqtt_'..net..'_'.. app..'_'..group; if channel ~= nil then oid = oid..'_'..channel end;
   mqttDevices[alias].oid = oid
   mqttDevices[alias].type = dType
 
@@ -450,7 +452,7 @@ function addDiscover(net, app, group, channel, tags, name)
   elseif dType == 'select' and app == 202 then
 
   elseif dType == 'sensor' then
-    if channel then
+    if channel ~= nil then
       payload = { ['stat_t'] = 'cbus/read/'..alias..'_'..channel..'/state', }
       alias = alias..'/'..channel
     else
