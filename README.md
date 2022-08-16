@@ -1,7 +1,11 @@
 # acMqtt
 CBus Automation Controller: Home Assistant, MQTT, Philips Hue and more
 
-Get Home Assistant talking to CBus, with MQTT discovery for Home Assistant, to eliminate any manual CBus config there. Plus return to previously set lighting levels when a 'turn on' command is issued, and optionally include Philips Hue hub devices in CBus scenes, like having 'All Off' from a button, plus Panasonic air conditioners and ESPHome sensors for temperature and relative humidity integrated with the CBus Automation Controller.
+Functions:
+- Get Home Assistant talking to CBus, with MQTT discovery to eliminate any manual CBus config in HA
+- Return to previously set lighting levels when a 'turn on' command is issued in HA
+- Optionally include Philips Hue hub devices in CBus scenes, like having 'All Off' from a button ot AC visualisations
+- Optionally Panasonic air conditioners and ESPHome sensors for temperature and relative humidity integrated with the CBus Automation Controller
 
 The pieces of the puzzle include:
 - Home Assistant 'HAOS', running as a virtual machine. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker and more going (but you could use a separately installed broker elsewhere on your network). HA Cloud talks to Google Assistant/Alexa.
