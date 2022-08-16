@@ -11,7 +11,7 @@ The pieces of the puzzle include:
 - Home Assistant 'HAOS', running as a virtual machine. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker and more going (but you could use a separately installed broker elsewhere on your network). HA Cloud talks to Google Assistant/Alexa.
 - Home Assistant plug-ins: The excellent 'Portainer', 'SSH & Web terminal' and 'Mosquitto broker'. File editor is also handy.
 - A container created with Portainer to run hue2mqtt.js
-- LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2) Script names are important for the LUA code, given keep-alive and other re-starts, so adjust as necessary by examining thoroughly if you need to change the names.
+- LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2). Script names are important for the LUA code, given keep-alive and other re-starts, so adjust as necessary by examining thoroughly if you need to change the names.
 
 LUA scripts for the automation controller:
 - *MQTT send/receive*: resident, zero sleep (note: code here is "MQTT send receive", without the slash...)
