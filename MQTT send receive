@@ -1,6 +1,8 @@
 mqttBroker = '192.168.10.21'
 mqttUsername = 'mqtt'
 mqttPassword = 'password'
+lighting = { ['56'] = true } -- Array of applications that are used for lighting (ramp detection only applies to lighting)
+checkForChanges = true -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
 
 --[[
 Resident, zero sleep interval, name: 'MQTT send/receive'
@@ -121,17 +123,17 @@ Changes:
 logging = false        -- Enable detailed logging
 logms = false          -- Include timestamp in milliseconds for logs
 
+checkChanges = 60      -- Interval in seconds to check for changes to object keywords
+
 mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
 mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
-lighting = {['56']=true} -- Array of applications that are used for lighting (ramp detection only applies to lighting)
 blindKey = nil         -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
 fanKey = 'Fan'         -- Sweep fan objects must contain this (case sensitive) string
 rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
-checkChanges = 60      -- Interval in seconds to check for changes to object keywords
 socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
-sendHeartbeat = 1      -- Send a heartbeat to 'MQTT lastlevel' every n seconds
+sendHeartbeat = 5      -- Send a heartbeat to 'MQTT lastlevel' every n seconds
 
 mqttReadTopic = 'cbus/read/'
 mqttWriteTopic = 'cbus/write/#'
@@ -154,7 +156,6 @@ ignoreCbus = {}        -- To prevent message loops
 ignoreMqtt = {}        -- To prevent message loops
 ramp = {}              -- Keeps track of ramping to ignore some zero level MQTT publish events outstandingCbusMessage()
 triggers = {}          -- Trigger groups and associated levels
-tCud = 0               -- Timestamp when create/update/delete was last executed
 cover = {}             -- Quick lookup to determine whether an object is a cover (blind)
 userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 publishAdj = {}        -- For user parameters, holds scale and decimals to apply
@@ -659,7 +660,6 @@ end
 Create / update / delete CBus MQTT discovery topics
 --]]
 function cudCBusTopics()
-  tCud = os.time()
   local grps = GetCBusByKW('MQTT', 'or')
   local found = {}
   local n = 0
@@ -1033,13 +1033,16 @@ function outstandingCbusMessage()
           end
           if app ~= 202 then -- Not trigger
             sKey = 'pre'..alias
-            storage.set(sKey, payload) -- Save payload as 'previous' for use in the MQTT event-based script
+            local p = payload
+            if tonumber(payload) then p = string.format('%.3f', payload) end
+            storage.set(sKey, p) -- Save payload as 'previous' for use in the MQTT event-based script
           end
         end
       else -- Special case for measurement app
         publishMeasurement(tNetCBus(tonumber(parts[1])), tonumber(parts[2]), tonumber(parts[3]), tonumber(parts[4]), tonumber(parts[5]))
         sKey = 'pre'..parts[1]..'/'..parts[2]..'/'..parts[3]..'/'..parts[4]
-        storage.set(sKey, tonumber(parts[5]))
+        local p = string.format('%.3f', tonumber(parts[5]))
+        storage.set(sKey, p)
       end
     end
   end
@@ -1050,7 +1053,6 @@ end
 Remove any orphaned ramp flags
 --]]
 function checkRampOrphans()
-  if #ramp == 0 then do return end end
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do
     if os.time() > v.ts + v.ramp + rampTimeout then
@@ -1072,12 +1074,16 @@ end
 Main loop
 --]]
 
--- Initial load of Hue/AC/ENV devices, suppressing MQTT subscribe and event script re-starts
-cudHue(true); cudAc(true); cudEnv(true)
+-- Create/update/delete scripts spread evenly over the period 'trackChanges'
+cud = {
+  { func = cudCBusTopics, t = os.time() - checkChanges + 1, init = false },
+  { func = cudHue, t = os.time() - checkChanges*0.75 + 1, init = true, script = 'HUE' },
+  { func = cudAc, t = os.time() - checkChanges*0.5 + 1, init = true, script = 'AC' },
+  { func = cudEnv, t = os.time() - checkChanges*.25 + 1, init = true },
+}
 
--- And re-start the event scripts
-if script.status('HUE') ~= nil then script.disable('HUE'); script.enable('HUE') end
-if script.status('AC') ~= nil then script.disable('AC'); script.enable('AC') end
+-- Initial load of devices excluding CBus, suppressing MQTT re-subscribe
+for _, c in ipairs(cud) do if c.init then c.func(true); if c.script and script.status(c.script) ~= nil then script.disable(c.script); script.enable(c.script) end end end
 
 function validateIncoming(cmd) -- Reject any weird socket messages received
   local _, count = cmd:gsub("/", ''); if count < 3 or count > 4 then return false end
@@ -1115,10 +1121,10 @@ while true do
     if #mqttMessages > 0 then outstandingMqttMessage() end -- Send outstanding messages to CBus
     if #cbusMessages > 0 then outstandingCbusMessage() end -- Send outstanding messages to MQTT
     if #unpublished > 0 then outstandingPublish() end      -- Publish outstanding discovery topics
-    if os.time() - tCud >= checkChanges then               -- Periodically create/update/delete MQTT items that change
-      cudCBusTopics(); cudHue(); cudAc(); cudEnv()
+    if #ramp > 0 then checkRampOrphans() end               -- Some scenarios create ramp orphans
+    if checkForChanges then                                -- Periodically create/update/delete device items that change
+      for _, c in ipairs(cud) do if os.time() - c.t >=checkChanges then c.t = os.time(); c.func() end end
     end
-    checkRampOrphans()
   elseif mqttStatus == 2 and os.time() - mqttConnected >= 5 then
     -- MQTT is disconnected, so attempt a connection every five seconds
     mqttConnected = os.time()
