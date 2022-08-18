@@ -2,7 +2,7 @@ mqttBroker = '192.168.10.21'
 mqttUsername = 'mqtt'
 mqttPassword = 'password'
 lighting = { ['56'] = true } -- Array of applications that are used for lighting (ramp detection only applies to lighting)
-checkForChanges = false -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
+checkForChanges = true -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
 
 --[[
 Resident, zero sleep interval, name: 'MQTT send/receive'
@@ -662,9 +662,10 @@ Create / update / delete CBus MQTT discovery topics
 function cudCBusTopics()
   local grps = GetCBusByKW('MQTT', 'or')
   local found = {}
+  local lvlDelete = {}
   local n = 0
   unpublished = {}
-  local k, v
+  local k, v, alias, lvl
 
   for k, v in pairs(grps) do
     local change = false
@@ -672,7 +673,7 @@ function cudCBusTopics()
     local app = v['address'][2]
     local group = v['address'][3]
     local channel = nil
-    local alias = net..'/'..app..'/'..group
+    alias = net..'/'..app..'/'..group
     if v['address'][4] then channel = v['address'][4]; alias = alias..'/'..channel end
 
     table.insert(found, alias)
@@ -685,6 +686,20 @@ function cudCBusTopics()
       mqttDevices[alias].tags = curr
     else
       if mqttDevices[alias].tags ~= curr then -- Modified group
+        lvl = nil; local i; for i = 1,#tags do local parts = string.split(tags[i], '='); if parts[1] == 'lvl' then lvl = parts[2]; break end end
+        if app == 202 and lvl ~= nil then -- Check for levels being removed
+          
+          local function difference(a, b)
+            local aa = {}; for _, v in ipairs(a) do aa[v] = true end; for _, v in ipairs(b) do aa[v] = nil end
+            local ret = {}; for _, v in ipairs(a) do if aa[v] then ret[#ret+1]=v end end
+            return ret
+          end
+          
+          local oldTags = string.split(mqttDevices[alias].tags, ',')
+          local i, olvl = ''; for i = 1,#oldTags do local parts = string.split(oldTags[i], '='); if parts[1] == 'lvl' then olvl = parts[2]; break end end
+          local diff = difference(string.split(olvl, '-'), string.split(lvl, '-'))
+          if #diff > 0 then lvlDelete[alias] = diff end
+        end
         mqttDevices[alias].tags = curr
         change = true
       end
@@ -700,42 +715,57 @@ function cudCBusTopics()
   -- Handle deletions
   kill = {}
   for k, v in pairs(mqttDevices) do
+    local topic, oid, trigger
     local f = false; for _, vv in ipairs(found) do if k == vv then f = true; break end end
     if not f then
       table.insert(kill, k)
-      local topic, oid, trigger
       local parts = string.split(k, '/')
       if parts[2] == '202' then
         for _, trigger in ipairs(v.trigger) do
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
       	  client:publish(topic, '', mqttQoS, NORETAIN); logger('Remove discovery topic '..topic)
-          --[[
-          Attempt to clean up write topics needs work... leaving them there won't hurt
-
           local t = tonumber(string.match(trigger, '_(%w+)$'))
           local act
           local tk, tv
           for tk, tv in pairs(triggers[tonumber(parts[3])]) do
             if t == tv then act = tk break end
           end
-          log(mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press')
-          client:publish(mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press', '', mqttQoS, NORETAIN)
-          --]]
+          t = mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
+          client:publish(t, 'junk', mqttQoS, RETAIN) -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
+          client:publish(t, '', mqttQoS, RETAIN)
         end
       else
         topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
       	client:publish(topic, '', mqttQoS, NORETAIN); logger('Remove discovery topic '..topic)
       end
       if parts[2] ~= '202' then
-        local _, count = k:gsub('/','')
+        local count
+        _, count = k:gsub('/','')
         if count == 3 then -- Measurement application
           t = k:gsub('/', '_'); t = t:gsub('_', '/', 2) -- Convert the last slash to an underscore
           topic = mqttReadTopic..t;
         else
           topic = mqttReadTopic..k;
         end
+        client:publish(topic..'/state', 'junk', mqttQoS, NORETAIN)
         client:publish(topic..'/state', '', mqttQoS, NORETAIN)
-        client:publish(topic..'/level', '', mqttQoS, NORETAIN)
+        if count ~= 3 then client:publish(topic..'/level', '', mqttQoS, NORETAIN) end -- Level not set for measurement
+      end
+    else
+      -- Handle trigger level removal
+      if lvlDelete[k] ~= nil then
+        for _, lvl in ipairs(lvlDelete[k]) do
+          -- log(lvlDelete[k], lvl, triggers)
+          local parts = string.split(k, '/')
+          local group = tonumber(parts[3])
+          local a, t, act; for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
+          for _, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; break end end
+          topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
+          client:publish(topic, '', mqttQoS, NORETAIN); logger('Remove discovery topic '..topic)
+          t = mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
+          client:publish(t, 'junk', mqttQoS, RETAIN) -- Publish junk to topic to be deleted (some topics may not have been written yet)
+          client:publish(t, '', mqttQoS, RETAIN)
+        end
       end
     end
   end
@@ -828,7 +858,11 @@ function outstandingMqttMessage()
         
       elseif parts[7] ~= nil and contains('press', parts[7]) and payload == 'PRESS' then
         level = triggers[group][parts[6]]
-        SetTriggerLevel(group, level); if logging then logger('Payload is PRESS') end
+        if level ~= nil then
+          SetTriggerLevel(group, level); if logging then logger('Payload is PRESS') end
+        else
+          logger('Warning: MQTT trigger level received that is not published')
+        end
     
       elseif parts[6] == 'measurement' then SetCBusMeasurement(net, app, group, payload, 0)
 

@@ -26,6 +26,7 @@ If you don't care for integrating Philips Hue/AC/environmental devices with CBus
 Plus SSH & Web terminal and File Editor is not required, just nice to have.
 
 ## Keywords used for Automation Controller objects
+Newly added keywords can be regularly detected by the MQTT send/receive script. This is configurable by setting an option that is near the top of the script. If this option is set to false then that script must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is sixty seconds, and that is also a configurable variable.
 
 ### CBus
 Lighting, measurement, user parameter and trigger control applications are implemented.
