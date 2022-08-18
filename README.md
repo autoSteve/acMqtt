@@ -32,25 +32,26 @@ Lighting, measurement, user parameter and trigger control applications are imple
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-One of  light, fan, cover, sensor, switch or button, plus...
+One of  light, fan, cover, sensor, switch, or button, plus...    ('button' is for trigger control only, default if not specified is 'light')
 - sa=     Suggested area
 - img=    Image
 - pn=     Preferred name (defaults to CBus tag)
-- dec=    Decimal places
-- unit=   Unit of measurement
-- scale=  Multiplier / divider
+- dec=    Decimal places (User param only)
+- unit=   Unit of measurement (User param only)
+- scale=  Multiplier / divider (User param only)
+- lvl=    List of applicable levels, separated by "-' (Trigger only, used to publish only certain levels, and improves discovery performance)
 
-Buttons provide a uni-directional way for Home Assistant to set CBus trigger control (e.g. trigger a scene). For these the preferred name is used as an optional prefix to the trigger level tag to name the button. There is currently no mechanism to rename the button, but this could be implemented.
+For buttons, the preferred name is used as an optional prefix to the trigger level tag to name the button.
 
 Keyword examples:
 
-- MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb,
-- MQTT, switch, sa=Outside, img=mdi:gate-open,
+- MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb, 
+- MQTT, switch, sa=Outside, img=mdi:gate-open, 
 - MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 - MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
 - MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
-- MQTT, button, pn=Inside, 
+- MQTT, button, lvl=0-1-2-5-127, pn=Inside, 
 
 ### Philips Hue
 For Philips Hue devices, bi-directional sync with CBus occurs. I run Home Assistant talking directly to the Hue hub, and also the Automation Controller via MQTT. Add the keyword 'HUE' to CBus objects, plus...
