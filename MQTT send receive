@@ -2,7 +2,7 @@ mqttBroker = '192.168.10.21'
 mqttUsername = 'mqtt'
 mqttPassword = 'password'
 lighting = { ['56'] = true } -- Array of applications that are used for lighting (ramp detection only applies to lighting)
-checkForChanges = true -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
+checkForChanges = false -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
 
 --[[
 Resident, zero sleep interval, name: 'MQTT send/receive'
@@ -782,6 +782,7 @@ function outstandingMqttMessage()
   for _, msg in ipairs(mqttMessages) do
     topic = msg.topic
     payload = msg.payload
+
     local parts = string.split(topic, '/')
 
     -- Messages from CBus
@@ -905,7 +906,7 @@ function outstandingMqttMessage()
             oldState = hue[alias].state; if oldState == nil then oldState = -1 end
             -- Setting CBus here will result in the HUE event script requesting publication of the state using publishHue() above.
             -- This is undesired, so ignoreMqtt[alias] is used to ensure that the CBus change received does not publish to MQTT.
-            if oldState ~= -1 and oldState ~= j['val'] then ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt, oldState='..tostring(oldState)..' j.val='..tostring(j['val'])) end end
+            if oldState ~= -1 and oldState ~= j['val'] then ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..tostring(oldState)..' j.val='..tostring(j['val'])) end end
           else
             ignoreCbus[alias] = nil
             if logging then logger('Ignoring CBus publish for '..alias) end
@@ -921,10 +922,10 @@ function outstandingMqttMessage()
       local sel = 'func'
       -- for loop finding items parts[2] or parts[3] matches a 'sense'... is topic important??? Prolly not...
       for _, a in pairs(ac) do
-        if a['sense'] and (a['sense'] == parts[3] or a['sense'] == parts[4]) and a['topic'] == parts[2] then
+        if a.sense and (a.sense == parts[3] or a.sense == parts[4]) and a.topic == parts[2] then
           sel = 'sense'
-          if a['sense'] == parts[3] then device = parts[1]..'-'..parts[3]
-          elseif a['sense'] == parts[4] then device = parts[1]..'-'..parts[4] end
+          if a.sense == parts[3] then device = parts[1]..'-'..parts[3]
+          elseif a.sense == parts[4] then device = parts[1]..'-'..parts[4] end
           break
         end
       end
@@ -932,25 +933,25 @@ function outstandingMqttMessage()
       if sel == 'func' then device = parts[1]..'-'..parts[4] elseif sel == 'select' then device = parts[1]..'-'..parts[3] end
       local net, app, group
       if acDevices[device] then
-        parts = string.split(acDevices[device], '/')
-        net = parts[1]; app = parts[2]; group = parts[3]
-        alias = net..'/'..app..'/'..group
+        alias = acDevices[device]
+        local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
         if (sel == 'func' and parts[5] == 'state') or (sel == 'sel' and parts[4] == 'state') or sel == 'sense' then
           if ignoreCbus[alias] and os.time() - ignoreCbus[alias] > ignoreTimeout then -- Don't worry about older 'ignore' flags
             ignoreCbus[alias] = nil
             if logging then logger('Ignoring older CBus ignore flag for '..alias) end
           end
-          if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change
+          if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change, and if it is different to the current value
+            local set = false
             local extant = GetUserParam(net, group)
-            if type(extant) == 'number' then
-              if extant ~= tonumber(payload) then SetUserParam(net, group, payload) end
+            local e = tonumber(extant)
+            if e ~= nil then
+              if string.format('%.3f', e) ~= string.format('%.3f', tonumber(payload)) then SetUserParam(net, group, payload); set = true end
             else
-              if extant ~= payload then SetUserParam(net, group, payload) end
+              if extant ~= payload then SetUserParam(net, group, payload); set = true end
             end
-            oldState = ac[alias].state; if oldState == nil then oldState = -1 end
             -- Setting CBus here will result in the AC event script requesting publication of the state using publishAc() above.
             -- This is undesired, so ignoreMqtt[alias] is used to ensure that the CBus change received does not publish to MQTT.
-            if tostring(oldState) ~= "-1" and tostring(oldState) ~= tostring(payload) then ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt, oldState='..tostring(oldState)..' j.val='..tostring(payload)) end end
+            if set then ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end end
           else
             ignoreCbus[alias] = nil
             if logging then logger('Ignoring CBus publish for '..alias) end
@@ -977,6 +978,7 @@ function outstandingMqttMessage()
         env[alias].state = payload
       end
     end
+    ::next::
   end
   mqttMessages = {}
 end
@@ -1094,6 +1096,10 @@ function validateIncoming(cmd) -- Reject any weird socket messages received
   for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dst parts are not whole decimal numbers
   return true
 end
+
+-- Clear previous stored AC payloads
+for _, alias in pairs(acDevices) do storage.set('mqtt'..alias, nil) end
+
 
 while true do
   -- Check for new messages from CBus. The entire socket buffer is collected each iteration for efficiency.
