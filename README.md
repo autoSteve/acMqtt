@@ -15,8 +15,9 @@ The pieces of the puzzle include:
 
 LUA scripts for the automation controller:
 - *MQTT send/receive*: resident, zero sleep (note: code here is "MQTT send receive", without the slash...)
-- *MQTT lastlevel*: event-based, do not execute during ramping, or do. Doesn't matter. Trigger on keyword 'MQTT'
+- *MQTT lastlevel*: event-based, do not execute during ramping. Trigger on keyword 'MQTT'
 - *MQTT*: event-based, execute during ramping, trigger on keyword 'MQTT'
+- *HUE lastlevel*: event-based, do not execute during ramping. Trigger on keyword 'HUE' (this is simply a duplicate of the MQTT lastlevel script triggered on a different keyword)
 - *HUE*: event-based, execute during ramping, trigger on keyword 'HUE'
 - *AC*: event-based, execute during ramping, trigger on keyword 'AC'
 - *Heartbeat*: resident, zero sleep (optional ... monitors for failure of MQTT send/receive and re-starts it)
@@ -144,12 +145,11 @@ It's probaly advisable to configure container restart options in Portainer, so t
 If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. If using Hue, then MQTT Explorer should show 'hue' topics after connection.
 
 ### Home Assistant configuration.yaml example:
-Sets up the MQTT connection, and discovery, plus includes many domains for Google Home (adjust as needed for Alexa, etc.)
+Sets up the MQTT connection, plus includes many domains for Google Home (adjust as needed for Alexa, etc.)
 ~~~
 mqtt:
   client_id: haos
   keepalive: 20
-  discovery_prefix: cbus
 
 cloud:
   google_actions:
