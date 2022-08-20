@@ -45,6 +45,7 @@ mqtt:
   broker: 192.168.10.21
   username: !secret mqtt_user
   password: !secret mqtt_password
+  discovery: false
   
 climate:
   - platform: panasonic_ac
