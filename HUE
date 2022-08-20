@@ -25,7 +25,4 @@ end
 if toSet then
   -- Send an event to publish to broker
   server:sendto(event.dst.."/"..val, '127.0.0.1', 5432)
-
-  -- Send an event to monitor for lastlevel (aplications other than lighting will be ignored)
-  server:sendto(event.dst.."/"..val, '127.0.0.1', 5433)
 end
