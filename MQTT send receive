@@ -118,6 +118,7 @@ Changes:
 1.15 - 09/08/2022 Change last level storage to array (not string), plus MQTT lastlevel bug fixes
 1.16 - 11/08/2022 Revised ramp tracking for MQTT publish, support multiple lighting applications and improve comments
 1.17 - 12/08/2022 Add trigger group support, only button implemented, and uni-directional HA->CBus. Thanks PaddyB.
+1.18 - 21/08/2022 Include ramp detection for Philips Hue groups
 --]]
 
 logging = false        -- Enable detailed logging
@@ -1027,9 +1028,7 @@ function outstandingCbusMessage()
     local parts = string.split(cmd, '/')
     local alias = parts[1]..'/'..parts[2]..'/'..parts[3]
     
-    if hue[alias] then -- Hue message to MQTT
-      publishHue(parts[1], parts[2], parts[3], parts[4])
-    elseif ac[alias] then -- AC message to MQTT
+    if ac[alias] then -- AC message to MQTT
       publishAc(parts[1], parts[2], parts[3], parts[4], ac[alias].select)
     else -- CBus message to MQTT
       if not parts[5] then -- i.e. not measurement application
@@ -1062,7 +1061,11 @@ function outstandingCbusMessage()
           -- Groups other than lighting are never ramped, so setting is always true
         end
         if setting then
-          publish(tNetCBus(net), app, group, payload)
+          if hue[alias] then -- Hue message to MQTT
+            publishHue(parts[1], parts[2], parts[3], parts[4])
+          else
+            publish(tNetCBus(net), app, group, payload)
+          end
           if ramp[alias] and payload == ramp[alias].target then
             ramp[alias] = nil
             if logging then logger('Clear ramp for '..alias) end
