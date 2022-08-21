@@ -878,7 +878,11 @@ function outstandingMqttMessage()
           do return end
         elseif payload == 'ON' then
           if fan[alias] then
-            payload = '255'; if logging then logger("Payload is fan ON, so using RAMP instead") end
+            if lastLevel[alias] then
+              payload = lastLevel[alias]; if logging then logger("Payload is fan ON, so using lastlevel instead") end
+            else
+              payload = '255'; if logging then logger("Payload is fan ON, so using RAMP instead") end
+            end
           else
             if logging then logger('Payload for '..alias..' is ON') end
             SetCBusLevel(net, app, group, 255, 0)
