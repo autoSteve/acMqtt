@@ -129,7 +129,6 @@ checkChanges = 60      -- Interval in seconds to check for changes to object key
 mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
 mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
 blindKey = nil         -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
-fanKey = 'Fan'         -- Sweep fan objects must contain this (case sensitive) string
 rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
 socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
@@ -158,6 +157,7 @@ ignoreMqtt = {}        -- To prevent message loops
 ramp = {}              -- Keeps track of ramping to ignore some zero level MQTT publish events outstandingCbusMessage()
 triggers = {}          -- Trigger groups and associated levels
 cover = {}             -- Quick lookup to determine whether an object is a cover (blind)
+fan = {}               -- Quick lookup to determine whether an object is a fan (sweep fan)
 userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 publishAdj = {}        -- For user parameters, holds scale and decimals to apply
 unpublished = {}       -- The current set of objects to publish discovery topics for
@@ -415,6 +415,7 @@ function addDiscover(net, app, group, channel, tags, name)
       ['pr_mode_val_tpl'] = '{% if value == 0 %} OFF {% elif value == 86 %} low {% elif value == 170 %} medium {% elif value == 255 %} high {% endif %}',
       ['pr_modes'] = {'low', 'medium', 'high'}
     }
+    fan[aAlias] = true
   elseif dType == 'cover' then
     payload = {
       ['stat_t'] = 'cbus/read/'..alias..'/state',
@@ -853,8 +854,8 @@ function outstandingMqttMessage()
         end
 
       elseif parts[6] == 'switch' then
-        if payload == 'ON' then      SetCBusLevel(net, app, group, 255, 0); if logging then logger('Payload is ON') end
-        elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then logger('Payload is OFF') end
+        if payload == 'ON' then      SetCBusLevel(net, app, group, 255, 0); if logging then logger('Payload is ON for '..alias) end
+        elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then logger('Payload is OFF for '..alias) end
         end
         
       elseif parts[7] ~= nil and contains('press', parts[7]) and payload == 'PRESS' then
@@ -873,38 +874,42 @@ function outstandingMqttMessage()
         elseif payload == 'STOP' then
           -- Once a blind level has been set for CBus it is set regardless of the current blind
           -- position, which is not updated like a ramp, so a stop command is nonsensical
-          if logging then logger("Payload is STOP, which is incompatible with CBus... ignoring") end
+          if logging then logger("Payload for '..alias..' is STOP, which is incompatible with CBus... ignoring") end
           do return end
         elseif payload == 'ON' then
-          if contains(fanKey, GetCBusGroupTag(net, app, group)) then
-            payload = '255'; if logging then logger("Payload is '"..fanKey.."' ON, so using RAMP instead") end
+          if fan[alias] then
+            payload = '255'; if logging then logger("Payload is fan ON, so using RAMP instead") end
           else
-            if logging then logger('Payload is ON') end
+            if logging then logger('Payload for '..alias..' is ON') end
             SetCBusLevel(net, app, group, 255, 0)
             do return end
           end
         end
         if payload == 'OFF' then
-          if logging then logger('Payload is OFF') end
+          if logging then logger('Payload for '..alias..' is OFF') end
           SetCBusLevel(net, app, group, 0, 0)
         else
-          local key = net..'/'..app..'/'..group
           parts = string.split(payload, ',')
           local lev = tonumber(parts[1])
           local num
-          if lev ~= nil then num = math.floor(lev + 0.5) else logger('Warning: non-numeric CBus level for '..key..', level='..parts[1]); num = nil end
+          if lev ~= nil then num = math.floor(lev + 0.5) else logger('Warning: non-numeric CBus level for '..alias..', level='..parts[1]); num = nil end
           if num ~= nil and num < 256 then
-            if logging then logger('Payload is RAMP '..payload) end
+            if logging then logger('Payload for '..alias..' is RAMP '..payload) end
             local toSet = 0
             local ramp = 0
-            if logging and lastLevel[key] then logger('Last level '..lastLevel[key]) end
-            if lastLevel[key] and num == 255 then
-              if blindKey and contains(blindKey, GetCBusGroupTag(net, app, group)) then
-                toSet = num; if logging then logger("Payload is 'Blind' ramp on, so ignoring lastlevel") end
+            if not fan[alias] then 
+              if logging and lastLevel[alias] then logger('Last level '..lastLevel[alias]) end
+              if lastLevel[alias] and num == 255 then
+                if blindKey and contains(blindKey, GetCBusGroupTag(net, app, group)) then
+                  toSet = num; if logging then logger("Payload is 'Blind' ramp on, so ignoring lastlevel") end
+                else
+                  toSet = lastLevel[alias]
+                end
               else
-                toSet = lastLevel[key]
+                toSet = num
               end
             else
+              if logging then logger("Payload is 'Fan' ramp, so ignoring lastlevel") end
               toSet = num
             end
             if parts[2] ~= nil then ramp = tonumber(parts[2]) else ramp = 0 end
@@ -1028,7 +1033,7 @@ function outstandingCbusMessage()
     local parts = string.split(cmd, '/')
     local alias = parts[1]..'/'..parts[2]..'/'..parts[3]
     
-    if ac[alias] then -- AC message to MQTT
+    if ac[alias] then -- AC message to MQTT (no ramping involved for AC groups)
       publishAc(parts[1], parts[2], parts[3], parts[4], ac[alias].select)
     else -- CBus message to MQTT
       if not parts[5] then -- i.e. not measurement application
