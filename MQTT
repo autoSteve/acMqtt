@@ -1,15 +1,42 @@
 --[[
 Event-based, execute during ramping, name: "MQTT"
 
-Pushes CBus events to MQTT resident scripts via internal sockets. Used with Home Assistant.
+Pushes CBus events to MQTT resident scripts via internal sockets and maintains CBus 'lastlevels'
 
 Tag required objects with the "MQTT" keyword and this script will run whenever one of those objects change.
 
-It seems that this script must be disabled/enabled to enable it to be tied to new objects assigned the MQTT
-keyword, and the MQTT send/receive script does this automatically every time a change is detected.
+Last levels are tracked so that MQTT 'on' events can return a light/fan/blind to the last known set level.
+Only lighting application groups are tracked.
+
+Home Assistant with an MQTT integration and Google assistant only allows for on/off
+("Hey Google, turn on the dunny light"), and not remembering the previous level set, so
+this script, in conjunction with the MQTT send/receive script works around that. Setting
+another level is not affected - just "on" commands.
 --]]
 
 logging = false
+lighting = {['56']=true} -- Array of applications that are used for lighting
+
+
+function saveLastLevel()
+  -- Get old levels to see if anything changed
+  local oldLastLevel = storage.get('lastlvl', {})
+  local changed = {}
+  local k, v
+
+  for k, v in pairs(lastLevel) do
+    if oldLastLevel[k] == nil or oldLastLevel[k] ~= v then -- Add to changes
+      changed[#changed + 1] = k..' '..tostring(oldLastLevel[k])..'->'..tostring(v)
+    end
+  end
+  
+  if #changed then
+    storage.set('lastlvl', lastLevel)
+    if logging then log('Saved last levels. Object(s) changed: '..table.concat(changed, ', ')) end
+  end
+end
+
+
 server = require('socket').udp()
 
 sKey = 'pre'..event.dst
@@ -17,9 +44,8 @@ toSet = true
 val = event.getvalue()
 pre = -1
 comp = val
-
 parts = string.split(event.dst, '/')
-app = tonumber(parts[2])
+net = tonumber(parts[1]); app = tonumber(parts[2]); group = tonumber(parts[3])
 
 if app ~= 202 then -- Not trigger app
   pre = storage.get(sKey)
@@ -32,8 +58,19 @@ else
   toSet = false -- Don't send trigger control. One-way from MQTT to CBus...
 end
 
+-- Send an event to publish to broker if changed
 if toSet then
   if logging then log('Setting '..event.dst..' to '..comp..', previous='..pre) end
 
-  server:sendto(event.dst.."/"..val, '127.0.0.1', 5432) -- Send an event to publish to broker
+  server:sendto(event.dst.."/"..val, '127.0.0.1', 5432)
+end
+
+-- Check whether to set the level as a tracked lastlevel
+if val ~= 0 and lighting[parts[2]] and val == GetCBusTargetLevel(net, app, group) then
+  lastLevel = storage.get('lastlvl', {})
+  if val ~= lastLevel[event.dst] then
+    lastLevel[event.dst] = val
+    if logging then log('Set lastLevel to '..val..' for '..event.dst) end
+    saveLastLevel()
+  end
 end

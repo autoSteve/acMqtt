@@ -118,7 +118,6 @@ Changes:
 1.15 - 09/08/2022 Change last level storage to array (not string), plus MQTT lastlevel bug fixes
 1.16 - 11/08/2022 Revised ramp tracking for MQTT publish, support multiple lighting applications and improve comments
 1.17 - 12/08/2022 Add trigger group support, only button implemented, and uni-directional HA->CBus. Thanks PaddyB.
-1.18 - 20/08/2022 Change mqtt discovery topic to homeassistant/. Again thanks PaddyB.
 --]]
 
 logging = false        -- Enable detailed logging
