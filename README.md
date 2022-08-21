@@ -15,9 +15,7 @@ The pieces of the puzzle include:
 
 LUA scripts for the automation controller:
 - *MQTT send/receive*: resident, zero sleep (note: code here is "MQTT send receive", without the slash...)
-- *MQTT lastlevel*: event-based, do not execute during ramping. Trigger on keyword 'MQTT'
 - *MQTT*: event-based, execute during ramping, trigger on keyword 'MQTT'
-- *HUE lastlevel*: event-based, do not execute during ramping. Trigger on keyword 'HUE' (this is simply a duplicate of the MQTT lastlevel script triggered on a different keyword)
 - *HUE*: event-based, execute during ramping, trigger on keyword 'HUE'
 - *AC*: event-based, execute during ramping, trigger on keyword 'AC'
 - *Heartbeat*: resident, zero sleep (optional ... monitors for failure of MQTT send/receive and re-starts it)
