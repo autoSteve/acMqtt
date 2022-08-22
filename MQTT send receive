@@ -133,7 +133,7 @@ rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
 socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
-sendHeartbeat = 5      -- Send a heartbeat to 'MQTT lastlevel' every n seconds
+sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds
 
 mqttReadTopic = 'cbus/read/'
 mqttWriteTopic = 'cbus/write/#'
@@ -452,8 +452,6 @@ function addDiscover(net, app, group, channel, tags, name)
         table.insert(mqttDevices[aAlias].trigger, boid)
       end
     end
-  elseif dType == 'select' and app == 202 then
-
   elseif dType == 'sensor' then
     if channel ~= nil then
       payload = { ['stat_t'] = 'cbus/read/'..alias..'_'..channel..'/state', }
@@ -490,9 +488,7 @@ function publishCurrent()
   local k, v
   for k, v in pairs(grps) do
     n = n + 1
-    local net = tonumber(v['address'][1])
-    local app = tonumber(v['address'][2])
-    local group = tonumber(v['address'][3])
+    local net = tonumber(v['address'][1]); local app = tonumber(v['address'][2]); local group = tonumber(v['address'][3])
     if v['address'][4] ~= nil then channel = tonumber(v['address'][4]) else channel = nil end
     local tags = v['keywords'];
     local name; if v['name'] then name = v['name'] else name = GetCBusGroupTag(net, app, group) end
@@ -515,9 +511,7 @@ function cudHue(initial)
   local k, v
 
   for k, v in pairs(grps) do
-    local net = tonumber(v['address'][1])
-    local app = tonumber(v['address'][2])
-    local group = tonumber(v['address'][3])
+    local net = tonumber(v['address'][1]); local app = tonumber(v['address'][2]); local group = tonumber(v['address'][3])
     local pn = GetCBusGroupTag(net, app, group)
     local alias = net..'/'..app..'/'..group
 
@@ -560,9 +554,7 @@ function cudAc(initial)
   local k, v
 
   for k, v in pairs(grps) do
-    local net = tonumber(v['address'][1])
-    local app = tonumber(v['address'][2])
-    local group = tonumber(v['address'][3])
+    local net = tonumber(v['address'][1]); local app = tonumber(v['address'][2]); local group = tonumber(v['address'][3])
     local pn = v['name']
     local alias = net..'/'..app..'/'..group
 
@@ -620,9 +612,7 @@ function cudEnv(initial)
   local k, v
 
   for k, v in pairs(grps) do
-    local net = tonumber(v['address'][1])
-    local app = tonumber(v['address'][2])
-    local group = tonumber(v['address'][3])
+    local net = tonumber(v['address'][1]); local app = tonumber(v['address'][2]); local group = tonumber(v['address'][3])
     local alias = net..'/'..app..'/'..group
 
     table.insert(found, alias)
@@ -671,9 +661,7 @@ function cudCBusTopics()
 
   for k, v in pairs(grps) do
     local change = false
-    local net = v['address'][1]
-    local app = v['address'][2]
-    local group = v['address'][3]
+    local net = v['address'][1]; local app = v['address'][2]; local group = v['address'][3]
     local channel = nil
     alias = net..'/'..app..'/'..group
     if v['address'][4] then channel = v['address'][4]; alias = alias..'/'..channel end
@@ -744,14 +732,18 @@ function cudCBusTopics()
         local count
         _, count = k:gsub('/','')
         if count == 3 then -- Measurement application
-          t = k:gsub('/', '_'); t = t:gsub('_', '/', 2) -- Convert the last slash to an underscore
+          t = tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..parts[4]
+          t = t:gsub('/', '_'); t = t:gsub('_', '/', 2) -- Convert the last slash to an underscore
           topic = mqttReadTopic..t;
         else
-          topic = mqttReadTopic..k;
+          topic = mqttReadTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]
         end
-        client:publish(topic..'/state', 'junk', mqttQoS, NORETAIN)
-        client:publish(topic..'/state', '', mqttQoS, NORETAIN)
-        if count ~= 3 then client:publish(topic..'/level', '', mqttQoS, NORETAIN) end -- Level not set for measurement
+        client:publish(topic..'/state', 'junk', mqttQoS, RETAIN)
+        client:publish(topic..'/state', '', mqttQoS, RETAIN)
+        if count ~= 3 then  -- Level not set for measurement
+          client:publish(topic..'/level', 'junk', mqttQoS, RETAIN)
+          client:publish(topic..'/level', '', mqttQoS, RETAIN)
+        end
       end
     else
       -- Handle trigger level removal
@@ -820,9 +812,7 @@ function outstandingMqttMessage()
     -- Messages from CBus
     if parts[1] == 'cbus' and parts[2] == 'write' then
 
-      local net = tNetAC(tonumber(parts[3]))
-      local app = tonumber(parts[4])
-      local group = tonumber(parts[5])
+      local net = tNetAC(tonumber(parts[3])); local app = tonumber(parts[4]); local group = tonumber(parts[5])
       local alias = net..'/'..app..'/'..group
       if logging then logger(topic..' to '..payload) end
 
