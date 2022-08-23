@@ -19,7 +19,7 @@ Add the keyword 'MQTT' to groups for CBus discovery, plus...
   One of  light, fan, cover, sensor, switch, or button, plus...    ('button' is for trigger control only, default if not specified is 'light')
   sa=     Suggested area
   img=    Image
-  pn=     Preferred name (defaults to CBus tag)
+  pn=     Preferred name (defaults to CBus tag, prepended to a trigger level tag for trigger control)
   dec=    Decimal places (User param only)
   unit=   Unit of measurement (User param only)
   scale=  Multiplier / divider (User param only)
@@ -128,6 +128,7 @@ checkChanges = 60      -- Interval in seconds to check for changes to object key
 
 mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
 mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
+mqttJunk = true        -- Whether to publish junk before a blank publish message when removing topics
 blindKey = nil         -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
 rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
 socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
@@ -164,7 +165,7 @@ unpublished = {}       -- The current set of objects to publish discovery topics
 mqttStatus = 2         -- Initially disconnected 1=connected, 2=disconnected
 mqttConnected = 0      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
 
-RETAIN = true
+RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
 NORETAIN = false
 
 heartbeat = os.time()
@@ -222,7 +223,7 @@ end
 Publish lighting group and user parameter objects to MQTT 
 --]]
 function publish(net, app, group, level)
-  if level == nil then logger('Warning: Nil CBus level for '..net..'/'..app..'/'..group); return end
+  if level == nil then logger('Warning: Nil CBus level for '..net..'/'..app..'/'..group); do return end end
   local alias = net..'/'..app..'/'..group
   local state = ''
   if cover[alias] then
@@ -246,7 +247,7 @@ end
 Publish measurement application objects to MQTT 
 --]]
 function publishMeasurement(net, app, group, channel, value)
-  if value == nil then logger('Warning: Nil CBus measurement value for '..net..'/'..app..'/'..group); return end
+  if value == nil then logger('Warning: Nil CBus measurement value for '..net..'/'..app..'/'..group); do return end end
   local adjust = publishAdj[net..'/'..app..'/'..group..'/'..channel]
   if adjust then v = tonumber(string.format('%.'..adjust['dec']..'f', value * adjust['scale'])) else v = value end
   client:publish(mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/state', v, mqttQoS, RETAIN)
@@ -257,7 +258,7 @@ end
 Publish Philips Hue objects to MQTT 
 --]]
 function publishHue(net, app, group, level)
-  if level == nil then logger('Warning: Nil Hue level for '..net..'/'..app..'/'..group); return end
+  if level == nil then logger('Warning: Nil Hue level for '..net..'/'..app..'/'..group); do return end end
   local state = (tonumber(level) ~= 0) and true or false
   local alias = net..'/'..app..'/'..group
   local hueState
@@ -298,7 +299,7 @@ end
 Publish AC objects to MQTT 
 --]]
 function publishAc(net, app, group, level, select)
-  if level == nil then logger('Warning: Nil AC level for '..net..'/'..app..'/'..group); return end
+  if level == nil then logger('Warning: Nil AC level for '..net..'/'..app..'/'..group); do return end end
   local alias = net..'/'..app..'/'..group
   if ac[alias].state ~= level then
     if ignoreMqtt[alias] and (os.time() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
@@ -441,6 +442,7 @@ function addDiscover(net, app, group, channel, tags, name)
         if pn == name then prefix = '' else prefix = pn..' ' end
         payload = {
           ['name'] = prefix..tag,
+          ['obj_id'] = boid,
           ['uniq_id'] = boid,
           ['cmd_t'] = 'cbus/write/'..alias..'/'..action..'/press',
           ['dev'] = { ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' },
@@ -467,8 +469,9 @@ function addDiscover(net, app, group, channel, tags, name)
   -- Add payload common to all
   if app ~= 202 then -- Triggers done above
     payload['name'] = pn
+    payload['obj_id'] = oid
     payload['uniq_id'] = oid
-    payload['dev'] = { ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' }
+    payload['dev'] = { ['name'] = pn, ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' }
     if img ~= '' then payload['ic'] = img end
 
     -- Publish to MQTT broker
@@ -721,7 +724,7 @@ function cudCBusTopics()
             if t == tv then act = tk break end
           end
           t = mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
-          client:publish(t, 'junk', mqttQoS, RETAIN) -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
+          if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
           client:publish(t, '', mqttQoS, RETAIN)
         end
       else
@@ -738,10 +741,10 @@ function cudCBusTopics()
         else
           topic = mqttReadTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]
         end
-        client:publish(topic..'/state', 'junk', mqttQoS, RETAIN)
+        if mqttJunk then client:publish(topic..'/state', 'junk', mqttQoS, RETAIN) end
         client:publish(topic..'/state', '', mqttQoS, RETAIN)
         if count ~= 3 then  -- Level not set for measurement
-          client:publish(topic..'/level', 'junk', mqttQoS, RETAIN)
+          if mqttJunk then client:publish(topic..'/level', 'junk', mqttQoS, RETAIN) end
           client:publish(topic..'/level', '', mqttQoS, RETAIN)
         end
       end
@@ -757,7 +760,7 @@ function cudCBusTopics()
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
           client:publish(topic, '', mqttQoS, NORETAIN); logger('Remove discovery topic '..topic)
           t = mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
-          client:publish(t, 'junk', mqttQoS, RETAIN) -- Publish junk to topic to be deleted (some topics may not have been written yet)
+          if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
           client:publish(t, '', mqttQoS, RETAIN)
         end
       end
