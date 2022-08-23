@@ -500,7 +500,7 @@ function publishCurrent()
     table.sort(tags); local curr = table.concat(tags,',')
     if not mqttDevices[alias] then mqttDevices[alias] = {}; mqttDevices[alias].tags = curr end
   end
-  logger('Queued '..n..' objects with keyword MQTT for publication')
+  if logging then logger('Queued '..n..' objects with keyword MQTT for publication') end
 end
 
 
@@ -716,7 +716,7 @@ function cudCBusTopics()
       if parts[2] == '202' then
         for _, trigger in ipairs(v.trigger) do
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
-      	  client:publish(topic, '', mqttQoS, NORETAIN); logger('Removed discovery topic '..topic)
+      	  client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic)
           local t = tonumber(string.match(trigger, '_(%w+)$'))
           local act
           local tk, tv
@@ -729,7 +729,7 @@ function cudCBusTopics()
         end
       else
         topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
-      	client:publish(topic, '', mqttQoS, NORETAIN); logger('Removed discovery topic '..topic)
+      	client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic)
       end
       if parts[2] ~= '202' then
         local count
@@ -758,7 +758,7 @@ function cudCBusTopics()
           local a, t, act; for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
           for _, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; break end end
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
-          client:publish(topic, '', mqttQoS, NORETAIN); logger('Remove discovery topic '..topic)
+          client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic '..topic)
           t = mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
           if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
           client:publish(t, '', mqttQoS, RETAIN)
