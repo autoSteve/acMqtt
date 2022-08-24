@@ -660,6 +660,7 @@ function cudCBusTopics()
   local lvlDelete = {}
   local n = 0
   unpublished = {}
+  local queued = {}
   local k, v, alias, lvl
 
   for k, v in pairs(grps) do
@@ -701,9 +702,10 @@ function cudCBusTopics()
       if v['name'] then name = v['name'] else name = GetCBusGroupTag(net, app, group) end
       n = n + 1
       unpublished[n] = {net=net, app=app, group=group, channel=channel, tags=tags, name=name}
+      queued[#queued + 1] = alias
     end
   end
-  if n > 0 then logger('Queued '..n..' objects with keyword MQTT for publication') end
+  if n > 0 then logger('Queued '..n..' object'..(n ~= 1 and 's' or '')..' with keyword MQTT for publication: '..table.concat(queued, ', ')) end
 
   -- Handle deletions
   kill = {}
@@ -795,7 +797,7 @@ function outstandingPublish()
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT/HUE/AC keywords send updates
     if script.status('MQTT') ~= nil then script.disable('MQTT'); script.enable('MQTT') end
-    logger('Publishing completed for '..#unpublished..' discovery and current level topic'..(#unpublished ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
+    logger('Published '..#unpublished..' discovery and current level topic'..(#unpublished ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
     unpublished = {}
   end
 end
