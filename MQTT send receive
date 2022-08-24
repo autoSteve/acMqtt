@@ -134,7 +134,7 @@ rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
 socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
-sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds
+sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 
 mqttReadTopic = 'cbus/read/'
 mqttWriteTopic = 'cbus/write/#'
@@ -350,6 +350,7 @@ function addDiscover(net, app, group, channel, tags, name)
   local scale = 1
   local decimals = 2
   local dType = 'light'
+  local writeTopic = mqttWriteTopic:gsub('#', '')
   
   -- Build an alias to refer to each group
   alias = tNetAC(net)..'/'..app..'/'..group;  if channel ~= nil then alias = alias..'/'..channel end
@@ -390,43 +391,43 @@ function addDiscover(net, app, group, channel, tags, name)
   -- Build the type-specific payload to publish
   if dType == 'light' then
     payload = {
-      ['stat_t'] = 'cbus/read/'..alias..'/state',
-      ['cmd_t'] = 'cbus/write/'..alias..'/switch',
-      ['bri_stat_t'] = 'cbus/read/'..alias..'/level',
-      ['bri_cmd_t'] = 'cbus/write/'..alias..'/ramp',
+      ['stat_t'] = mqttReadTopic..alias..'/state',
+      ['cmd_t'] = writeTopic..alias..'/switch',
+      ['bri_stat_t'] = mqttReadTopic..alias..'/level',
+      ['bri_cmd_t'] = writeTopic..alias..'/ramp',
       ['pl_off'] = 'OFF',
       ['on_cmd_type'] = 'brightness',
     }
   elseif dType == 'switch' then
     payload = {
-      ['stat_t'] = 'cbus/read/'..alias..'/state',
-      ['cmd_t'] = 'cbus/write/'..alias..'/switch',
+      ['stat_t'] = mqttReadTopic..alias..'/state',
+      ['cmd_t'] = writeTopic..alias..'/switch',
       ['pl_on'] = 'ON',
       ['pl_off'] = 'OFF',
     }
   elseif dType == 'fan' then
     payload = {
-      ['stat_t'] = 'cbus/read/'..alias..'/state',
-      ['cmd_t'] = 'cbus/write/'..alias..'/ramp',
+      ['stat_t'] = mqttReadTopic..alias..'/state',
+      ['cmd_t'] = writeTopic..alias..'/ramp',
       ['pl_on'] = 'ON',
       ['pl_off'] = 'OFF',
-      ['pr_mode_cmd_t'] = 'cbus/write/'..alias..'/ramp',
+      ['pr_mode_cmd_t'] = writeTopic..alias..'/ramp',
       ['pr_mode_cmd_tpl'] = '{% if value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
-      ['pr_mode_stat_t'] = 'cbus/read/'..alias..'/level',
+      ['pr_mode_stat_t'] = mqttReadTopic..alias..'/level',
       ['pr_mode_val_tpl'] = '{% if value == 0 %} OFF {% elif value == 86 %} low {% elif value == 170 %} medium {% elif value == 255 %} high {% endif %}',
       ['pr_modes'] = {'low', 'medium', 'high'}
     }
     fan[aAlias] = true
   elseif dType == 'cover' then
     payload = {
-      ['stat_t'] = 'cbus/read/'..alias..'/state',
-      ['cmd_t'] = 'cbus/write/'..alias..'/ramp',
+      ['stat_t'] = mqttReadTopic..alias..'/state',
+      ['cmd_t'] = writeTopic..alias..'/ramp',
       ['pos_open'] = 255,
       ['pos_clsd'] = 0,
       ['pl_open'] = 'OPEN',
       ['pl_cls'] = 'CLOSE',
-      ['pos_t'] = 'cbus/read/'..alias..'/level',
-      ['set_pos_t'] = 'cbus/write/'..alias..'/ramp',
+      ['pos_t'] = mqttReadTopic..alias..'/level',
+      ['set_pos_t'] = writeTopic..alias..'/ramp',
     }
     cover[alias] = true
   elseif dType == 'button' and app == 202 then
@@ -444,7 +445,7 @@ function addDiscover(net, app, group, channel, tags, name)
           ['name'] = prefix..tag,
           ['obj_id'] = boid,
           ['uniq_id'] = boid,
-          ['cmd_t'] = 'cbus/write/'..alias..'/'..action..'/press',
+          ['cmd_t'] = writeTopic..alias..'/'..action..'/press',
           ['dev'] = { ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' },
         }
         if img ~= '' then payload['ic'] = img end
@@ -456,10 +457,10 @@ function addDiscover(net, app, group, channel, tags, name)
     end
   elseif dType == 'sensor' then
     if channel ~= nil then
-      payload = { ['stat_t'] = 'cbus/read/'..alias..'_'..channel..'/state', }
+      payload = { ['stat_t'] = mqttReadTopic..alias..'_'..channel..'/state', }
       alias = alias..'/'..channel
     else
-      payload = { ['stat_t'] = 'cbus/read/'..alias..'/state', }
+      payload = { ['stat_t'] = mqttReadTopic..alias..'/state', }
     end
     if app == 250 then userParameter[alias] = true end
     if decimals ~= 2 or scale ~= 1 then publishAdj[alias] = { ['dec'] = decimals, ['scale'] = scale } end -- Scale, decimals and units only for sensors
@@ -842,8 +843,8 @@ function outstandingMqttMessage()
               level = tonumber(value.data)
               state = (level ~= 0) and 'ON' or 'OFF'
               if logging then logger(parts[3]..', '..tostring(app)..', '..tostring(group)..', '..tostring(state)..', '..tostring(level)) end
-              client:publish('cbus/read/'..alias..'/state', state, mqttQoS, RETAIN)
-              client:publish('cbus/read/'..alias..'/level', level, mqttQoS, RETAIN)
+              client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
+              client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
             end
           end
         end
@@ -1187,10 +1188,12 @@ while true do
   script (it being resident/sleep zero).
   --]]
   
-  local stat, err = pcall(function ()
-    if os.time() - heartbeat >= sendHeartbeat then
-      heartbeat = os.time(); require('socket').udp():sendto('MQTT send/receive+'..heartbeat, '127.0.0.1', 5433)
-    end
-  end)
-  if not stat then logger('A fault occurred sending heartbeat. Restarting...'); do return end end
+  if sendHeartbeat > 0 then
+    local stat, err = pcall(function ()
+      if os.time() - heartbeat >= sendHeartbeat then
+        heartbeat = os.time(); require('socket').udp():sendto('MQTT send/receive+'..heartbeat, '127.0.0.1', 5433)
+      end
+    end)
+    if not stat then logger('A fault occurred sending heartbeat. Restarting...'); do return end end
+  end
 end
