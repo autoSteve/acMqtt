@@ -128,7 +128,7 @@ checkChanges = 60      -- Interval in seconds to check for changes to object key
 
 mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
 mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
-mqttJunk = true        -- Whether to publish junk before a blank publish message when removing topics
+mqttJunk = true        -- Whether to publish junk before a blank publish message when removing topics (probably not necessary, but cleans up MQTT Explorer view)
 blindKey = nil         -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
 rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
 socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
@@ -136,11 +136,16 @@ mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you
 ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 
+--[[
+Topic prefixes for read/write/publish. Hue topics are based on hue2mqtt.js. The mqttDiscovery topic is recommended
+to be set to 'homeassistant/' for use with HA, which is the default there. The MQTT CBus topics can be whatever you
+want, as discovery/subscribe adjusts. All topic prefixes must end in '/'.
+--]]
 mqttReadTopic = 'cbus/read/'
-mqttWriteTopic = 'cbus/write/#'
+mqttWriteTopic = 'cbus/write/'
 mqttDiscoveryTopic = 'homeassistant/'
-hueTopic = 'hue/#'
-hueSetTopic = 'hue/set/lights/'
+hueTopic = 'hue/'
+hueSetTopic = hueTopic..'set/lights/'
 
 mqttDevices = {}       -- CBus groups to send MQTT topics for
 hue = {}               -- Hue device details (name, state, dimmable, etc) 
@@ -199,8 +204,8 @@ client.ON_CONNECT = function(success)
     logger('MQTT connected')
     mqttStatus = 1
     -- Subscribe to relevant topics
-    client:subscribe(mqttWriteTopic, mqttQoS)
-    client:subscribe(hueTopic, mqttQoS)
+    client:subscribe(mqttWriteTopic..'#', mqttQoS)
+    client:subscribe(hueTopic..'#', mqttQoS)
     for k, _ in pairs(acBoards) do client:subscribe(k..'/#', mqttQoS) end
     for k, _ in pairs(envBoards) do client:subscribe(k..'/#', mqttQoS) end
 
@@ -541,7 +546,7 @@ function cudHue(initial)
   if addition and not initial then -- Re-subscribe Hue topic to get status of newly added devices
     -- Re-subscribe. This works because the default for hue2mqtt.js is to publish topics with a
     -- retain flag. A re-subscribe here will result in gathering current status.
-    client:subscribe(hueTopic, 2)
+    client:subscribe(hueTopic..'#', 2)
     -- Ensure that newly tagged/removed groups with the MQTT/HUE keywords send updates.
     logger('Hue object keywords added, restarting event script')
     script.disable('HUE'); script.enable('HUE')
@@ -726,7 +731,7 @@ function cudCBusTopics()
           for tk, tv in pairs(triggers[tonumber(parts[3])]) do
             if t == tv then act = tk break end
           end
-          t = mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
+          t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
           if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
           client:publish(t, '', mqttQoS, RETAIN)
         end
@@ -762,7 +767,7 @@ function cudCBusTopics()
           for _, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; break end end
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
           client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic '..topic)
-          t = mqttWriteTopic:gsub('#', '')..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
+          t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
           if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
           client:publish(t, '', mqttQoS, RETAIN)
         end
@@ -1182,7 +1187,7 @@ while true do
   end
 
   --[[
-  Send a heartbeat periodically to port 5433, listened to by the MQTT lastlevel script.
+  Send a heartbeat periodically to port 5433, listened to by the Heartheat script.
   If execution is disrupted by any error or lockup then this script will be re-started.
   If sending the heartbeat faults, then the loop is exited, which will also re-start this
   script (it being resident/sleep zero).
