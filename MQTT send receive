@@ -408,14 +408,21 @@ function addDiscover(net, app, group, channel, tags, name)
   
   if logging then
     if sa == '' then dSa = 'no preferred area' else dSa = sa end
-    logger('Publish discovery '..name..' as '..dType..':'..pn..' in area '..dSa)
+    if dType ~= 'bsensor' then
+    	logger('Publish discovery '..name..' as '..dType..':'..pn..' in area '..dSa)
+    else
+    	logger('Publish discovery '..name..' as sensor:'..pn..' in area '..dSa)
+    end
   end
 
   -- Build an OID (measurement application gets a channel as well), also add to mqttDevices
   oid = 'cbus_mqtt_'..net..'_'.. app..'_'..group; if channel ~= nil then oid = oid..'_'..channel end;
   mqttDevices[alias].oid = oid
-  mqttDevices[alias].type = dType
-
+  if dType ~= 'bsensor' then
+    mqttDevices[alias].type = dType
+  else
+    mqttDevices[alias].type = 'sensor'
+  end
   aAlias = alias
   alias = net..'/'..app..'/'..group -- Will adjust for CBus numbered networks
   -- Build the type-specific payload to publish
