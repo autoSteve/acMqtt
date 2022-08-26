@@ -125,6 +125,7 @@ logging = false        -- Enable detailed logging
 logms = false          -- Include timestamp in milliseconds for logs
 
 checkChanges = 60      -- Interval in seconds to check for changes to object keywords
+publishNoLevel = false -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
 
 mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
 mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
@@ -352,6 +353,7 @@ function addDiscover(net, app, group, channel, tags, name)
   local img = ''
   local units = ''
   local levels = {}
+  local lvl = false
   local scale = 1
   local decimals = 2
   local dType = 'light'
@@ -372,7 +374,7 @@ function addDiscover(net, app, group, channel, tags, name)
       elseif tp[1] == 'unit' then units = tp[2]
       elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
       elseif tp[1] == 'scale' then scale = tonumber(tp[2])
-      elseif tp[1] == 'lvl' then levels = string.split(tp[2], '-')
+      elseif tp[1] == 'lvl' then levels = string.split(tp[2], '-'); lvl = true
       end
     else
       if tp[1] ~= 'MQTT' then dType = tp[1] end
@@ -440,6 +442,16 @@ function addDiscover(net, app, group, channel, tags, name)
     if #levels == 0 then for i = 0,255 do levels[#levels + 1] = i end end -- If no "lvl=" specified then scan all levels
     for _, i in ipairs(levels) do 
       tag = GetCBusLevelTag(tNetAC(net), 202, group, tonumber(i))
+      if not tag then
+        if publishNoLevel then
+          if lvl then
+            tag = 'Level '..i
+            logger('Warning: Trigger '..alias..' has no level tag defined for level '..i..', setting to "'..tag..'"')
+          end
+        else
+          if lvl then logger('Error: Trigger '..alias..' has no level tag defined for level '..i) end
+        end
+      end
       if tag then
         boid = oid..'_'..i
         action = tag:gsub("%s+", "_"):lower()
@@ -764,12 +776,15 @@ function cudCBusTopics()
           local parts = string.split(k, '/')
           local group = tonumber(parts[3])
           local a, t, act; for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
+          trigger = nil
           for _, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; break end end
-          topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
-          client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic '..topic)
-          t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
-          if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
-          client:publish(t, '', mqttQoS, RETAIN)
+          if trigger then
+            topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
+            client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic '..topic)
+            t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
+            if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
+            client:publish(t, '', mqttQoS, RETAIN)
+          end
         end
       end
     end
