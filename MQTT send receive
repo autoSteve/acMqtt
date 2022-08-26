@@ -16,16 +16,19 @@ Lighting, measurement, user parameter and trigger applications are implemented.
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-  One of  light, fan, cover, sensor, switch, or button, plus...    ('button' is for trigger control only, default if not specified is 'light')
+  One of  light, fan, cover, sensor, switch, binary_sensor, bsensor or button, plus...  ('button' is for trigger control only, default if not specified is 'light')
   sa=     Suggested area
   img=    Image
   pn=     Preferred name (defaults to CBus tag, prepended to a trigger level tag for trigger control)
-  dec=    Decimal places (User param only)
-  unit=   Unit of measurement (User param only)
-  scale=  Multiplier / divider (User param only)
+  class=  Device class to use in Home Assistant (User param/sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
+  dec=    Decimal places (User param/sensor only)
+  unit=   Unit of measurement (User param/sensor only)
+  scale=  Multiplier / divider (User param/sensor only)
   lvl=    List of applicable levels, separated by "-' (Trigger only, used to publish only certain levels, and improves discovery performance)
+  on=     Alias for a 'bsensor' ON value (bsensor only)
+  off=    Alias for a 'bsensor' OFF value (bsensor only)
 
-For buttons, the preferred name is used as an optional prefix to the trigger level tag to name the button.
+For buttons the preferred name is used as an optional prefix to the trigger level tag to name the button.
 
 Keyword examples:
 
@@ -36,6 +39,7 @@ MQTT, cover, sa=Bathroom 2, img=mdi:blinds,
 MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
 MQTT, button, lvl=0-1-2-5-127, pn=Inside, 
+MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
 
 >>> HUE
 
@@ -165,6 +169,8 @@ ramp = {}              -- Keeps track of ramping to ignore some zero level MQTT 
 triggers = {}          -- Trigger groups and associated levels
 cover = {}             -- Quick lookup to determine whether an object is a cover (blind)
 fan = {}               -- Quick lookup to determine whether an object is a fan (sweep fan)
+bSensor = {}           -- Quick lookup to determine whether an object is a bsensor (a regular lighting group acting as status)
+binarySensor = {}      -- Quick lookup to determine whether an object is a binary sensor
 userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 publishAdj = {}        -- For user parameters, holds scale and decimals to apply
 unpublished = {}       -- The current set of objects to publish discovery topics for
@@ -231,6 +237,7 @@ Publish lighting group and user parameter objects to MQTT
 function publish(net, app, group, level)
   if level == nil then logger('Warning: Nil CBus level for '..net..'/'..app..'/'..group); do return end end
   local alias = net..'/'..app..'/'..group
+  local aAlias = tNetAC(net)..'/'..app..'/'..group
   local state = ''
   if cover[alias] then
     state = 'stopped' -- For CBus blind controllers
@@ -238,9 +245,19 @@ function publish(net, app, group, level)
     state = (tonumber(level) ~= 0) and 'ON' or 'OFF'
   end
   if not userParameter[alias] then
-    client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
-    client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
-    if logging then logger('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level) end
+    if not binarySensor[aAlias] then
+      if not bSensor[aAlias] then
+        client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
+        client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
+        if logging then logger('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level) end
+      else
+        client:publish(mqttReadTopic..alias..'/state', level, mqttQoS, RETAIN)
+        if logging then logger('Publishing state '..mqttReadTopic..alias..' to '..level) end
+      end
+    else
+      client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
+      if logging then logger('Publishing state '..mqttReadTopic..alias..' to '..state) end
+    end
   else
     local adjust = publishAdj[alias]
     if adjust then v = tonumber(string.format('%.'..adjust['dec']..'f', level * adjust['scale'])) else v = level end
@@ -352,10 +369,13 @@ function addDiscover(net, app, group, channel, tags, name)
   local sa = ''
   local img = ''
   local units = ''
-  local levels = {}
-  local lvl = false
+  local class = ''
   local scale = 1
   local decimals = 2
+  local on = 'On'
+  local off = 'Off'
+  local levels = {}
+  local lvl = false
   local dType = 'light'
   local writeTopic = mqttWriteTopic:gsub('#', '')
   
@@ -372,8 +392,11 @@ function addDiscover(net, app, group, channel, tags, name)
       elseif tp[1] == 'pn' then pn = tp[2]
       elseif tp[1] == 'img' then img = tp[2]
       elseif tp[1] == 'unit' then units = tp[2]
+      elseif tp[1] == 'class' then class = tp[2]
       elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
       elseif tp[1] == 'scale' then scale = tonumber(tp[2])
+      elseif tp[1] == 'on' then on = tp[2]
+      elseif tp[1] == 'off' then off = tp[2]
       elseif tp[1] == 'lvl' then levels = string.split(tp[2], '-'); lvl = true
       end
     else
@@ -437,6 +460,20 @@ function addDiscover(net, app, group, channel, tags, name)
       ['set_pos_t'] = writeTopic..alias..'/ramp',
     }
     cover[alias] = true
+  elseif dType == 'bsensor' then
+    dType = 'sensor'
+    payload = {
+      ['stat_t'] = mqttReadTopic..alias..'/state',
+      ['val_tpl'] = '{% if value == 0 %} '..off..' {% else %} '..on..' {% endif %}',
+    }
+    bSensor[aAlias] = true
+  elseif dType == 'binary_sensor' then
+    payload = {
+      ['stat_t'] = mqttReadTopic..alias..'/state',
+      ['pl_on'] = 'ON',
+      ['pl_off'] = 'OFF',
+    }
+    binarySensor[aAlias] = true
   elseif dType == 'button' and app == 202 then
     mqttDevices[aAlias].trigger = {}
     if #levels == 0 then for i = 0,255 do levels[#levels + 1] = i end end -- If no "lvl=" specified then scan all levels
@@ -463,7 +500,7 @@ function addDiscover(net, app, group, channel, tags, name)
           ['obj_id'] = boid,
           ['uniq_id'] = boid,
           ['cmd_t'] = writeTopic..alias..'/'..action..'/press',
-          ['dev'] = { ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' },
+          ['dev'] = { ['name'] = pn, ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' },
         }
         if img ~= '' then payload['ic'] = img end
         -- Publish to MQTT broker
@@ -472,6 +509,8 @@ function addDiscover(net, app, group, channel, tags, name)
         table.insert(mqttDevices[aAlias].trigger, boid)
       end
     end
+  elseif dType == 'button' and app ~= 202 then
+    logger('Error: MQTT button keyword is only allowed for trigger control')
   elseif dType == 'sensor' then
     if channel ~= nil then
       payload = { ['stat_t'] = mqttReadTopic..alias..'_'..channel..'/state', }
@@ -479,6 +518,7 @@ function addDiscover(net, app, group, channel, tags, name)
     else
       payload = { ['stat_t'] = mqttReadTopic..alias..'/state', }
     end
+    if class ~= '' then payload['dev_cla'] = class end
     if app == 250 then userParameter[alias] = true end
     if decimals ~= 2 or scale ~= 1 then publishAdj[alias] = { ['dec'] = decimals, ['scale'] = scale } end -- Scale, decimals and units only for sensors
     if units ~= '' then payload['unit_of_meas'] = units end
@@ -763,7 +803,7 @@ function cudCBusTopics()
         end
         if mqttJunk then client:publish(topic..'/state', 'junk', mqttQoS, RETAIN) end
         client:publish(topic..'/state', '', mqttQoS, RETAIN)
-        if count ~= 3 then  -- Level not set for measurement
+        if count ~= 3 or bSensor[k] or binarySensor[k] then  -- Level not set for measurement and binary sensors
           if mqttJunk then client:publish(topic..'/level', 'junk', mqttQoS, RETAIN) end
           client:publish(topic..'/level', '', mqttQoS, RETAIN)
         end
