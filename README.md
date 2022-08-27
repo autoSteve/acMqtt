@@ -32,16 +32,21 @@ Lighting, measurement, user parameter and trigger control applications are imple
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-One of  light, fan, cover, sensor, switch, or button, plus...    ('button' is for trigger control only, default if not specified is 'light')
+One of  light, fan, cover, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
 - sa=     Suggested area
 - img=    Image
 - pn=     Preferred name (defaults to CBus tag)
+- class=  Device class to use in Home Assistant (User param/sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
 - dec=    Decimal places (User param only)
 - unit=   Unit of measurement (User param only)
 - scale=  Multiplier / divider (User param only)
 - lvl=    List of applicable levels, separated by "-' (Trigger only, used to publish only certain levels, and improves discovery performance)
+- on=     Alias shown in HA for a 'bsensor' ON value (bsensor only)
+- off=    Alias shown in HA for a 'bsensor' OFF value (bsensor only)
 
-For buttons, the preferred name is used as an optional prefix to the trigger level tag to name the button.
+For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the
+button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix.
+Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
 
 Keyword examples:
 
@@ -52,6 +57,8 @@ Keyword examples:
 - MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
 - MQTT, button, lvl=0-1-2-5-127, pn=Inside, 
+- MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
+- MQTT, button, sa=Outside, img=mdi:gate-open,    *(a lighting group button to open a gate)*
 
 ### Philips Hue
 For Philips Hue devices, bi-directional sync with CBus occurs. I run Home Assistant talking directly to the Hue hub, and also the Automation Controller via MQTT. Add the keyword 'HUE' to CBus objects, plus...

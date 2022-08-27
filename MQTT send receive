@@ -16,7 +16,7 @@ Lighting, measurement, user parameter and trigger applications are implemented.
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-  One of  light, fan, cover, sensor, switch, binary_sensor, bsensor or button, plus...  ('button' is for trigger control only, default if not specified is 'light')
+  One of  light, fan, cover, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
   sa=     Suggested area
   img=    Image
   pn=     Preferred name (defaults to CBus tag, prepended to a trigger level tag for trigger control)
@@ -28,7 +28,9 @@ Add the keyword 'MQTT' to groups for CBus discovery, plus...
   on=     Alias for a 'bsensor' ON value (bsensor only)
   off=    Alias for a 'bsensor' OFF value (bsensor only)
 
-For buttons the preferred name is used as an optional prefix to the trigger level tag to name the button.
+For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the
+button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix.
+Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
 
 Keyword examples:
 
@@ -40,6 +42,7 @@ MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1,
 MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
 MQTT, button, lvl=0-1-2-5-127, pn=Inside, 
 MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
+MQTT, button, sa=Outside, img=mdi:gate-open,    (a lighting group button to open a gate)
 
 >>> HUE
 
@@ -123,6 +126,8 @@ Changes:
 1.16 - 11/08/2022 Revised ramp tracking for MQTT publish, support multiple lighting applications and improve comments
 1.17 - 12/08/2022 Add trigger group support, only button implemented, and uni-directional HA->CBus. Thanks PaddyB.
 1.18 - 21/08/2022 Include ramp detection for Philips Hue groups
+1.19 - 26/08/2022 Add support for binary sensors and 'bsensors'
+1.20 - 27/08/2022 Add support for lighting groups as buttons
 --]]
 
 logging = false        -- Enable detailed logging
@@ -171,6 +176,7 @@ cover = {}             -- Quick lookup to determine whether an object is a cover
 fan = {}               -- Quick lookup to determine whether an object is a fan (sweep fan)
 bSensor = {}           -- Quick lookup to determine whether an object is a bsensor (a regular lighting group acting as status)
 binarySensor = {}      -- Quick lookup to determine whether an object is a binary sensor
+lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
 userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 publishAdj = {}        -- For user parameters, holds scale and decimals to apply
 unpublished = {}       -- The current set of objects to publish discovery topics for
@@ -378,6 +384,7 @@ function addDiscover(net, app, group, channel, tags, name)
   local lvl = false
   local dType = 'light'
   local writeTopic = mqttWriteTopic:gsub('#', '')
+  local payload = {}
   
   -- Build an alias to refer to each group
   alias = tNetAC(net)..'/'..app..'/'..group;  if channel ~= nil then alias = alias..'/'..channel end
@@ -467,6 +474,17 @@ function addDiscover(net, app, group, channel, tags, name)
       ['set_pos_t'] = writeTopic..alias..'/ramp',
     }
     cover[alias] = true
+  elseif dType == 'sensor' then
+    if channel ~= nil then
+      payload = { ['stat_t'] = mqttReadTopic..alias..'_'..channel..'/state', }
+      alias = alias..'/'..channel
+    else
+      payload = { ['stat_t'] = mqttReadTopic..alias..'/state', }
+    end
+    if class ~= '' then payload['dev_cla'] = class end
+    if app == 250 then userParameter[alias] = true end
+    if decimals ~= 2 or scale ~= 1 then publishAdj[alias] = { ['dec'] = decimals, ['scale'] = scale } end -- Scale, decimals and units only for sensors
+    if units ~= '' then payload['unit_of_meas'] = units end
   elseif dType == 'bsensor' then
     dType = 'sensor'
     payload = {
@@ -516,19 +534,15 @@ function addDiscover(net, app, group, channel, tags, name)
         table.insert(mqttDevices[aAlias].trigger, boid)
       end
     end
-  elseif dType == 'button' and app ~= 202 then
-    logger('Error: MQTT button keyword is only allowed for trigger control')
-  elseif dType == 'sensor' then
-    if channel ~= nil then
-      payload = { ['stat_t'] = mqttReadTopic..alias..'_'..channel..'/state', }
-      alias = alias..'/'..channel
-    else
-      payload = { ['stat_t'] = mqttReadTopic..alias..'/state', }
-    end
-    if class ~= '' then payload['dev_cla'] = class end
-    if app == 250 then userParameter[alias] = true end
-    if decimals ~= 2 or scale ~= 1 then publishAdj[alias] = { ['dec'] = decimals, ['scale'] = scale } end -- Scale, decimals and units only for sensors
-    if units ~= '' then payload['unit_of_meas'] = units end
+  elseif dType == 'button' and lighting[tostring(app)] then
+    -- Lighting group button
+    payload = {
+      ['cmd_t'] = writeTopic..alias..'/press',
+    }
+    lightingButton[aAlias] = true
+  elseif dType == 'button' then
+    logger('Error: MQTT button keyword on unsupported group '..aAlias)
+    do return end
   end
 
   -- Add payload common to all
@@ -858,8 +872,11 @@ function outstandingPublish()
     elseif u.app == 202 then -- Do nothing
     -- Lighting and other
     else
-      local level = nil; pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
-      if level ~= nil then publish(tNetCBus(u.net), u.app, u.group, level) end
+      local alias = u.net..'/'..u.app..'/'..u.group
+      if not lightingButton[alias] then
+        local level = nil; pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
+        if level ~= nil then publish(tNetCBus(u.net), u.app, u.group, level) end
+      end
     end
   end
   if #unpublished > 0 then
@@ -921,6 +938,9 @@ function outstandingMqttMessage()
         elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then logger('Payload is OFF for '..alias) end
         end
         
+      elseif contains('press', parts[6]) and payload == 'PRESS' then -- Lighting group press
+        PulseCBusLevel(net, app, group, 255, 0, 1, 0); if logging then logger('Payload is PRESS') end
+
       elseif parts[7] ~= nil and contains('press', parts[7]) and payload == 'PRESS' then
         level = triggers[group][parts[6]]
         if level ~= nil then
