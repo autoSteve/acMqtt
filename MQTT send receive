@@ -620,7 +620,7 @@ function cudHue(initial)
     -- Re-subscribe. This works because the default for hue2mqtt.js is to publish topics with a
     -- retain flag. A re-subscribe here will result in gathering current status.
     client:subscribe(hueTopic..'#', 2)
-    -- Ensure that newly tagged/removed groups with the MQTT/HUE keywords send updates.
+    -- Ensure that newly tagged/removed groups with the HUE keyword send updates.
     logger('Hue object keywords added, restarting event script')
     script.disable('HUE'); script.enable('HUE')
   end
@@ -676,7 +676,7 @@ function cudAc(initial)
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
   if addition then
     if not initial then
-      -- Ensure that newly tagged/removed groups with the AC keywords send updates.
+      -- Ensure that newly tagged/removed groups with the AC keyword send updates.
       logger('AC object keywords added, restarting event script')
       script.disable('AC'); script.enable('AC')
     end
@@ -833,7 +833,6 @@ function cudCBusTopics()
       -- Handle trigger level removal
       if lvlDelete[k] ~= nil then
         for _, lvl in ipairs(lvlDelete[k]) do
-          -- log(lvlDelete[k], lvl, triggers)
           local parts = string.split(k, '/')
           local group = tonumber(parts[3])
           local a, t, act; for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
@@ -873,14 +872,14 @@ function outstandingPublish()
     -- Lighting and other
     else
       local alias = u.net..'/'..u.app..'/'..u.group
-      if not lightingButton[alias] then
+      if not lightingButton[alias] then -- Do nothing for lighting buttons
         local level = nil; pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
         if level ~= nil then publish(tNetCBus(u.net), u.app, u.group, level) end
       end
     end
   end
   if #unpublished > 0 then
-    -- Ensure that newly tagged/removed groups with the MQTT/HUE/AC keywords send updates
+    -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
     if script.status('MQTT') ~= nil then script.disable('MQTT'); script.enable('MQTT') end
     logger('Published '..#unpublished..' discovery and current level topic'..(#unpublished ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
     unpublished = {}
@@ -911,28 +910,6 @@ function outstandingMqttMessage()
       if not parts[6] then
         logger('MQTT error: Invalid message format')
 
-      elseif parts[6] == 'getall' then
-        local mqttP = GetCBusByKW('MQTT', 'or')
-        local mqttPs = ''
-        for k, v in pairs(mqttP) do mqttPs = mqttPs..v['address'][2]..'/'..v['address'][3] end
-
-        local datatable = grp.all()
-        for key,value in pairs(datatable) do
-          parts = string.split(value.address, '/')
-          net = tonumber(parts[1])
-          app = tonumber(parts[2])
-          group = tonumber(parts[3])
-          if contains(parts[2]..'/'..parts[3], mqttPs) then -- only publish groups of interest (keyword 'MQTT')
-            if app == tonumber(parts[4]) and parts[3] then
-              level = tonumber(value.data)
-              state = (level ~= 0) and 'ON' or 'OFF'
-              if logging then logger(parts[3]..', '..tostring(app)..', '..tostring(group)..', '..tostring(state)..', '..tostring(level)) end
-              client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
-              client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
-            end
-          end
-        end
-
       elseif parts[6] == 'switch' then
         if payload == 'ON' then      SetCBusLevel(net, app, group, 255, 0); if logging then logger('Payload is ON for '..alias) end
         elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then logger('Payload is OFF for '..alias) end
@@ -941,7 +918,7 @@ function outstandingMqttMessage()
       elseif contains('press', parts[6]) and payload == 'PRESS' then -- Lighting group press
         PulseCBusLevel(net, app, group, 255, 0, 1, 0); if logging then logger('Payload is PRESS') end
 
-      elseif parts[7] ~= nil and contains('press', parts[7]) and payload == 'PRESS' then
+      elseif parts[7] ~= nil and contains('press', parts[7]) and payload == 'PRESS' then -- Trigger level press
         level = triggers[group][parts[6]]
         if level ~= nil then
           SetTriggerLevel(group, level); if logging then logger('Payload is PRESS') end
