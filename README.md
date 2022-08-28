@@ -8,7 +8,7 @@ Functions:
 - Optionally Panasonic air conditioners and ESPHome sensors for temperature and relative humidity integrated with the CBus Automation Controller (example .yaml files are for this.)
 
 The pieces of the puzzle include:
-- Home Assistant 'HAOS', running as a virtual machine. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker and more going (but you could use a separately installed broker elsewhere on your network). HA Cloud talks to Google Assistant/Alexa.
+- Home Assistant 'HAOS' running somewhere. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker and more going (but you could use a separately installed broker elsewhere on your network). HA Cloud talks to Google Assistant/Alexa, so a subscription is required if you want that.
 - Home Assistant plug-ins: The excellent 'Portainer', 'SSH & Web terminal' and 'Mosquitto broker'. File editor is also handy.
 - A container created with Portainer to run hue2mqtt.js
 - LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2). The script name of 'MQTT send receive' is important for the LUA code, given 'Heartbeat' script re-starts, so adjust as necessary by examining both scripts thoroughly if you need to change the name. If you're not using the Heartbeat script, then no issue.
