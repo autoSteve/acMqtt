@@ -32,6 +32,8 @@ Using lvl= for trigger control buttons is highly recommended. This will attempt 
 greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
 Using lvl= for select is mandatory. This defines the section name and its corresponding CBus level for the group.
+If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable,
+otherwise this script will force the level to be set to the nearest select level.
 
 For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the
 button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix.
@@ -40,7 +42,7 @@ Lighting group buttons operate by pulsing the CBus group for one second, acting 
 Keyword examples:
 
 MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb, 
-MQTT, switch, sa=Outside, img=mdi:gate-open, 
+MQTT, switch, sa=Bathroom 1, img=mdi:radiator, 
 MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
 MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/0-Half open/137-Open/255, 
@@ -219,11 +221,13 @@ local publishCurrent
 
 mqtt = require('mosquitto')
 client = mqtt.new(mqttClientId)
+client:will_set('cbus/status', 'offline', mqttQoS, RETAIN)
 if mqttUsername then client:login_set(mqttUsername, mqttPassword) end
 
 client.ON_CONNECT = function(success)
   if success then
     logger('MQTT connected')
+    client:publish('cbus/status', 'online', mqttQoS, RETAIN)
     mqttStatus = 1
     -- Subscribe to relevant topics
     client:subscribe(mqttWriteTopic..'#', mqttQoS)
@@ -604,6 +608,7 @@ function addDiscover(net, app, group, channel, tags, name)
     payload['name'] = pn
     payload['obj_id'] = oid
     payload['uniq_id'] = oid
+    payload['avty_t'] = 'cbus/status'
     payload['dev'] = { ['name'] = pn, ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' }
     if img ~= '' then payload['ic'] = img end
 
