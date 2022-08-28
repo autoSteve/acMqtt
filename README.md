@@ -54,7 +54,7 @@ For trigger control buttons the preferred name is used as an optional prefix to 
 Keyword examples:
 
 - MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb, 
-- MQTT, switch, sa=Outside, img=mdi:gate-open, 
+- MQTT, switch, sa=Bathroom 1, img=mdi:radiator, 
 - MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 - MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
 - MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/0-Half open/137-Open/255, 
