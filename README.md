@@ -44,8 +44,7 @@ One of light, fan, cover, select, sensor, switch, binary_sensor, bsensor or butt
 - on=     Alias shown in HA for a 'bsensor' ON value (bsensor only)
 - off=    Alias shown in HA for a 'bsensor' OFF value (bsensor only)
 
-Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, 
-greatly improving discovery performance. If not specified the script will publish all levels having a tag.
+Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
 Using lvl= for select is mandatory. This defines the selection names and their corresponding CBus level for the group. If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable in the 'MQTT send receive' script, otherwise it will force the level to be set to the nearest select level.
 

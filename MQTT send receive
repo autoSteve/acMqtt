@@ -1,4 +1,4 @@
-mqttBroker = '192.168.10.21'
+mqttBroker = '192.168.10.21' -- Obviously change to suit environment
 mqttUsername = 'mqtt'
 mqttPassword = 'password'
 lighting = { ['56'] = true } -- Array of applications that are used for lighting (ramp detection only applies to lighting)
@@ -96,6 +96,7 @@ identify the devices (this is the 'dev' keyword').
 
 Panasonic keyword examples:
 
+AC, dev=storeac, func=mode, 
 AC, dev=storeac, func=target_temperature
 AC, dev=storeac, sel=vertical_swing_mode
 AC, dev=storeac, sense=current_temperature, topic=climate
@@ -132,24 +133,30 @@ Changes:
 1.14 - 07/08/2022 Add some error checks for nil values, and add timestamp to log messages with millisecond accuracy
 1.15 - 09/08/2022 Change last level storage to array (not string), plus MQTT lastlevel bug fixes
 1.16 - 11/08/2022 Revised ramp tracking for MQTT publish, support multiple lighting applications and improve comments
-1.17 - 12/08/2022 Add trigger group support, only button implemented, and uni-directional HA->CBus. Thanks PaddyB.
+1.17 - 12/08/2022 Add trigger group support, only button implemented and uni-directional HA->CBus. Thanks PaddyB.
 1.18 - 21/08/2022 Include ramp detection for Philips Hue groups
 1.19 - 26/08/2022 Add support for binary sensors and 'bsensors'
 1.20 - 27/08/2022 Add support for lighting groups as buttons
-1.21 - 28/08/2022 Add support for select
+1.21 - 28/08/2022 Add support for select, and implement last will/status for Home Assistant availability
 --]]
 
+--[[
+General variables. Change as required, but probably no need to.
+--]]
 logging = false        -- Enable detailed logging
 logms = false          -- Include timestamp in milliseconds for logs
 
 checkChanges = 60      -- Interval in seconds to check for changes to object keywords
 publishNoLevel = false -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
 selectExact = true     -- For select, if a CBus level other than in the select levels is set then adjust the CBus level to the closest select level
-
 mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
 mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
 mqttJunk = true        -- Whether to publish junk before a blank publish message when removing topics (probably not necessary, but cleans up MQTT Explorer view)
 blindKey = nil         -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
+
+--[[
+Timing variables. Adjust to taste if you know what you're doing. These provide a good compromise, but your deployment may vary.
+--]]
 rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
 socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
@@ -161,12 +168,16 @@ Topic prefixes for read/write/publish. Hue topics are based on hue2mqtt.js. The 
 to be set to 'homeassistant/' for use with HA, which is the default there. The MQTT CBus topics can be whatever you
 want, as discovery/subscribe adjusts. All topic prefixes must end in '/'.
 --]]
-mqttReadTopic = 'cbus/read/'
-mqttWriteTopic = 'cbus/write/'
+mqttCbus = 'cbus/'
+mqttReadTopic = mqttCbus..'read/'
+mqttWriteTopic = mqttCbus..'write/'
 mqttDiscoveryTopic = 'homeassistant/'
 hueTopic = 'hue/'
 hueSetTopic = hueTopic..'set/lights/'
 
+--[[
+Variables not to be messed with unless you definitely know what you're doing.
+--]]
 mqttDevices = {}       -- CBus groups to send MQTT topics for
 hue = {}               -- Hue device details (name, state, dimmable, etc) 
 hueDevices = {}        -- Quick lookup to determine whether an object is a Hue device
@@ -181,7 +192,7 @@ mqttMessages = {}      -- Message queue
 ignoreCbus = {}        -- To prevent message loops
 ignoreMqtt = {}        -- To prevent message loops
 ramp = {}              -- Keeps track of ramping to ignore some zero level MQTT publish events outstandingCbusMessage()
-triggers = {}          -- Trigger groups and associated levels
+triggers = {}          -- Trigger groups and their levels
 selects = {}           -- Select groups and their options/levels
 cover = {}             -- Quick lookup to determine whether an object is a cover (blind)
 fan = {}               -- Quick lookup to determine whether an object is a fan (sweep fan)
@@ -221,13 +232,13 @@ local publishCurrent
 
 mqtt = require('mosquitto')
 client = mqtt.new(mqttClientId)
-client:will_set('cbus/status', 'offline', mqttQoS, RETAIN)
+client:will_set(mqttCbus..'status', 'offline', mqttQoS, RETAIN)
 if mqttUsername then client:login_set(mqttUsername, mqttPassword) end
 
 client.ON_CONNECT = function(success)
   if success then
     logger('MQTT connected')
-    client:publish('cbus/status', 'online', mqttQoS, RETAIN)
+    client:publish(mqttCbus..'status', 'online', mqttQoS, RETAIN)
     mqttStatus = 1
     -- Subscribe to relevant topics
     client:subscribe(mqttWriteTopic..'#', mqttQoS)
@@ -608,7 +619,7 @@ function addDiscover(net, app, group, channel, tags, name)
     payload['name'] = pn
     payload['obj_id'] = oid
     payload['uniq_id'] = oid
-    payload['avty_t'] = 'cbus/status'
+    payload['avty_t'] = mqttCbus..'status'
     payload['dev'] = { ['name'] = pn, ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' }
     if img ~= '' then payload['ic'] = img end
 
