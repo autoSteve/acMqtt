@@ -5,7 +5,7 @@ lighting = { ['56'] = true } -- Array of applications that are used for lighting
 checkForChanges = true -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
 
 --[[
-Resident, zero sleep interval, name: 'MQTT send/receive'
+Resident, zero sleep interval, name: 'MQTT send receive'
 
 Manage CBus, Philips Hue, Panasonic AC and environment events for MQTT, and publish discovery topics. Used
 with Home Assistant.
@@ -1314,7 +1314,7 @@ while true do
   if sendHeartbeat > 0 then
     local stat, err = pcall(function ()
       if os.time() - heartbeat >= sendHeartbeat then
-        heartbeat = os.time(); require('socket').udp():sendto('MQTT send/receive+'..heartbeat, '127.0.0.1', 5433)
+        heartbeat = os.time(); require('socket').udp():sendto('MQTT send receive+'..heartbeat, '127.0.0.1', 5433)
       end
     end)
     if not stat then logger('A fault occurred sending heartbeat. Restarting...'); do return end end

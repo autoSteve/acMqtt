@@ -10,7 +10,7 @@ logging = false
 
 -- Scripts to monitor
 scripts = {
-  ['MQTT send/receive'] = { ['max'] = 20, },
+  ['MQTT send receive'] = { ['max'] = 20, },
 }
 
 server = require('socket').udp()
@@ -51,7 +51,7 @@ while true do
 
   ---- TODO ---- WTF?
   Ironically, a failure in this script will cause heartbeats to stop being received for some reason,
-  causing repeated send/receive restarts. This script is simple, though, so it should not break...
+  causing repeated 'MQTT send receive' restarts. This script is simple, though, so it should not break...
   A failure should cause re-entry because zero sleep, so should be good, but socket turns to custard.
   --]]
 

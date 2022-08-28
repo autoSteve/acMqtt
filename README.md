@@ -11,21 +11,21 @@ The pieces of the puzzle include:
 - Home Assistant 'HAOS', running as a virtual machine. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker and more going (but you could use a separately installed broker elsewhere on your network). HA Cloud talks to Google Assistant/Alexa.
 - Home Assistant plug-ins: The excellent 'Portainer', 'SSH & Web terminal' and 'Mosquitto broker'. File editor is also handy.
 - A container created with Portainer to run hue2mqtt.js
-- LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2). Script names are important for the LUA code, given keep-alive and other re-starts, so adjust as necessary by examining thoroughly if you need to change the names.
+- LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2). The script name of 'MQTT send receive' is important for the LUA code, given 'Heartbeat' script re-starts, so adjust as necessary by examining both scripts thoroughly if you need to change the name. If you're not using the Heartbeat script, then no issue.
 
 LUA scripts for the automation controller:
-- *MQTT send/receive*: resident, zero sleep (note: code here is "MQTT send receive", without the slash...)
+- *MQTT send receive*: resident, zero sleep
 - *MQTT*: event-based, execute during ramping, trigger on keyword 'MQTT'
 - *HUE*: event-based, execute during ramping, trigger on keyword 'HUE'
 - *AC*: event-based, execute during ramping, trigger on keyword 'AC'
-- *Heartbeat*: resident, zero sleep (optional ... monitors for failure of MQTT send/receive and re-starts it)
+- *Heartbeat*: resident, zero sleep (optional ... monitors for failure of 'MQTT send receive' and re-starts it)
 
 If you don't care for integrating Philips Hue/AC/environmental devices with CBus, then ignore Portainer and hue2mqtt.js, and the LUA Hue/AC/ENV code can stay there and will just be unused.
 
 Plus SSH & Web terminal and File Editor is not required, just nice to have.
 
 ## Keywords used for Automation Controller objects
-Newly added keywords can be regularly detected by the MQTT send/receive script. This is configurable by setting an option that is near the top of the script. If this option is set to false then that script must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is sixty seconds, and that is also a configurable variable.
+Newly added keywords can be regularly detected by the 'MQTT send receive' script. This is configurable by setting an option that is near the top of the script. If this option is set to false then that script must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is sixty seconds, and that is also a configurable variable.
 
 ### CBus
 Lighting, measurement, user parameter and trigger control applications are implemented.
@@ -47,7 +47,7 @@ One of light, fan, cover, select, sensor, switch, binary_sensor, bsensor or butt
 Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, 
 greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
-Using lvl= for select is mandatory. This defines the selection names and their corresponding CBus level for the group. If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable in the MQTT send/receive script, otherwise it will force the level to be set to the nearest select level.
+Using lvl= for select is mandatory. This defines the selection names and their corresponding CBus level for the group. If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable in the 'MQTT send receive' script, otherwise it will force the level to be set to the nearest select level.
 
 For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
 
