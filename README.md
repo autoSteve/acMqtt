@@ -32,7 +32,7 @@ Lighting, measurement, user parameter and trigger control applications are imple
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-One of  light, fan, cover, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
+One of light, fan, cover, select, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
 - sa=     Suggested area
 - img=    Image
 - pn=     Preferred name (defaults to CBus tag)
@@ -40,13 +40,16 @@ One of  light, fan, cover, sensor, switch, binary_sensor, bsensor or button, plu
 - dec=    Decimal places (User param only)
 - unit=   Unit of measurement (User param only)
 - scale=  Multiplier / divider (User param only)
-- lvl=    List of applicable levels, separated by "-' (Trigger only, used to publish only certain levels, and improves discovery performance)
+- lvl=    List of applicable levels, separated by "-' (Trigger button and select only)
 - on=     Alias shown in HA for a 'bsensor' ON value (bsensor only)
 - off=    Alias shown in HA for a 'bsensor' OFF value (bsensor only)
 
-For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the
-button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix.
-Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
+Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, 
+greatly improving discovery performance. If not specified the script will publish all levels having a tag.
+
+Using lvl= for select is mandatory. This defines the section name and its corresponding CBus level for the group. If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable, otherwise this script will force the level to be set to the nearest select level.
+
+For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
 
 Keyword examples:
 
@@ -54,6 +57,7 @@ Keyword examples:
 - MQTT, switch, sa=Outside, img=mdi:gate-open, 
 - MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 - MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
+- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/0-Half open/137-Open/255, 
 - MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
 - MQTT, button, lvl=0-1-2-5-127, pn=Inside, 
@@ -71,16 +75,11 @@ Keyword examples:
 
 A useful result is that Philips Hue devices can then be added to CBus scenes, like an 'All off' function.
 
-A 'hue2mqtt.js' instance is required, and for Home Assistant this could be run as a container using
-Portainer, or run as a separate container / process on another VM. hue2mqtt is used to sync a Hue bridge
-with the MQTT broker.
+A 'hue2mqtt.js' instance is required, and for Home Assistant this could be run as a container using Portainer, or run as a separate container / process on another VM. hue2mqtt is used to sync a Hue bridge with the MQTT broker.
 
-The CBus groups for Hue devices are usually not used for any purpose other than controlling their Hue device.
-Turning on/off one of these groups will result in the Philips Hue hub turning the loads on/off. It is possible
-that these CBus Hue groups could be used to also control CBus loads, giving them dual purpose.
+The CBus groups for Hue devices are usually not used for any purpose other than controlling their Hue device. Turning on/off one of these groups will result in the Philips Hue hub turning the loads on/off. It is possible that these CBus Hue groups could be used to also control CBus loads, giving them dual purpose.
 
-Note: This script only handles on/off, as well as levels for dimmable Hue devices, but not colours/colour
-temperature, as that's not a CBus thing. Colour details will return to previously set values done in the Hue app.
+Note: This script only handles on/off, as well as levels for dimmable Hue devices, but not colours/colour temperature, as that's not a CBus thing. Colour details will return to previously set values done in the Hue app.
 
 ### Panasonic Ar Conditioners
 For Panasonic air conditioners connected to MQTT via ESPHome (see example .yaml file), add the keyword 'AC' to user parameters, plus...
@@ -99,8 +98,7 @@ Horizontal swing mode strings = ("auto", "left", "left_center", "center", "right
 Vertical swing mode strings = ("auto", "up", "up_center", "center", "down_center", "down")
 
 Note: target_temperature and sensors are an integer user parameter, while all others are strings.
-Note: Set all device names to 'Panasonic' in the 'climate' section, and make the 'esphome' name unique to
-identify the devices (this is the 'dev' keyword').
+Note: Set all device names to 'Panasonic' in the 'climate' section, and make the 'esphome' name unique to identify the devices (this is the 'dev' keyword').
 
 Panasonic keyword examples:
 

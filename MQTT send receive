@@ -16,7 +16,7 @@ Lighting, measurement, user parameter and trigger applications are implemented.
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-  One of  light, fan, cover, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
+  One of  light, fan, cover, select, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
   sa=     Suggested area
   img=    Image
   pn=     Preferred name (defaults to CBus tag, prepended to a trigger level tag for trigger control)
@@ -24,9 +24,14 @@ Add the keyword 'MQTT' to groups for CBus discovery, plus...
   dec=    Decimal places (User param/sensor only)
   unit=   Unit of measurement (User param/sensor only)
   scale=  Multiplier / divider (User param/sensor only)
-  lvl=    List of applicable levels, separated by "-' (Trigger only, used to publish only certain levels, and improves discovery performance)
+  lvl=    List of applicable levels, separated by "-' (Trigger button and select only)
   on=     Alias for a 'bsensor' ON value (bsensor only)
   off=    Alias for a 'bsensor' OFF value (bsensor only)
+
+Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, 
+greatly improving discovery performance. If not specified the script will publish all levels having a tag.
+
+Using lvl= for select is mandatory. This defines the section name and its corresponding CBus level for the group.
 
 For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the
 button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix.
@@ -38,6 +43,7 @@ MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb,
 MQTT, switch, sa=Outside, img=mdi:gate-open, 
 MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
+MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/0-Half open/137-Open/255, 
 MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
 MQTT, button, lvl=0-1-2-5-127, pn=Inside, 
@@ -128,6 +134,7 @@ Changes:
 1.18 - 21/08/2022 Include ramp detection for Philips Hue groups
 1.19 - 26/08/2022 Add support for binary sensors and 'bsensors'
 1.20 - 27/08/2022 Add support for lighting groups as buttons
+1.21 - 28/08/2022 Add support for select
 --]]
 
 logging = false        -- Enable detailed logging
@@ -135,6 +142,7 @@ logms = false          -- Include timestamp in milliseconds for logs
 
 checkChanges = 60      -- Interval in seconds to check for changes to object keywords
 publishNoLevel = false -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
+selectExact = true     -- For select, if a CBus level other than in the select levels is set then adjust the CBus level to the closest select level
 
 mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
 mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
@@ -172,6 +180,7 @@ ignoreCbus = {}        -- To prevent message loops
 ignoreMqtt = {}        -- To prevent message loops
 ramp = {}              -- Keeps track of ramping to ignore some zero level MQTT publish events outstandingCbusMessage()
 triggers = {}          -- Trigger groups and associated levels
+selects = {}           -- Select groups and their options/levels
 cover = {}             -- Quick lookup to determine whether an object is a cover (blind)
 fan = {}               -- Quick lookup to determine whether an object is a fan (sweep fan)
 bSensor = {}           -- Quick lookup to determine whether an object is a bsensor (a regular lighting group acting as status)
@@ -252,13 +261,27 @@ function publish(net, app, group, level)
   end
   if not userParameter[alias] then
     if not binarySensor[aAlias] then
-      if not bSensor[aAlias] then
+      if bSensor[aAlias] then
+        client:publish(mqttReadTopic..alias..'/state', level, mqttQoS, RETAIN)
+        if logging then logger('Publishing state '..mqttReadTopic..alias..' to '..level) end
+      elseif selects[aAlias] then
+        local l
+        for _, l in ipairs(selects[aAlias].allLvl) do
+          if tonumber(level) <= l.lvl then
+            if selectExact and tonumber(level) ~= l.lvl then
+              -- Current CBus level does not match the select, so optionally adjust the CBus level
+              SetCBusLevel(tNetAC(net), app, group, l.lvl, 0)
+              -- Adjusting the level will result in two MQTT publish events, which could be avoided but is not
+            end
+            client:publish(mqttReadTopic..alias..'/select', l.sel, mqttQoS, RETAIN)
+            if logging then logger('Publishing select '..mqttReadTopic..alias..' to '..l.sel..'('..l.lvl..')') end
+            break
+          end
+        end
+      else
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
         client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
         if logging then logger('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level) end
-      else
-        client:publish(mqttReadTopic..alias..'/state', level, mqttQoS, RETAIN)
-        if logging then logger('Publishing state '..mqttReadTopic..alias..' to '..level) end
       end
     else
       client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
@@ -366,7 +389,7 @@ end
 
 
 --[[
-Build and publish a MQTT discovery topic for light, switch, fan, cover, sensor or button 
+Build and publish a MQTT discovery topic
 --]]
 function addDiscover(net, app, group, channel, tags, name)
   if not name then if channel == nil then do return end else name = 'measurement' end end -- Need a name from tag lookup for everything but measurement app
@@ -432,6 +455,7 @@ function addDiscover(net, app, group, channel, tags, name)
   end
   aAlias = alias
   alias = net..'/'..app..'/'..group -- Will adjust for CBus numbered networks
+
   -- Build the type-specific payload to publish
   if dType == 'light' then
     payload = {
@@ -442,6 +466,7 @@ function addDiscover(net, app, group, channel, tags, name)
       ['pl_off'] = 'OFF',
       ['on_cmd_type'] = 'brightness',
     }
+
   elseif dType == 'switch' then
     payload = {
       ['stat_t'] = mqttReadTopic..alias..'/state',
@@ -449,6 +474,7 @@ function addDiscover(net, app, group, channel, tags, name)
       ['pl_on'] = 'ON',
       ['pl_off'] = 'OFF',
     }
+
   elseif dType == 'fan' then
     payload = {
       ['stat_t'] = mqttReadTopic..alias..'/state',
@@ -462,6 +488,7 @@ function addDiscover(net, app, group, channel, tags, name)
       ['pr_modes'] = {'low', 'medium', 'high'}
     }
     fan[aAlias] = true
+
   elseif dType == 'cover' then
     payload = {
       ['stat_t'] = mqttReadTopic..alias..'/state',
@@ -474,6 +501,29 @@ function addDiscover(net, app, group, channel, tags, name)
       ['set_pos_t'] = writeTopic..alias..'/ramp',
     }
     cover[alias] = true
+
+  elseif dType == 'select' then
+    if not lvl then
+      logger('Error: lvl= keyword not specified for select at '..aAlias)
+      do return end
+    end
+    local level, parts
+    local options = {}
+    selects[aAlias] = {}
+    for _, level in ipairs(levels) do
+      parts = string.split(level, '/')
+      if #parts ~= 2 then logger('Error: Part missing for lvl= '..level..' of '..aAlias); do return end end
+      options[#options + 1] = parts[1]
+      selects[aAlias][parts[1]] = tonumber(parts[2])
+      if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = {['lvl'] = tonumber(parts[2]), ['sel'] = parts[1]}
+    end
+    table.sort(selects[aAlias].allLvl, function (left, right) return left['lvl'] < right['lvl'] end)
+    payload = {
+      ['stat_t'] = mqttReadTopic..alias..'/select',
+      ['cmd_t'] = writeTopic..alias..'/select',
+      ['options'] = options,
+    }
+
   elseif dType == 'sensor' then
     if channel ~= nil then
       payload = { ['stat_t'] = mqttReadTopic..alias..'_'..channel..'/state', }
@@ -492,6 +542,7 @@ function addDiscover(net, app, group, channel, tags, name)
       ['val_tpl'] = '{% if value == 0 %} '..off..' {% else %} '..on..' {% endif %}',
     }
     bSensor[aAlias] = true
+
   elseif dType == 'binary_sensor' then
     payload = {
       ['stat_t'] = mqttReadTopic..alias..'/state',
@@ -499,6 +550,7 @@ function addDiscover(net, app, group, channel, tags, name)
       ['pl_off'] = 'OFF',
     }
     binarySensor[aAlias] = true
+
   elseif dType == 'button' and app == 202 then
     mqttDevices[aAlias].trigger = {}
     if #levels == 0 then for i = 0,255 do levels[#levels + 1] = i end end -- If no "lvl=" specified then scan all levels
@@ -534,12 +586,14 @@ function addDiscover(net, app, group, channel, tags, name)
         table.insert(mqttDevices[aAlias].trigger, boid)
       end
     end
+
   elseif dType == 'button' and lighting[tostring(app)] then
     -- Lighting group button
     payload = {
       ['cmd_t'] = writeTopic..alias..'/press',
     }
     lightingButton[aAlias] = true
+
   elseif dType == 'button' then
     logger('Error: MQTT button keyword on unsupported group '..aAlias)
     do return end
@@ -915,6 +969,9 @@ function outstandingMqttMessage()
         elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then logger('Payload is OFF for '..alias) end
         end
         
+      elseif parts[6] == 'select' then
+        SetCBusLevel(net, app, group, selects[alias][payload], 0)
+
       elseif contains('press', parts[6]) and payload == 'PRESS' then -- Lighting group press
         PulseCBusLevel(net, app, group, 255, 0, 1, 0); if logging then logger('Payload is PRESS') end
 
@@ -1202,9 +1259,6 @@ function validateIncoming(cmd) -- Reject any weird socket messages received
   for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dst parts are not whole decimal numbers
   return true
 end
-
--- Clear previous stored AC payloads
-for _, alias in pairs(acDevices) do storage.set('mqtt'..alias, nil) end
 
 
 while true do
