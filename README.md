@@ -102,8 +102,12 @@ Note: Set all device names to 'Panasonic' in the 'climate' section, and make the
 
 Panasonic keyword examples:
 
+- AC, dev=storeac, func=mode, 
 - AC, dev=storeac, func=target_temperature
+- AC, dev=storeac, func=fan_mode, 
+- AC, dev=storeac, func=swing_mode, 
 - AC, dev=storeac, sel=vertical_swing_mode
+- AC, dev=storeac, sel=horizontal_swing_mode, 
 - AC, dev=storeac, sense=current_temperature, topic=climate
 - AC, dev=storeac, sense=outside_temperature
 
