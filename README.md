@@ -46,7 +46,11 @@ One of light, fan, cover, select, sensor, switch, binary_sensor, bsensor or butt
 
 Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
-Using lvl= for select is mandatory. This defines the selection names and their corresponding CBus level for the group. If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable in the 'MQTT send receive' script, otherwise it will force the level to be set to the nearest select level.
+Using lvl= for select is mandatory. This defines the selection name and its corresponding CBus level for the group. There are three options for lvl=:
+- Using the format: lvl=Option 1/0-Option 2/255, for any name desired and a level number
+- The level numbers: lvl=0-255, which will use the level tag
+- The Level tags: lvl=Option 1-Option 2, which will look up the level number
+If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable, otherwise this script will force the level to be set to the nearest select level.
 
 For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
 
@@ -56,6 +60,8 @@ Keyword examples:
 - MQTT, switch, sa=Bathroom 1, img=mdi:radiator, 
 - MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 - MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
+- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=0-137-255, 
+- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed-Half open-Open, 
 - MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/0-Half open/137-Open/255, 
 - MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
@@ -148,7 +154,7 @@ Once the container is running, go press the button on your Hue bridge, then drop
 
 It's probaly advisable to configure container restart options in Portainer, so that the hue2mqtt container gets restarted on any error condition. I've encountered this, so don't leave the default setting.
 
-If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. If using Hue, then MQTT Explorer should show 'hue' topics after connection.
+If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. If using Hue, then MQTT Explorer should show 'hue' topics after connection. And for the cbus read/homeassistant topics it should show a whole lot more.
 
 ### Home Assistant configuration.yaml example:
 Sets up the MQTT connection, plus includes many domains for Google Home (adjust as needed for Alexa, etc.)

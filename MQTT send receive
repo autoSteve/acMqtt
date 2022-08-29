@@ -31,7 +31,11 @@ Add the keyword 'MQTT' to groups for CBus discovery, plus...
 Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, 
 greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
-Using lvl= for select is mandatory. This defines the section name and its corresponding CBus level for the group.
+Using lvl= for select is mandatory. This defines the selection name and its corresponding CBus level for the group.
+There are three options for lvl=:
+- Using the format: lvl=Option 1/0-Option 2/255, for any name and a level number
+- The level numbers: lvl=0-255, which will use the level tag
+- The Level tags: lvl=Option 1-Option 2, which will look up the level number
 If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable,
 otherwise this script will force the level to be set to the nearest select level.
 
@@ -45,6 +49,8 @@ MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb,
 MQTT, switch, sa=Bathroom 1, img=mdi:radiator, 
 MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
+MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=0-137-255, 
+MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed-Half open-Open, 
 MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/0-Half open/137-Open/255, 
 MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
@@ -526,10 +532,31 @@ function addDiscover(net, app, group, channel, tags, name)
     local options = {}
     selects[aAlias] = {}
     for _, level in ipairs(levels) do
-      parts = string.split(level, '/')
-      if #parts ~= 2 then logger('Error: Part missing for lvl= '..level..' of '..aAlias); do return end end
-      options[#options + 1] = parts[1]
-      selects[aAlias][parts[1]] = tonumber(parts[2])
+      local parts = string.split(level, '/')
+      if #parts == 2 then -- A select option and level
+        options[#options + 1] = parts[1]
+        selects[aAlias][parts[1]] = tonumber(parts[2])
+      elseif #parts == 1 and tonumber(parts[1]) then -- Level numbers only
+        parts[2] = parts[1]
+        parts[1] = GetCBusLevelTag(tNetAC(net), app, group, tonumber(parts[2]))
+        if not parts[1] then
+          logger('Error: No level tag for select '..aAlias..', level '..parts[2])
+          do return end
+        end
+        options[#options + 1] = parts[1]
+        selects[aAlias][parts[1]] = tonumber(parts[2])
+      elseif #parts == 1 then -- Level tags only
+        parts[2] = GetCBusLevelAddress(tNetAC(net), app, group, parts[1])
+        if not parts[2] then
+          logger('Error: Invalid level tag for select '..aAlias..', level '..parts[1])
+          do return end
+        end
+        options[#options + 1] = parts[1]
+        selects[aAlias][parts[1]] = tonumber(parts[2])
+      else
+        logger('Error: Invalid lvl= format for select '..aAlias)
+        do return end
+      end
       if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = {['lvl'] = tonumber(parts[2]), ['sel'] = parts[1]}
     end
     table.sort(selects[aAlias].allLvl, function (left, right) return left['lvl'] < right['lvl'] end)
