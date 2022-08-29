@@ -50,6 +50,7 @@ Using lvl= for select is mandatory. This defines the selection name and its corr
 - Using the format: lvl=Option 1/0-Option 2/255, for any name desired and a level number
 - The level numbers: lvl=0-255, which will use the level tag
 - The Level tags: lvl=Option 1-Option 2, which will look up the level number
+
 If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable, otherwise this script will force the level to be set to the nearest select level.
 
 For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
