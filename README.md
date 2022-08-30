@@ -147,7 +147,7 @@ For the image, I used: jkohl/hue2mqtt:latest & always pull.
 
 Under 'Command and logging' tab, for the command, I used: '-b' '192.168.10.15' '-m' 'mqtt://mqtt:password@192.168.10.21' '-i' '1' '--insecure'. See https://github.com/hobbyquaker/hue2mqtt.js/blob/master/README.md for details.
 
-Under 'Volumes' tab, I added a new volume mounted in the container at '/root/.hue2mqtt' pointed at the volume hue2mqtt to allow persistent storage.
+Under 'Volumes' tab, I added a new volume mounted in the container at '/root/.hue2mqtt' pointed at the volume hue2mqtt to allow persistent storage. (Note the full stop in /root/.hue2mqtt - easy to miss with the GitHub font as it looks like a spot of dirt on your monitor...)
 
 For me, 192.168.10.21 is the IP address of my Home Assistant server, which is now running a Mosquitto broker. 192.168.10.15 is my Philips Hue bridge (I set its IP address to fixed on my Unifi router by editing the client device, so DHCP always gives it the same address).
 
@@ -155,7 +155,7 @@ Once the container is running, go press the button on your Hue bridge, then drop
 
 It's probaly advisable to configure container restart options in Portainer, so that the hue2mqtt container gets restarted on any error condition. I've encountered this, so don't leave the default setting.
 
-If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. If using Hue, then MQTT Explorer should show 'hue' topics after connection. And for the cbus read/homeassistant topics it should show a whole lot more.
+If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. If using Hue, then MQTT Explorer should show 'hue' topics after connection. And for the cbus read/homeassistant topics it should show a whole lot more if you've configured keywords.
 
 ### Home Assistant configuration.yaml example:
 Sets up the MQTT connection, plus includes many domains for Google Home (adjust as needed for Alexa, etc.)
