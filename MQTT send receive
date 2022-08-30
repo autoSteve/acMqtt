@@ -35,7 +35,7 @@ Using lvl= for select is mandatory. This defines the selection name and its corr
 There are three options for lvl=:
 - Using the format: lvl=Option 1/0-Option 2/255, for any name and a level number
 - The level numbers: lvl=0-255, which will use the level tag
-- The Level tags: lvl=Option 1-Option 2, which will look up the level number
+- The level tags: lvl=Option 1-Option 2, which will look up the level number
 If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable,
 otherwise this script will force the level to be set to the nearest select level.
 
@@ -54,7 +54,7 @@ MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed-Half open-Open,
 MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/0-Half open/137-Open/255, 
 MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
-MQTT, button, lvl=0-1-2-5-127, pn=Inside, 
+MQTT, button, lvl=0-1-2-5-127, pn=Inside,       (a trigger control group with various levels)
 MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
 MQTT, button, sa=Outside, img=mdi:gate-open,    (a lighting group button to open a gate)
 
@@ -415,20 +415,19 @@ Build and publish a MQTT discovery topic
 function addDiscover(net, app, group, channel, tags, name)
   if not name then if channel == nil then do return end else name = 'measurement' end end -- Need a name from tag lookup for everything but measurement app
   local pn = name
-  -- All other keywords except MQTT are optional, with 'light' as default discovery type. Defaults:
-  local sa = ''
-  local img = ''
-  local units = ''
-  local class = ''
-  local scale = 1
-  local decimals = 2
-  local on = 'On'
-  local off = 'Off'
-  local levels = {}
+  -- All other keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
+  local sa = ''         -- Suggested area
+  local img = ''        -- Image
+  local units = ''      -- Units
+  local class = ''      -- HA class
+  local scale = 1       -- Scale (multiplier or divider)
+  local decimals = 2    -- Decimal places
+  local on = 'On'       -- bsensor 'on' string
+  local off = 'Off'     -- bsensor 'off' string
+  local levels = {}     -- Assume lvl= keyword is blank
+  local dType = 'light' -- Use light as default HA type if not specified
+  
   local lvl = false
-  local dType = 'light'
-  local writeTopic = mqttWriteTopic:gsub('#', '')
-  local payload = {}
   
   -- Build an alias to refer to each group
   alias = tNetAC(net)..'/'..app..'/'..group;  if channel ~= nil then alias = alias..'/'..channel end
@@ -474,16 +473,16 @@ function addDiscover(net, app, group, channel, tags, name)
   else
     mqttDevices[alias].type = 'sensor'
   end
-  aAlias = alias
+  aAlias = alias -- Automation controller numbered networks
   alias = net..'/'..app..'/'..group -- Will adjust for CBus numbered networks
 
   -- Build the type-specific payload to publish
   if dType == 'light' then
     payload = {
       ['stat_t'] = mqttReadTopic..alias..'/state',
-      ['cmd_t'] = writeTopic..alias..'/switch',
+      ['cmd_t'] = mqttWriteTopic..alias..'/switch',
       ['bri_stat_t'] = mqttReadTopic..alias..'/level',
-      ['bri_cmd_t'] = writeTopic..alias..'/ramp',
+      ['bri_cmd_t'] = mqttWriteTopic..alias..'/ramp',
       ['pl_off'] = 'OFF',
       ['on_cmd_type'] = 'brightness',
     }
@@ -491,7 +490,7 @@ function addDiscover(net, app, group, channel, tags, name)
   elseif dType == 'switch' then
     payload = {
       ['stat_t'] = mqttReadTopic..alias..'/state',
-      ['cmd_t'] = writeTopic..alias..'/switch',
+      ['cmd_t'] = mqttWriteTopic..alias..'/switch',
       ['pl_on'] = 'ON',
       ['pl_off'] = 'OFF',
     }
@@ -499,10 +498,10 @@ function addDiscover(net, app, group, channel, tags, name)
   elseif dType == 'fan' then
     payload = {
       ['stat_t'] = mqttReadTopic..alias..'/state',
-      ['cmd_t'] = writeTopic..alias..'/ramp',
+      ['cmd_t'] = mqttWriteTopic..alias..'/ramp',
       ['pl_on'] = 'ON',
       ['pl_off'] = 'OFF',
-      ['pr_mode_cmd_t'] = writeTopic..alias..'/ramp',
+      ['pr_mode_cmd_t'] = mqttWriteTopic..alias..'/ramp',
       ['pr_mode_cmd_tpl'] = '{% if value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
       ['pr_mode_stat_t'] = mqttReadTopic..alias..'/level',
       ['pr_mode_val_tpl'] = '{% if value == 0 %} OFF {% elif value == 86 %} low {% elif value == 170 %} medium {% elif value == 255 %} high {% endif %}',
@@ -513,13 +512,13 @@ function addDiscover(net, app, group, channel, tags, name)
   elseif dType == 'cover' then
     payload = {
       ['stat_t'] = mqttReadTopic..alias..'/state',
-      ['cmd_t'] = writeTopic..alias..'/ramp',
+      ['cmd_t'] = mqttWriteTopic..alias..'/ramp',
       ['pos_open'] = 255,
       ['pos_clsd'] = 0,
       ['pl_open'] = 'OPEN',
       ['pl_cls'] = 'CLOSE',
       ['pos_t'] = mqttReadTopic..alias..'/level',
-      ['set_pos_t'] = writeTopic..alias..'/ramp',
+      ['set_pos_t'] = mqttWriteTopic..alias..'/ramp',
     }
     cover[alias] = true
 
@@ -562,7 +561,7 @@ function addDiscover(net, app, group, channel, tags, name)
     table.sort(selects[aAlias].allLvl, function (left, right) return left['lvl'] < right['lvl'] end)
     payload = {
       ['stat_t'] = mqttReadTopic..alias..'/select',
-      ['cmd_t'] = writeTopic..alias..'/select',
+      ['cmd_t'] = mqttWriteTopic..alias..'/select',
       ['options'] = options,
     }
 
@@ -577,11 +576,12 @@ function addDiscover(net, app, group, channel, tags, name)
     if app == 250 then userParameter[alias] = true end
     if decimals ~= 2 or scale ~= 1 then publishAdj[alias] = { ['dec'] = decimals, ['scale'] = scale } end -- Scale, decimals and units only for sensors
     if units ~= '' then payload['unit_of_meas'] = units end
+
   elseif dType == 'bsensor' then
     dType = 'sensor'
     payload = {
       ['stat_t'] = mqttReadTopic..alias..'/state',
-      ['val_tpl'] = '{% if value == 0 %} '..off..' {% else %} '..on..' {% endif %}',
+      ['val_tpl'] = '{% if value | float == 0 %} '..off..' {% else %} '..on..' {% endif %}',
     }
     bSensor[aAlias] = true
 
@@ -618,7 +618,7 @@ function addDiscover(net, app, group, channel, tags, name)
           ['name'] = prefix..tag,
           ['obj_id'] = boid,
           ['uniq_id'] = boid,
-          ['cmd_t'] = writeTopic..alias..'/'..action..'/press',
+          ['cmd_t'] = mqttWriteTopic..alias..'/'..action..'/press',
           ['dev'] = { ['name'] = pn, ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' },
         }
         if img ~= '' then payload['ic'] = img end
@@ -628,32 +628,31 @@ function addDiscover(net, app, group, channel, tags, name)
         table.insert(mqttDevices[aAlias].trigger, boid)
       end
     end
+    do return end
 
   elseif dType == 'button' and lighting[tostring(app)] then
     -- Lighting group button
     payload = {
-      ['cmd_t'] = writeTopic..alias..'/press',
+      ['cmd_t'] = mqttWriteTopic..alias..'/press',
     }
     lightingButton[aAlias] = true
 
   elseif dType == 'button' then
-    logger('Error: MQTT button keyword on unsupported group '..aAlias)
+    logger('Error: MQTT button keyword used for unsupported group application '..aAlias)
     do return end
   end
 
   -- Add payload common to all
-  if app ~= 202 then -- Triggers done above
-    payload['name'] = pn
-    payload['obj_id'] = oid
-    payload['uniq_id'] = oid
-    payload['avty_t'] = mqttCbus..'status'
-    payload['dev'] = { ['name'] = pn, ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' }
-    if img ~= '' then payload['ic'] = img end
+  payload['name'] = pn
+  payload['obj_id'] = oid
+  payload['uniq_id'] = oid
+  payload['avty_t'] = mqttCbus..'status'
+  payload['dev'] = { ['name'] = pn, ['ids'] = oid, ['sa'] = sa, ['mf'] = 'Schneider Electric', ['mdl'] = 'CBus' }
+  if img ~= '' then payload['ic'] = img end
 
-    -- Publish to MQTT broker
-    local j = json.encode(payload)
-    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
-  end
+  -- Publish to MQTT broker
+  local j = json.encode(payload)
+  client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
 end
 
 
@@ -1013,7 +1012,7 @@ function outstandingMqttMessage()
         end
         
       elseif parts[6] == 'select' then
-        SetCBusLevel(net, app, group, selects[alias][payload], 0)
+        SetCBusLevel(net, app, group, selects[alias][payload], 0); if logging then logger('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
 
       elseif contains('press', parts[6]) and payload == 'PRESS' then -- Lighting group press
         PulseCBusLevel(net, app, group, 255, 0, 1, 0); if logging then logger('Payload is PRESS') end
@@ -1207,7 +1206,8 @@ function outstandingCbusMessage()
         if lighting[parts[2]] then -- Lighting application, so check for ramp
           if logging then logger('Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group))) end
           -- A CBus ramp up and down can annoyingly begin with a zero level, then steadily converge to the target level. This initial
-          -- zero should not be published to MQTT so it is ignored. If an initial zero is not seen then the ramp will be orphaned.
+          -- zero should not be published to MQTT so it is ignored. If an initial zero is not seen then the ramp will be orphaned (and
+          -- ultimately cleaned up/published, albeit a bit late after rampTimeout seconds).
           if not ramp[alias] then
             if GetCBusRampRate(net, app, group) > 0 then
               ramp[alias] = { ['ts'] = os.time(), ['ramp'] = GetCBusRampRate(net, app, group), ['target'] = GetCBusTargetLevel(net, app, group) }
@@ -1306,6 +1306,7 @@ end
 
 while true do
   -- Check for new messages from CBus. The entire socket buffer is collected each iteration for efficiency.
+  local more = false
   local stat, err = pcall(function ()
     ::checkAgain::
     local cmd = nil
@@ -1316,11 +1317,12 @@ while true do
       else
         logger('Invalid command received: '..cmd)
       end
-      server:settimeout(0); goto checkAgain -- Immediately check for more buffered inbound messages to queue
+      server:settimeout(0); more = true; goto checkAgain -- Immediately check for more buffered inbound messages to queue
+    else
+      if more then server:settimeout(socketTimeout) end
     end
   end)
   if not stat then logger('Socket receive error: '..err) end
-  server:settimeout(socketTimeout)
 
   -- Process MQTT message buffers synchronously - sends and receives
   client:loop(mqttTimeout)

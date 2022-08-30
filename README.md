@@ -49,7 +49,7 @@ Using lvl= for trigger control buttons is highly recommended. This will attempt 
 Using lvl= for select is mandatory. This defines the selection name and its corresponding CBus level for the group. There are three options for lvl=:
 - Using the format: lvl=Option 1/0-Option 2/255, for any name desired and a level number
 - The level numbers: lvl=0-255, which will use the level tag
-- The Level tags: lvl=Option 1-Option 2, which will look up the level number
+- The level tags: lvl=Option 1-Option 2, which will look up the level number
 
 If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable in the 'MQTT send receive' script, otherwise that script will force the level to be set to the nearest select level.
 
@@ -66,7 +66,7 @@ Keyword examples:
 - MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/0-Half open/137-Open/255, 
 - MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
-- MQTT, button, lvl=0-1-2-5-127, pn=Inside, 
+- MQTT, button, lvl=0-1-2-5-127, pn=Inside,       *(a trigger control group with various levels)*
 - MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
 - MQTT, button, sa=Outside, img=mdi:gate-open,    *(a lighting group button to open a gate)*
 

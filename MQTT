@@ -42,17 +42,20 @@ server = require('socket').udp()
 sKey = 'pre'..event.dst
 toSet = true
 val = event.getvalue()
-pre = -1
 comp = val
 parts = string.split(event.dst, '/')
 net = tonumber(parts[1]); app = tonumber(parts[2]); group = tonumber(parts[3])
 
 if app ~= 202 then -- Not trigger app
-  pre = storage.get(sKey)
+  pre = storage.get(sKey, nil)
   if tonumber(val) then comp = string.format('%.3f', val) end
-  if comp == pre then
-    toSet = false
-    if logging and not toSet then log('Not setting '..event.dst..' to '..comp..', previous value is '..pre) end
+  if pre ~= nil then
+    if comp == pre then
+      toSet = false
+      if logging and not toSet then log('Not setting '..event.dst..' to '..comp..', previous value is '..pre) end
+    end
+  else
+    pre = 'not recorded'
   end
 else
   toSet = false -- Don't send trigger control. One-way from MQTT to CBus...
