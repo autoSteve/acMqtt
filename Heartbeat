@@ -4,6 +4,9 @@ Resident, zero sleep, name: "Heartbeat"
 This script monitors keepalive messages from scripts, and should they fail to be received it disables/enables them.
 
 Receives messages of the format: "[net]/[app]/[group]+[os.time()]"
+
+The 'storageExists' element ensures that this script only monitors for heartbeat when a given storage value is set.
+An example use case is when the 'HUE'send receive' script has not yet gained a Hue bridge client key.
 --]]
 
 logging = false
@@ -11,7 +14,7 @@ logging = false
 -- Scripts to monitor
 scripts = {
   ['MQTT send receive'] = { ['max'] = 20, },
-  ['HUE send receive'] = { ['max'] = 20, },
+  ['HUE send receive'] = { ['max'] = 20, ['storageExists'] = 'hueactive' },
 }
 
 server = require('socket').udp()
@@ -28,6 +31,8 @@ log('Heartbeat initialised')
 
 
 while true do
+  local timeCheck, cmd, s
+  
   timeCheck = socket.gettime()
 
   cmd = server:receive()
@@ -35,7 +40,7 @@ while true do
 
     -- If the command contains a plus then it's a heartbeat
     if contains('+', cmd) then
-      parts = string.split(cmd, '+')
+      local parts = string.split(cmd, '+')
       if #parts == 2 then
         s = scripts[parts[1]]
         if s then
@@ -56,10 +61,16 @@ while true do
   A failure should cause re-entry because zero sleep, so should be good, but socket turns to custard.
   --]]
 
+  local k, v, storageE
+  
   for k, v in pairs(scripts) do
     if script.status(k) ~= nil then
       secondsSince = os.time() - v.heartbeat
-      if secondsSince >= v.max then -- No heartbeat received for specified period, so re-start the script
+      if v.storageExists ~= nil then
+        storageE = storage.get(v.storageExists)
+      end
+      
+      if secondsSince >= v.max and (not v.storageExists or storageE) then -- No heartbeat received for specified period, so re-start the script
         log('Missed '..k..' script heartbeat (last received '..secondsSince..' seconds ago) - Re-starting script')
         script.disable(k); script.enable(k)
         v.heartbeat = os.time()

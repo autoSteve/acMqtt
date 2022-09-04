@@ -135,7 +135,7 @@ If you don't want HAOS, then simply get an MQTT broker running elsewhere on your
 
 The 'HUE send receive' script communicates directly with the bridge via its REST API, and requires nothing more than keywords.
 
-If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. After connection the cbus read/homeassistant topics should show all objects with the right keywords.
+If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. After connection the cbus read/homeassistant topics should show all objects having the right keywords.
 
 ### Home Assistant configuration.yaml example:
 Sets up the MQTT connection, plus includes many domains for Google Home (adjust as needed for Alexa, etc.)

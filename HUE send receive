@@ -34,6 +34,8 @@ Note: Any newly added Hue devices will require a script restart to discover them
 logging = false        -- Enable detailed logging
 logms = false          -- Include timestamp in milliseconds for logs
 
+storage.set('hueactive', nil)
+
 eventStream = '/eventstream/clip/v2'
 resource = '/clip/v2/resource'
 clientKeyStorage = 'huesendreceive'
@@ -440,6 +442,7 @@ while true do
         elseif line:find(': hi') then
           logger('Receiving event stream')
           hueConnected = true
+          storage.set('hueactive', true)
         end
       end
     else
