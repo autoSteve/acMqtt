@@ -11,6 +11,7 @@ logging = false
 -- Scripts to monitor
 scripts = {
   ['MQTT send receive'] = { ['max'] = 20, },
+  ['HUE send receive'] = { ['max'] = 20, },
 }
 
 server = require('socket').udp()

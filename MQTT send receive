@@ -7,7 +7,7 @@ checkForChanges = true -- When true the script will periodically check for creat
 --[[
 Resident, zero sleep interval, name: 'MQTT send receive'
 
-Manage CBus, Philips Hue, Panasonic AC and environment events for MQTT, and publish discovery topics. Used
+Manage CBus, Panasonic AC and environment events for MQTT, and publish discovery topics. Used
 with Home Assistant.
 
 >>> CBUS <-> MQTT
@@ -57,29 +57,6 @@ MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000,
 MQTT, button, lvl=0-1-2-5-127, pn=Inside,       (a trigger control group with various levels)
 MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
 MQTT, button, sa=Outside, img=mdi:gate-open,    (a lighting group button to open a gate)
-
->>> HUE
-
-For Philips Hue devices, bi-directional sync with CBus occurs. Add the keyword 'HUE' to CBus objects, plus...
-  pn= Preferred name (used as the MQTT topic, which needs to match exactly the name of the Hue device.)
-
-Keyword examples:
-
-HUE, pn=Steve's bedside light
-HUE, pn=Steve's electric blanket
-
-A useful result is that Philips Hue devices can then be added to CBus scenes, like an 'All off' function.
-
-A 'hue2mqtt.js' instance is required, and for Home Assistant this could be run as a container using
-Portainer, or run as a separate container / process on another VM. hue2mqtt is used to sync a Hue bridge
-with the MQTT broker.
-
-The CBus groups for Hue devices are usually not used for any purpose other than controlling their Hue device.
-Turning on/off one of these groups will result in the Philips Hue hub turning the loads on/off. It is possible
-that these CBus Hue groups could be used to also control CBus loads, giving them dual purpose.
-
-Note: This script only handles on/off, as well as levels for dimmable Hue devices, but not colours/colour
-temperature, as that's not a CBus thing. Colour details will return to previously set values done in the Hue app.
 
 >>> PANASONIC A/C
 
@@ -144,6 +121,7 @@ Changes:
 1.19 - 26/08/2022 Add support for binary sensors and 'bsensors'
 1.20 - 27/08/2022 Add support for lighting groups as buttons
 1.21 - 28/08/2022 Add support for select, and implement last will/status for Home Assistant availability
+1.22 - 04/09/2022 Move Philips Hue integration to separate script 'HUE send receive' removing reliance on MQTT
 --]]
 
 --[[
@@ -170,23 +148,19 @@ ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 
 --[[
-Topic prefixes for read/write/publish. Hue topics are based on hue2mqtt.js. The mqttDiscovery topic is recommended
-to be set to 'homeassistant/' for use with HA, which is the default there. The MQTT CBus topics can be whatever you
-want, as discovery/subscribe adjusts. All topic prefixes must end in '/'.
+Topic prefixes for read/write/publish. The mqttDiscovery topic is recommended to be set to 'homeassistant/'
+for use with HA, which is the default there. The MQTT CBus topics can be whatever you want, as discovery/subscribe
+adjusts. All topic prefixes must end in '/'.
 --]]
 mqttCbus = 'cbus/'
 mqttReadTopic = mqttCbus..'read/'
 mqttWriteTopic = mqttCbus..'write/'
 mqttDiscoveryTopic = 'homeassistant/'
-hueTopic = 'hue/'
-hueSetTopic = hueTopic..'set/lights/'
 
 --[[
 Variables not to be messed with unless you definitely know what you're doing.
 --]]
 mqttDevices = {}       -- CBus groups to send MQTT topics for
-hue = {}               -- Hue device details (name, state, dimmable, etc) 
-hueDevices = {}        -- Quick lookup to determine whether an object is a Hue device
 ac = {}                -- AC device details
 acDevices = {}         -- Quick lookup to determine whether an object is an AC device
 acBoards = {}          -- All physical AC boards (esp32)
@@ -223,7 +197,7 @@ function tNetAC(net) if net == 254 then return 0 else return net end end -- Tran
 started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
 
 --[[
-UDP listener - receive messages from the event scripts 'MQTT', 'HUE' and 'AC'
+UDP listener - receive messages from the event scripts 'MQTT' and 'AC'
 --]]
 
 server = require('socket').udp()
@@ -248,7 +222,6 @@ client.ON_CONNECT = function(success)
     mqttStatus = 1
     -- Subscribe to relevant topics
     client:subscribe(mqttWriteTopic..'#', mqttQoS)
-    client:subscribe(hueTopic..'#', mqttQoS)
     for k, _ in pairs(acBoards) do client:subscribe(k..'/#', mqttQoS) end
     for k, _ in pairs(envBoards) do client:subscribe(k..'/#', mqttQoS) end
 
@@ -325,47 +298,6 @@ function publishMeasurement(net, app, group, channel, value)
   if adjust then v = tonumber(string.format('%.'..adjust['dec']..'f', value * adjust['scale'])) else v = value end
   client:publish(mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/state', v, mqttQoS, RETAIN)
   -- if logging then logger('Publishing measurement '..mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..' to '..v) end
-end
-
---[[
-Publish Philips Hue objects to MQTT 
---]]
-function publishHue(net, app, group, level)
-  if level == nil then logger('Warning: Nil Hue level for '..net..'/'..app..'/'..group); do return end end
-  local state = (tonumber(level) ~= 0) and true or false
-  local alias = net..'/'..app..'/'..group
-  local hueState
-  payload = { ['on'] = state }
-  if hue[alias].dimmable then
-    hueState = tonumber(level)
-    if state then -- Only add 'bri' to the message when turning on
-      if hueState == 255 then hueState = 254 end -- CBus is 0..255, but Hue is 0..254
-      payload['bri'] = hueState
-    end
-  else
-    hueState = state
-  end
-  if hue[alias].state ~= hueState then
-    if ignoreMqtt[alias] and (os.time() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
-      ignoreMqtt[alias] = nil
-      if logging then logger('Ignoring older MQTT ignore flag for '..alias) end
-    end
-    if not ignoreMqtt[alias] then
-      local j = json.encode(payload)
-      client:publish(hueSetTopic..hue[alias].name, j, mqttQoS, NORETAIN)
-      -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
-      -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
-      if hueState ~= hue[alias].state then ignoreCbus[alias] = os.time() end
-      if logging then logger('Published Hue state and level '..hueSetTopic..hue[alias].name..' to '..j) end
-    else
-      ignoreMqtt[alias] = nil
-      if logging then logger('Ignoring MQTT publish for '..alias) end
-    end
-    hue[alias].state = hueState
-  else
-    ignoreMqtt[alias] = nil
-    if logging then logger('Ignoring MQTT publish for '..alias) end
-  end
 end
 
 --[[
@@ -638,7 +570,7 @@ function addDiscover(net, app, group, channel, tags, name)
     lightingButton[aAlias] = true
 
   elseif dType == 'button' then
-    logger('Error: MQTT button keyword used for unsupported group application '..aAlias)
+    logger('Error: MQTT button keyword used for unsupported application group '..aAlias)
     do return end
   end
 
@@ -678,49 +610,6 @@ function publishCurrent()
   if logging then logger('Queued '..n..' objects with keyword MQTT for publication') end
 end
 
-
---[[
-Create / update / delete Hue devices
---]]
-function cudHue(initial)
-  local grps = GetCBusByKW('HUE', 'or')
-  local found = {}
-  local addition = false
-  local k, v
-
-  for k, v in pairs(grps) do
-    local net = tonumber(v['address'][1]); local app = tonumber(v['address'][2]); local group = tonumber(v['address'][3])
-    local pn = GetCBusGroupTag(net, app, group)
-    local alias = net..'/'..app..'/'..group
-
-    table.insert(found, alias)
-    if not hue[alias] then hue[alias] = {}; addition = true end
-
-    local tags = v['keywords']
-    for _, t in ipairs(tags) do
-      tp = string.split(t, '=')
-      tp[1] = trim(tp[1])
-      if tp[2] then tp[2] = trim(tp[2]) if tp[1] == 'pn' then pn = tp[2] end end
-    end
-    hue[alias].name = pn; hueDevices[pn] = alias
-  end
-    
-  -- Handle deletions
-  for k, _ in pairs(hue) do
-    local f = false; for _, v in ipairs(found) do if k == v then f = true; break end end
-    if not f then
-      kill = hue[k].name; hue[k] = nil; hueDevices[kill] = nil
-    end
-  end
-  if addition and not initial then -- Re-subscribe Hue topic to get status of newly added devices
-    -- Re-subscribe. This works because the default for hue2mqtt.js is to publish topics with a
-    -- retain flag. A re-subscribe here will result in gathering current status.
-    client:subscribe(hueTopic..'#', 2)
-    -- Ensure that newly tagged/removed groups with the HUE keyword send updates.
-    logger('Hue object keywords added, restarting event script')
-    script.disable('HUE'); script.enable('HUE')
-  end
-end
 
 --[[
 Create / update / delete AC devices
@@ -957,6 +846,8 @@ function outstandingPublish()
   local u
   for _, u in ipairs(unpublished) do
     addDiscover(tNetCBus(u.net), u.app, u.group, u.channel, u.tags, u.name)
+    local alias = u.net..'/'..u.app..'/'..u.group
+    -- storage.set('pre'..alias, nil) -- Un-comment to clear out all previous values for testing
     -- Measurement application
     if u.app == 228 then
       local level = nil; pcall(function () level = GetCBusMeasurement(u.net, u.group, u.channel) end)
@@ -967,7 +858,6 @@ function outstandingPublish()
     elseif u.app == 202 then -- Do nothing
     -- Lighting and other
     else
-      local alias = u.net..'/'..u.app..'/'..u.group
       if not lightingButton[alias] then -- Do nothing for lighting buttons
         local level = nil; pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
         if level ~= nil then publish(tNetCBus(u.net), u.app, u.group, level) end
@@ -1081,45 +971,6 @@ function outstandingMqttMessage()
         end
       end
 
-    -- Messages from Philips Hue
-    elseif parts[1] == 'hue' and parts[2] == 'status' then
-      device = parts[4]
-      if hueDevices[device] then
-        parts = string.split(hueDevices[device], '/')
-        local net = parts[1]; local app = parts[2]; local group = parts[3]
-        local stat, err = pcall(function ()
-          j = json.decode(payload)
-        end)
-        if stat then
-          local alias = net..'/'..app..'/'..group
-          if ignoreCbus[alias] and os.time() - ignoreCbus[alias] > ignoreTimeout then -- Don't worry about older 'ignore' flags
-            ignoreCbus[alias] = nil
-            if logging then logger('Ignoring older CBus ignore flag for '..alias) end
-          end
-          if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change
-            if j['hue_state']['bri'] ~= nil then
-              -- Dimmable
-              if not hue[alias].dimmable then hue[alias].dimmable = true end
-              if j['val'] == 254 then j['val'] = 255 end -- Adjust for Hue having a dimming range of 0..254 / make CBus show 'on'.
-              SetCBusLevel(net, app, group, j['val'], 0)
-            else
-              -- Switchable
-              SetCBusState(net, app, group, j['val'])
-            end
-            oldState = hue[alias].state; if oldState == nil then oldState = -1 end
-            -- Setting CBus here will result in the HUE event script requesting publication of the state using publishHue() above.
-            -- This is undesired, so ignoreMqtt[alias] is used to ensure that the CBus change received does not publish to MQTT.
-            if oldState ~= -1 and oldState ~= j['val'] then ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..tostring(oldState)..' j.val='..tostring(j['val'])) end end
-          else
-            ignoreCbus[alias] = nil
-            if logging then logger('Ignoring CBus publish for '..alias) end
-          end
-          hue[alias].state = j['val']
-        else
-          logger('Warning: MQTT unexpected message Hue payload, device: ' ..device..', payload: '..payload)
-        end
-      end
-
     -- Messages from AC boards
     elseif parts[2] == 'climate' or parts[2] == 'select' or parts[2] == 'sensor' then
       local sel = 'func'
@@ -1230,11 +1081,7 @@ function outstandingCbusMessage()
           -- Groups other than lighting are never ramped, so setting is always true
         end
         if setting then
-          if hue[alias] then -- Hue message to MQTT
-            publishHue(parts[1], parts[2], parts[3], parts[4])
-          else
-            publish(tNetCBus(net), app, group, payload)
-          end
+          publish(tNetCBus(net), app, group, payload)
           if ramp[alias] and payload == ramp[alias].target then
             ramp[alias] = nil
             if logging then logger('Clear ramp for '..alias) end
@@ -1285,9 +1132,8 @@ Main loop
 -- Create/update/delete scripts spread evenly over the period 'trackChanges'
 cud = {
   { func = cudCBusTopics, t = os.time() - checkChanges + 1, init = false },
-  { func = cudHue, t = os.time() - checkChanges*0.75 + 1, init = true, script = 'HUE' },
-  { func = cudAc, t = os.time() - checkChanges*0.5 + 1, init = true, script = 'AC' },
-  { func = cudEnv, t = os.time() - checkChanges*.25 + 1, init = true },
+  { func = cudAc, t = os.time() - checkChanges*0.67 + 1, init = true, script = 'AC' },
+  { func = cudEnv, t = os.time() - checkChanges*.33 + 1, init = true },
 }
 
 -- Initial load of devices excluding CBus, suppressing MQTT re-subscribe

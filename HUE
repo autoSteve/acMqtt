@@ -16,6 +16,7 @@ another level is not affected - just "on" commands.
 
 logging = false
 lighting = {['56']=true} -- Array of applications that are used for lighting
+huePort = 5435
 
 
 function saveLastLevel()
@@ -61,7 +62,7 @@ end
 if toSet then
   if logging then log('Setting '..event.dst..' to '..comp..', previous='..pre) end
 
-  server:sendto(event.dst.."/"..val, '127.0.0.1', 5432)
+  server:sendto(event.dst.."/"..val, '127.0.0.1', huePort)
 end
 
 -- Check whether to set the level as a tracked lastlevel

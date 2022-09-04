@@ -8,27 +8,24 @@ Functions:
 - Optionally Panasonic air conditioners and ESPHome sensors for temperature and relative humidity integrated with the CBus Automation Controller (example .yaml files are for this.)
 
 The pieces of the puzzle include:
-- Home Assistant 'HAOS' running somewhere. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker and more going (but you could use a separately installed broker elsewhere on your network). HA Cloud talks to Google Assistant/Alexa, so a subscription is required if you want that.
-- Home Assistant plug-ins: <del>The excellent 'Portainer',</del> 'SSH & Web terminal' and 'Mosquitto broker'. File editor is also handy.
-- <del>A container created with Portainer to run hue2mqtt.js</del>
-- For Hue integration an LUA script called LUA-hue2mqtt
-- LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2). The script name of 'MQTT send receive' is important for the LUA code, given 'Heartbeat' script re-starts, so adjust as necessary by examining both scripts thoroughly if you need to change the name. If you're not using the Heartbeat script, then no issue.
+- Home Assistant 'HAOS' running somewhere. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker\ going (but you could use a separately installed MQTT broker elsewhere on your network and use 'core'). HA Cloud talks to Google Assistant/Alexa, so a subscription is required if you want that.
+- Home Assistant plug-ins: 'Mosquitto broker', and file editor is also handy.
+- LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2). The script name of 'MQTT send receive' and 'HUE send receive' are important for the LUA code, given 'Heartbeat' script re-starts, so adjust as necessary by examining the scripts thoroughly if you need to change the name. If you're not using the Heartbeat script, then no issue.
 
 LUA scripts for the automation controller:
 - *MQTT send receive*: resident, zero sleep
+- *HUE send receive*: resident, zero sleep
 - *MQTT*: event-based, execute during ramping, trigger on keyword 'MQTT'
 - *HUE*: event-based, execute during ramping, trigger on keyword 'HUE'
 - *AC*: event-based, execute during ramping, trigger on keyword 'AC'
-- *Heartbeat*: resident, zero sleep (optional ... monitors for failure of 'MQTT send receive' and re-starts it)
+- *Heartbeat*: resident, zero sleep (optional ... monitors for failure of 'MQTT send receive' and 'HUE send receive' and re-starts them on failure)
 
-If you don't care for integrating Philips Hue/AC/environmental devices with CBus, then ignore Portainer and hue2mqtt.js, and the LUA Hue/AC/ENV code can stay there and will just be unused.
-
-Plus SSH & Web terminal and File Editor is not required, just nice to have.
+If you don't care for integrating Philips Hue, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there and will just be unused.
 
 ## Keywords used for Automation Controller objects
-Newly added keywords can be regularly detected by the 'MQTT send receive' script. This is configurable by setting an option that is near the top of the script. If this option is set to false then that script must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is sixty seconds, and that is also a configurable variable.
+Newly added keywords can be regularly detected by both the 'MQTT send receive' and 'HUE send receive' scripts. This is configurable by setting an option that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is sixty seconds, and that is also a configurable variable.
 
-### CBus
+### CBus (MQTT send receive)
 Lighting, measurement, user parameter and trigger control applications are implemented.
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
@@ -71,9 +68,9 @@ Keyword examples:
 - MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
 - MQTT, button, sa=Outside, img=mdi:gate-open,    *(a lighting group button to open a gate)*
 
-### Philips Hue
-For Philips Hue devices, bi-directional sync with CBus occurs. I run Home Assistant talking directly to the Hue hub, and also the Automation Controller via MQTT. Add the keyword 'HUE' to CBus objects, plus...
-- pn= Preferred name (used as the MQTT topic, which needs to match exactly the name of the Hue device.)
+### Philips Hue (HUE send receive)
+For Philips Hue devices, bi-directional sync with CBus occurs. I run Home Assistant talking directly to the Hue hub, and also the Automation Controller script via REST API. Add the keyword 'HUE' to CBus objects, plus...
+- pn= Preferred name (needs to match exactly the name of the Hue device.)
 
 Keyword examples:
 
@@ -82,13 +79,11 @@ Keyword examples:
 
 A useful result is that Philips Hue devices can then be added to CBus scenes, like an 'All off' function.
 
-<del>A 'hue2mqtt.js' instance is required, and for Home Assistant this could be run as a container using Portainer, or run as a separate container / process on another VM. hue2mqtt is used to sync a Hue bridge with the MQTT broker.</del> An LUA hue2mqtt sister script is available at https://github.com/autoSteve/LUA-hue2mqtt. 
-
 The CBus groups for Hue devices are usually not used for any purpose other than controlling their Hue device. Turning on/off one of these groups will result in the Philips Hue hub turning the loads on/off. It is possible that these CBus Hue groups could also be used to control CBus loads, giving them dual purpose.
 
 Note: This script only handles on/off as well as levels for dimmable Hue devices, but not colours/colour temperature, as that's not a CBus thing. Colour details will return to previously set values done in the Hue app.
 
-### Panasonic Ar Conditioners
+### Panasonic Ar Conditioners (MQTT send receive)
 For Panasonic air conditioners connected to MQTT via ESPHome (see example .yaml file), add the keyword 'AC' to user parameters plus...
 
 - dev=   ESPHome device name, required, and one of:
@@ -118,7 +113,7 @@ Panasonic keyword examples:
 - AC, dev=storeac, sense=current_temperature, topic=climate
 - AC, dev=storeac, sense=outside_temperature
 
-### Environment Monitors
+### Environment Monitors (MQTT send receive)
 Environment monitors can pass sensor data to CBus (using ESPHome devices, see example .yaml).
 
 Add the 'ENV' keyword, plus...
@@ -136,29 +131,11 @@ I don't cover installing Home Assistant here. You probably wouldn't be reading t
 
 Install the official Mosquitto broker. First up, create a HomeAssistant user 'mqtt', and give it a password of 'password' (used in the 'MQTT send receive' script), and probably hide it so it doesn't appear on dashboards (it doesn't need to be admin). Then go to Settings, Add-ons, and from 'official' add-ons install and start Mosquitto. Any HA user can be used to authenticate to this Mosquitto instance, explaining the creation of the user 'mqtt'.
 
-To enable the 'MQTT send receive' script to integrate with Philips Hue, a sister script is available at https://github.com/autoSteve/LUA-hue2mqtt. That script provides an interface between an MQTT broker and a Hue bridge. Alternatively, use Portainer to spin up a hue2mqtt.js container on the HAOS server (struck-through details below). In future the 'MQTT send reveive' script could directly communicate with the bridge REST V2 API, and that would be more efficient, but it utilises MQTT today.
+If you don't want HAOS, then simply get an MQTT broker running elsewhere on your network.
 
-<del>Portainer might be new to you though, and this allows the creation and maintenance of containers other than those intended to be run alongside Home Assistant. In short, you can do pretty well whatever you want, and all from the comfort of a GUI (just don't ask the HA folks for help if you get stuck).</del>
+The 'HUE send receive' script communicates directly with the bridge via its REST API, and requires nothing more than keywords.
 
-<del>Go to Settings, Add-ons, Store, and using the little three-dot menu at top right, add the repository https://github.com/MikeJMcGuire/HASSAddons. Once you do, you'll be able to install Portainer 2 from Mike's repository. After it's installed, turn off the option 'Protection mode', enable the sidebar entry and start it. That will enable you to configure a new container for hue2mqtt.js.</del>
-
-<del>The first login to Portainer requires setting an admin password, and from there click on 'Volumes' in the blue bar at left, and click 'Add volume'. I created a volume called 'hue2mqtt'. Store it wherever you like. I used local storage. The reason a volume is needed is so that Hue bridge configuration (a.k.a "press the Hue button") only needs to be done once, and will survive re-creation of the hue2mqtt.js container.<del>
-
-<del>Then click 'Containers' in the blue bar, and 'Add container'.</del>
-
-<del>For the image, I used: jkohl/hue2mqtt:latest & always pull.</del>
-
-<del>Under 'Command and logging' tab, for the command, I used: '-b' '192.168.10.15' '-m' 'mqtt://mqtt:password@192.168.10.21' '-i' '1' '--insecure'. See https://github.com/hobbyquaker/hue2mqtt.js/blob/master/README.md for details.</del>
-
-<del>Under 'Volumes' tab, I added a new volume mounted in the container at '/root/.hue2mqtt' pointed at the volume hue2mqtt to allow persistent storage. (Note the full stop in /root/.hue2mqtt - easy to miss with the GitHub font as it looks like a spot of dirt on your monitor...)</del>
-
-<del>For me, 192.168.10.21 is the IP address of my Home Assistant server, which is now running a Mosquitto broker. 192.168.10.15 is my Philips Hue bridge (I set its IP address to fixed on my Unifi router by editing the client device, so DHCP always gives it the same address).</del>
-
-<del>Once the container is running, go press the button on your Hue bridge, then drop to a HAOS terminal and execute 'docker logs hue2mqtt', and it should show 'bridge connected'. (Protection mode needs to be off in the SSH & Web Terminal info tab to be able to do this.) </del>
-
-<del>It's probaly advisable to configure container restart options in Portainer, so that the hue2mqtt container gets restarted on any error condition. I've encountered this, so don't leave the default setting.</del>
-
-If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. If using Hue, then MQTT Explorer should show 'hue' topics after connection. And for the cbus read/homeassistant topics it should show a whole lot more if you've configured keywords.
+If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. After connection the cbus read/homeassistant topics should show all objects with the right keywords.
 
 ### Home Assistant configuration.yaml example:
 Sets up the MQTT connection, plus includes many domains for Google Home (adjust as needed for Alexa, etc.)
