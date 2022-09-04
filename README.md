@@ -81,7 +81,7 @@ Keyword examples:
 
 A useful result is that Philips Hue devices can then be added to CBus scenes, like an 'All off' function.
 
-A 'hue2mqtt.js' instance is required, and for Home Assistant this could be run as a container using Portainer, or run as a separate container / process on another VM. hue2mqtt is used to sync a Hue bridge with the MQTT broker.
+~~A 'hue2mqtt.js' instance is required, and for Home Assistant this could be run as a container using Portainer, or run as a separate container / process on another VM. hue2mqtt is used to sync a Hue bridge with the MQTT broker.~~An LUA hue2mqtt sister script is available at https://github.com/autoSteve/LUA-hue2mqtt. 
 
 The CBus groups for Hue devices are usually not used for any purpose other than controlling their Hue device. Turning on/off one of these groups will result in the Philips Hue hub turning the loads on/off. It is possible that these CBus Hue groups could also be used to control CBus loads, giving them dual purpose.
 
@@ -135,25 +135,27 @@ I don't cover installing Home Assistant here. You probably wouldn't be reading t
 
 Install the official Mosquitto broker. First up, create a HomeAssistant user 'mqtt', and give it a password of 'password' (used in the 'MQTT send receive' script), and probably hide it so it doesn't appear on dashboards (it doesn't need to be admin). Then go to Settings, Add-ons, and from 'official' add-ons install and start Mosquitto. Any HA user can be used to authenticate to this Mosquitto instance, explaining the creation of the user 'mqtt'.
 
-Portainer might be new to you though, and this allows the creation and maintenance of containers other than those intended to be run alongside Home Assistant. In short, you can do pretty well whatever you want, and all from the comfort of a GUI (just don't ask the HA folks for help if you get stuck).
+To enable the 'MQTT send receive' script to integrate with Philips Hue, a sister script is available at https://github.com/autoSteve/LUA-hue2mqtt. That script provides an interface between an MQTT broker and a Hue bridge. Alternatively, use Portainer to spin up a hue2mqtt.js container on the HAOS server (struck-through details below). In future the 'MQTT send reveive' script could directly communicate with the bridge REST V2 API, and that would be more efficient, but it utilises MQTT today.
 
-Go to Settings, Add-ons, Store, and using the little three-dot menu at top right, add the repository https://github.com/MikeJMcGuire/HASSAddons. Once you do, you'll be able to install Portainer 2 from Mike's repository. After it's installed, turn off the option 'Protection mode', enable the sidebar entry and start it. That will enable you to configure a new container for hue2mqtt.js.
+~~Portainer might be new to you though, and this allows the creation and maintenance of containers other than those intended to be run alongside Home Assistant. In short, you can do pretty well whatever you want, and all from the comfort of a GUI (just don't ask the HA folks for help if you get stuck).~~
 
-The first login to Portainer requires setting an admin password, and from there click on 'Volumes' in the blue bar at left, and click 'Add volume'. I created a volume called 'hue2mqtt'. Store it wherever you like. I used local storage. The reason a volume is needed is so that Hue bridge configuration (a.k.a "press the Hue button") only needs to be done once, and will survive re-creation of the hue2mqtt.js container.
+~~Go to Settings, Add-ons, Store, and using the little three-dot menu at top right, add the repository https://github.com/MikeJMcGuire/HASSAddons. Once you do, you'll be able to install Portainer 2 from Mike's repository. After it's installed, turn off the option 'Protection mode', enable the sidebar entry and start it. That will enable you to configure a new container for hue2mqtt.js.~~
 
-Then click 'Containers' in the blue bar, and 'Add container'.
+~~The first login to Portainer requires setting an admin password, and from there click on 'Volumes' in the blue bar at left, and click 'Add volume'. I created a volume called 'hue2mqtt'. Store it wherever you like. I used local storage. The reason a volume is needed is so that Hue bridge configuration (a.k.a "press the Hue button") only needs to be done once, and will survive re-creation of the hue2mqtt.js container.~~
 
-For the image, I used: jkohl/hue2mqtt:latest & always pull.
+~~Then click 'Containers' in the blue bar, and 'Add container'.~~
 
-Under 'Command and logging' tab, for the command, I used: '-b' '192.168.10.15' '-m' 'mqtt://mqtt:password@192.168.10.21' '-i' '1' '--insecure'. See https://github.com/hobbyquaker/hue2mqtt.js/blob/master/README.md for details.
+~~For the image, I used: jkohl/hue2mqtt:latest & always pull.~~
 
-Under 'Volumes' tab, I added a new volume mounted in the container at '/root/.hue2mqtt' pointed at the volume hue2mqtt to allow persistent storage. (Note the full stop in /root/.hue2mqtt - easy to miss with the GitHub font as it looks like a spot of dirt on your monitor...)
+~~Under 'Command and logging' tab, for the command, I used: '-b' '192.168.10.15' '-m' 'mqtt://mqtt:password@192.168.10.21' '-i' '1' '--insecure'. See https://github.com/hobbyquaker/hue2mqtt.js/blob/master/README.md for details.~~
 
-For me, 192.168.10.21 is the IP address of my Home Assistant server, which is now running a Mosquitto broker. 192.168.10.15 is my Philips Hue bridge (I set its IP address to fixed on my Unifi router by editing the client device, so DHCP always gives it the same address).
+~~Under 'Volumes' tab, I added a new volume mounted in the container at '/root/.hue2mqtt' pointed at the volume hue2mqtt to allow persistent storage. (Note the full stop in /root/.hue2mqtt - easy to miss with the GitHub font as it looks like a spot of dirt on your monitor...)~~
 
-Once the container is running, go press the button on your Hue bridge, then drop to a HAOS terminal and execute 'docker logs hue2mqtt', and it should show 'bridge connected'. (Protection mode needs to be off in the SSH & Web Terminal info tab to be able to do this.) 
+~~For me, 192.168.10.21 is the IP address of my Home Assistant server, which is now running a Mosquitto broker. 192.168.10.15 is my Philips Hue bridge (I set its IP address to fixed on my Unifi router by editing the client device, so DHCP always gives it the same address).~~
 
-It's probaly advisable to configure container restart options in Portainer, so that the hue2mqtt container gets restarted on any error condition. I've encountered this, so don't leave the default setting.
+~~Once the container is running, go press the button on your Hue bridge, then drop to a HAOS terminal and execute 'docker logs hue2mqtt', and it should show 'bridge connected'. (Protection mode needs to be off in the SSH & Web Terminal info tab to be able to do this.) ~~
+
+~~It's probaly advisable to configure container restart options in Portainer, so that the hue2mqtt container gets restarted on any error condition. I've encountered this, so don't leave the default setting.~~
 
 If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. If using Hue, then MQTT Explorer should show 'hue' topics after connection. And for the cbus read/homeassistant topics it should show a whole lot more if you've configured keywords.
 
