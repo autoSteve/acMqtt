@@ -128,26 +128,21 @@ function getResources()
   if logging then logger('Discovering devices') end
   l = rest('GET', resource)
   for _, d in ipairs(json.decode(l).data) do
-    if d.id_v1 and d.id_v1 ~= '' and not d.mac_address then
-      if d.type and d.type == 'bridge_home' then
-      elseif d.id_v1:find('group') then
-      elseif d.product_data then
-      elseif d.on then
-        if not hueDeviceStatus[d.id_v1] then
-          if discovered == nil then discovered = {} end
-          hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on, reachable = true}
-          if d.dimming then hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(d.dimming.brightness) end
-          hueIds[d.metadata.name] = d.id
-          hueV1Ids[d.metadata.name] = d.id_v1
-          discovered[d.id_v1] = hueDeviceStatus[d.id_v1]
-        end
+    if d.type == 'light' then
+      if not hueDeviceStatus[d.id_v1] then
+        if discovered == nil then discovered = {} end
+        hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on, reachable = true}
+        if d.dimming then hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(d.dimming.brightness) end
+        hueIds[d.metadata.name] = d.id
+        hueV1Ids[d.metadata.name] = d.id_v1
+        discovered[d.id_v1] = hueDeviceStatus[d.id_v1]
       end
     end
   end
   if discovered ~= nil then
     local ds = ''
     for _, d in pairs(discovered) do
-      ds = ds..'\n'..d.name..' id: '..d.id -- ..', rid: '..d.rid
+      ds = ds..'\n'..d.name..', id: '..d.id -- ..', rid: '..d.rid
     end
     logger('Discovered devices:'..ds)
   end
@@ -210,6 +205,7 @@ function cudHue(initial)
     hue[alias].state = GetCBusLevel(net, app, group)
     hueDevices[pn] = alias
     hueDeviceStatus[hueV1Ids[pn]].alias = alias
+    if hueDeviceStatus[hueV1Ids[pn]].brightness ~= nil then hue[alias].dimmable = true end
   end
     
   -- Handle deletions
@@ -246,16 +242,19 @@ function publishHue(net, app, group, level)
       if logging then logger('Ignoring older bridge ignore flag for '..alias) end
     end
     if not ignoreBridge[alias] then
+      if hueDeviceStatus[hueV1Ids[hue[alias].name]].reachable then
+        local toPut = json.encode(payload)
+        local resource = resource..'/light/'..hueIds[hue[alias].name]
+        if logging then logger('PUT '..resource..' '..toPut) end
+        rest('PUT', resource, toPut)
       
-      local toPut = json.encode(payload)
-      local resource = resource..'/light/'..hueIds[hue[alias].name]
-      if logging then logger(resource..' PUT '..toPut) end
-      rest('PUT', resource, toPut)
-      
-      -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
-      -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
-      if hueState ~= hue[alias].state then ignoreCbus[alias] = os.time(); if logging then logger('Setting ignoreCBus for '..alias) end end
-      if logging then logger('Published Hue state and level '..hue[alias].name..' to '..toPut) end
+        -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
+        -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
+        if hueState ~= hue[alias].state then ignoreCbus[alias] = os.time(); if logging then logger('Setting ignoreCBus for '..alias) end end
+        if logging then logger('Published Hue state and level '..hue[alias].name..' to '..toPut) end
+      else
+        if logging then logger('Warning: Not publishing state and level for '..hue[alias].name..' - unreachable') end
+      end
     else
       ignoreBridge[alias] = nil
       if logging then logger('Ignoring bridge publish for '..alias) end
@@ -285,7 +284,7 @@ function outstandingBridgeMessage()
     if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change
       if hueDeviceStatus[id].brightness ~= nil then
         -- Dimmable
-        if not hue[alias].dimmable then hue[alias].dimmable = true end
+        if hue[alias].dimmable == nil then hue[alias].dimmable = true end
         if hueDeviceStatus[id].on then
           level = hueDeviceStatus[id].level
         else
