@@ -120,23 +120,23 @@ end
 
 
 --[[
-Load lighting devices from the bridge
+Load lighting devices from the bridge (REST call or in response to the event stream)
 --]]
 
-function getResources()
+function getResources(msg)
   local discovered = nil
-  if logging then logger('Discovering devices') end
-  l = rest('GET', resource)
-  for _, d in ipairs(json.decode(l).data) do
-    if d.type == 'light' then
-      if not hueDeviceStatus[d.id_v1] then
-        if discovered == nil then discovered = {} end
-        hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on, reachable = true}
-        if d.dimming then hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(d.dimming.brightness) end
-        hueIds[d.metadata.name] = d.id
-        hueV1Ids[d.metadata.name] = d.id_v1
-        discovered[d.id_v1] = hueDeviceStatus[d.id_v1]
-      end
+  if not msg then
+    if logging then logger('Get light devices') end
+    msg = json.decode(rest('GET', resource..'/light'))
+  end
+  for _, d in ipairs(msg.data) do
+    if d.type == 'light' and not hueDeviceStatus[d.id_v1] then
+      if discovered == nil then discovered = {} end
+      hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on, reachable = true}
+      if d.dimming then hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(d.dimming.brightness) end
+      hueIds[d.metadata.name] = d.id
+      hueV1Ids[d.metadata.name] = d.id_v1
+      discovered[d.id_v1] = hueDeviceStatus[d.id_v1]
     end
   end
   if discovered ~= nil then
@@ -412,8 +412,6 @@ function updateMessage(msg)
         if update then
           bridgeMessages[#bridgeMessages + 1] = id -- Queue update
         end
-      else
-        if id:find('lights') then getResources() end
       end
     end
   elseif msg.type == 'delete' then
@@ -427,6 +425,8 @@ function updateMessage(msg)
         hueDeviceStatus[id] = nil
       end
     end
+  elseif msg.type == 'add' then
+    getResources(msg)
   end
 end
 
