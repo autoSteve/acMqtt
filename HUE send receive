@@ -26,8 +26,6 @@ that these CBus Hue groups could be used to also control CBus loads, giving them
 
 Note: This script only handles on/off, as well as levels for dimmable Hue devices, but not colours/colour
 temperature, as that's not a CBus thing. Colour details will return to previously set values done in the Hue app.
-
-Note: Any newly added Hue devices will require a script restart to discover them. (To-do...)
 --]]
 
 
@@ -126,6 +124,8 @@ Load lighting devices from the bridge
 --]]
 
 function getResources()
+  local discovered = nil
+  if logging then logger('Discovering devices') end
   l = rest('GET', resource)
   for _, d in ipairs(json.decode(l).data) do
     if d.id_v1 and d.id_v1 ~= '' and not d.mac_address then
@@ -133,18 +133,24 @@ function getResources()
       elseif d.id_v1:find('group') then
       elseif d.product_data then
       elseif d.on then
-        hueDeviceStatus[d.id_v1] = {id = d.id, name = d.metadata.name, on = d.on.on, reachable = true}
-        if d.dimming then hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(d.dimming.brightness) end
-        hueIds[d.metadata.name] = d.id
-        hueV1Ids[d.metadata.name] = d.id_v1
+        if not hueDeviceStatus[d.id_v1] then
+          if discovered == nil then discovered = {} end
+          hueDeviceStatus[d.id_v1] = {id = d.id, name = d.metadata.name, on = d.on.on, reachable = true}
+          if d.dimming then hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(d.dimming.brightness) end
+          hueIds[d.metadata.name] = d.id
+          hueV1Ids[d.metadata.name] = d.id_v1
+          discovered[d.id_v1] = hueDeviceStatus[d.id_v1]
+        end
       end
     end
   end
-  local ds = ''
-  for _, d in pairs(hueDeviceStatus) do
-    ds = ds..'\n'..d.name..' '..d.id
+  if discovered ~= nil then
+    local ds = ''
+    for _, d in pairs(discovered) do
+      ds = ds..'\n'..d.name..' '..d.id
+    end
+    logger('Discovered devices:'..ds)
   end
-  logger('Discovered devices:'..ds)
 end
 
 
@@ -380,6 +386,39 @@ end
 
 
 --[[
+Bridge update message (TODO: does not do device deletion, no functional impact)
+--]]
+
+function updateMessage(msg)
+  for _, d in ipairs(msg.data) do
+    local update = false
+    local on = nil; if d.on then on = d.on.on; update = true end
+    local bri = nil; local lvl = nil; if d.dimming then bri = d.dimming.brightness; lvl = CBusPctToLevel(bri); update = true end
+    local status = nil; if d.status then status = d.status end
+    local id = d.id_v1
+    if hueDeviceStatus[id] then
+      if logging then logger('Hue event '..id..', stat='..tostring(status)..', on='..tostring(on)..', bri='..tostring(bri)..', lvl='..tostring(lvl)) end
+      if status ~= nil  then if status == 'connected' then hueDeviceStatus[id].reachable = true else hueDeviceStatus[id].reachable = false end end
+      if on ~= nil then hueDeviceStatus[id].on = on end
+      if bri ~= nil then hueDeviceStatus[id].brightness = bri; hueDeviceStatus[id].level = lvl end
+      if d.metadata ~= nil and d.metadata.name ~= hueDeviceStatus[id].name then -- Device has been renamed
+        local oldName = hueDeviceStatus[id].name
+        logger('Device '..oldName..' renamed to '..d.metadata.name)
+        hueDeviceStatus[id].name = d.metadata.name
+        hueIds[d.metadata.name] = hueIds[oldName]; hueIds[oldName] = nil
+        hueV1Ids[d.metadata.name] = hueV1Ids[oldName]; hueV1Ids[oldName] = nil
+      end
+      -- Publish update
+      if update then
+        bridgeMessages[#bridgeMessages + 1] = id
+      end
+    else
+      if id:find('lights') then getResources() end
+    end
+  end
+end
+
+--[[
 Main loop
 --]]
 
@@ -418,25 +457,7 @@ while true do
           end)
           if stat then
             for _, msg in ipairs(j) do
-              if msg.type == 'update' then
-                for _, d in ipairs(msg.data) do
-                  local update = false
-                  local on = nil; if d.on then on = d.on.on; update = true end
-                  local bri = nil; local lvl = nil; if d.dimming then bri = d.dimming.brightness; lvl = CBusPctToLevel(bri); update = true end
-                  local status = nil; if d.status then status = d.status end
-                  local id = d.id_v1
-                  if hueDeviceStatus[id] then
-                    if logging then logger('Hue event '..id..', stat='..tostring(status)..', on='..tostring(on)..', bri='..tostring(bri)..', lvl='..tostring(lvl)) end
-                    if status ~= nil  then if status == 'connected' then hueDeviceStatus[id].reachable = true else hueDeviceStatus[id].reachable = false end end
-                    if on ~= nil then hueDeviceStatus[id].on = on end
-                    if bri ~= nil then hueDeviceStatus[id].brightness = bri; hueDeviceStatus[id].level = lvl end
-                    -- Publish update
-                    if update then
-                      bridgeMessages[#bridgeMessages + 1] = id
-                    end
-                  end
-                end
-              end
+              if msg.type == 'update' then updateMessage(msg) end
             end
           end
         elseif line:find(': hi') then
