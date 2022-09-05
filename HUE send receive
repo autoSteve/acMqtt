@@ -221,23 +221,21 @@ end
 --[[
 Publish Philips Hue objects to bridge
 --]]
-function publishHue(net, app, group, level)
-  if level == nil then logger('Warning: Nil Hue level for '..net..'/'..app..'/'..group); do return end end
-  local state = (tonumber(level) ~= 0) and true or false
-  local alias = net..'/'..app..'/'..group
+function publishHue(alias, level)
+  local state = (level ~= 0) and true or false
   local hueState
   local payload = {}
   payload.on = {}; payload.on.on = state
   if hue[alias].dimmable then
-    hueState = tonumber(level)
-    if state then -- Only add 'bri' to the message when turning on
+    hueState = level
+    if state then -- Only add brightness to the message when turning on
       payload.dimming = {}; payload.dimming.brightness = CBusLevelToPct(hueState)
     end
   else
     hueState = state
   end
   if hue[alias].state ~= hueState then
-    if ignoreBridge[alias] and (os.time() - ignoreBridge[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
+    if ignoreBridge[alias] and (os.time() - ignoreBridge[alias] > ignoreTimeout) then
       ignoreBridge[alias] = nil
       if logging then logger('Ignoring older bridge ignore flag for '..alias) end
     end
@@ -247,7 +245,6 @@ function publishHue(net, app, group, level)
         local resource = resource..'/light/'..hueIds[hue[alias].name]
         if logging then logger('PUT '..resource..' '..toPut) end
         rest('PUT', resource, toPut)
-      
         -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
         -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
         if hueState ~= hue[alias].state then ignoreCbus[alias] = os.time(); if logging then logger('Setting ignoreCBus for '..alias) end end
@@ -268,7 +265,7 @@ end
 
 
 --[[
-Publish the next queued messages for CBus
+Publish the next queued messages from bridge to CBus
 --]]
 function outstandingBridgeMessage()
   local level, oldState
@@ -290,12 +287,16 @@ function outstandingBridgeMessage()
         else
           level = 0
         end
-        if logging then logger('Setting '..alias..' to '..level) end
-        SetCBusLevel(net, app, group, level, 0)
+        if GetCBusLevel(net, app, group) ~= level then
+          if logging then logger('Setting '..alias..' to '..level) end
+          SetCBusLevel(net, app, group, level, 0)
+        end
       else
         -- Switchable
-        if logging then logger('Setting '..alias..' to '..tostring(hueDeviceStatus[id].on)) end
-        SetCBusState(net, app, group, hueDeviceStatus[id].on)
+        if not GetCBusState(net, app, group) then
+          if logging then logger('Setting '..alias..' to '..tostring(hueDeviceStatus[id].on)) end
+          SetCBusState(net, app, group, hueDeviceStatus[id].on)
+        end
       end
       oldState = hue[alias].state; if oldState == nil then oldState = -1 end
       -- Setting CBus here will result in the HUE event script requesting publication of the state using publishHue() above.
@@ -316,7 +317,7 @@ end
 
 
 --[[
-Publish the next queued messages for bridge
+Publish the next queued messages from CBus to bridge
 --]]
 function outstandingCbusMessage()
   local cmd
@@ -327,6 +328,7 @@ function outstandingCbusMessage()
     local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
     local setting = true
     local payload = tonumber(parts[4])
+    if payload == nil then logger('Warning: Nil level for '..alias); do return end end
     if logging then logger('Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group))) end
     -- A CBus ramp up and down can annoyingly begin with a zero level, then steadily converge to the target level. This initial
     -- zero should not be published to the  bridge so it is ignored. If an initial zero is not seen then the ramp will be orphaned (and
@@ -349,7 +351,7 @@ function outstandingCbusMessage()
       end
     end
     if setting then
-      publishHue(parts[1], parts[2], parts[3], parts[4])
+      publishHue(alias, payload)
       if ramp[alias] and payload == ramp[alias].target then
         ramp[alias] = nil
         if logging then logger('Clear ramp for '..alias) end
@@ -432,13 +434,13 @@ function updateMessage(msg)
   end
 end
 
+
 --[[
 Main loop
 --]]
 
--- Create/update/delete script(s)
 cud = {
-  { func = cudHue, t = os.time() - checkChanges, init = true, script = 'HUE' }
+  { func = cudHue, t = os.time() - checkChanges, init = true, script = 'HUE' } -- Create/update/delete script(s)
 }
 
 -- Initial load of devices
@@ -456,8 +458,7 @@ end
 
 
 while true do
-  -- Read the event stream
-  -- Processes the entire read buffer each iteration
+  -- Read the bridge event stream. The entire socket buffer is collected each iteration
   repeat
     local line, err = sock:receive()
     sock:settimeout(0)
@@ -465,11 +466,10 @@ while true do
     if not err then
       if line then
         if line:find('data:') and not line:find('geofence_client') then
-          payload = line:split(': ')[2]
-          local stat, err = pcall(function ()
-            j = json.decode(payload)
-          end)
+          local payload = line:split(': ')[2]
+          local stat, err = pcall(function () j = json.decode(payload) end)
           if stat then
+            local msg
             for _, msg in ipairs(j) do updateMessage(msg) end
           end
         elseif line:find(': hi') then
@@ -492,8 +492,7 @@ while true do
   local more = false
   local stat, err = pcall(function ()
     ::checkAgain::
-    local cmd = nil
-	  cmd = server:receive()
+    local cmd = server:receive()
     if cmd and type(cmd) == 'string' then
       if validateIncoming(cmd) then
         cbusMessages[#cbusMessages + 1] = cmd -- Queue the new message
@@ -508,9 +507,9 @@ while true do
   if not stat then logger('Socket receive error: '..err) end
 
   if #bridgeMessages > 0 then outstandingBridgeMessage() end -- Send outstanding messages to CBus
-  if #cbusMessages > 0 then outstandingCbusMessage() end -- Send outstanding messages to bridge
-  if #ramp > 0 then checkRampOrphans() end               -- Some scenarios create ramp orphans
-  if checkForChanges then                                -- Periodically create/update/delete device items that change
+  if #cbusMessages > 0 then outstandingCbusMessage() end     -- Send outstanding messages to bridge
+  if #ramp > 0 then checkRampOrphans() end                   -- Some scenarios create ramp orphans
+  if checkForChanges then                                    -- Periodically create/update/delete device items that change
     for _, c in ipairs(cud) do if os.time() - c.t >=checkChanges then c.t = os.time(); c.func() end end
   end
 
