@@ -135,7 +135,7 @@ function getResources()
       elseif d.on then
         if not hueDeviceStatus[d.id_v1] then
           if discovered == nil then discovered = {} end
-          hueDeviceStatus[d.id_v1] = {id = d.id, name = d.metadata.name, on = d.on.on, reachable = true}
+          hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on, reachable = true}
           if d.dimming then hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(d.dimming.brightness) end
           hueIds[d.metadata.name] = d.id
           hueV1Ids[d.metadata.name] = d.id_v1
@@ -147,7 +147,7 @@ function getResources()
   if discovered ~= nil then
     local ds = ''
     for _, d in pairs(discovered) do
-      ds = ds..'\n'..d.name..' '..d.id
+      ds = ds..'\n'..d.name..' id: '..d.id -- ..', rid: '..d.rid
     end
     logger('Discovered devices:'..ds)
   end
@@ -386,34 +386,47 @@ end
 
 
 --[[
-Bridge update message (TODO: does not do device deletion, no functional impact)
+Bridge update message
 --]]
 
 function updateMessage(msg)
-  for _, d in ipairs(msg.data) do
-    local update = false
-    local on = nil; if d.on then on = d.on.on; update = true end
-    local bri = nil; local lvl = nil; if d.dimming then bri = d.dimming.brightness; lvl = CBusPctToLevel(bri); update = true end
-    local status = nil; if d.status then status = d.status end
-    local id = d.id_v1
-    if hueDeviceStatus[id] then
-      if logging then logger('Hue event '..id..', stat='..tostring(status)..', on='..tostring(on)..', bri='..tostring(bri)..', lvl='..tostring(lvl)) end
-      if status ~= nil  then if status == 'connected' then hueDeviceStatus[id].reachable = true else hueDeviceStatus[id].reachable = false end end
-      if on ~= nil then hueDeviceStatus[id].on = on end
-      if bri ~= nil then hueDeviceStatus[id].brightness = bri; hueDeviceStatus[id].level = lvl end
-      if d.metadata ~= nil and d.metadata.name ~= hueDeviceStatus[id].name then -- Device has been renamed
-        local oldName = hueDeviceStatus[id].name
-        logger('Device '..oldName..' renamed to '..d.metadata.name)
-        hueDeviceStatus[id].name = d.metadata.name
-        hueIds[d.metadata.name] = hueIds[oldName]; hueIds[oldName] = nil
-        hueV1Ids[d.metadata.name] = hueV1Ids[oldName]; hueV1Ids[oldName] = nil
+  if msg.type == 'update' then
+    for _, d in ipairs(msg.data) do
+      if d.type ~= 'light' then do return end end
+      local update = false
+      local on = nil; if d.on then on = d.on.on; update = true end
+      local bri = nil; local lvl = nil; if d.dimming then bri = d.dimming.brightness; lvl = CBusPctToLevel(bri); update = true end
+      local status = nil; if d.status then status = d.status end
+      local id = d.id_v1
+      if hueDeviceStatus[id] then
+        if logging then logger('Hue event '..id..', stat='..tostring(status)..', on='..tostring(on)..', bri='..tostring(bri)..', lvl='..tostring(lvl)) end
+        if status ~= nil  then if status == 'connected' then hueDeviceStatus[id].reachable = true else hueDeviceStatus[id].reachable = false end end
+        if on ~= nil then hueDeviceStatus[id].on = on end
+        if bri ~= nil then hueDeviceStatus[id].brightness = bri; hueDeviceStatus[id].level = lvl end
+        if d.metadata ~= nil and d.metadata.name ~= hueDeviceStatus[id].name then -- Device has been renamed
+          local oldName = hueDeviceStatus[id].name
+          logger('Device '..oldName..' renamed to '..d.metadata.name)
+          hueDeviceStatus[id].name = d.metadata.name
+          hueIds[d.metadata.name] = hueIds[oldName]; hueIds[oldName] = nil
+          hueV1Ids[d.metadata.name] = hueV1Ids[oldName]; hueV1Ids[oldName] = nil
+        end
+        if update then
+          bridgeMessages[#bridgeMessages + 1] = id -- Queue update
+        end
+      else
+        if id:find('lights') then getResources() end
       end
-      -- Publish update
-      if update then
-        bridgeMessages[#bridgeMessages + 1] = id
+    end
+  elseif msg.type == 'delete' then
+    for _, d in ipairs(msg.data) do
+      if d.type ~= 'light' then do return end end
+      local id = d.id_v1
+      if hueDeviceStatus[id] then
+        logger('Device '..hueDeviceStatus[id].name..' deleted')
+        hueIds[hueDeviceStatus[id].name] = nil
+        hueV1Ids[hueDeviceStatus[id].name] = nil
+        hueDeviceStatus[id] = nil
       end
-    else
-      if id:find('lights') then getResources() end
     end
   end
 end
@@ -456,9 +469,7 @@ while true do
             j = json.decode(payload)
           end)
           if stat then
-            for _, msg in ipairs(j) do
-              if msg.type == 'update' then updateMessage(msg) end
-            end
+            for _, msg in ipairs(j) do updateMessage(msg) end
           end
         elseif line:find(': hi') then
           logger('Receiving event stream')
