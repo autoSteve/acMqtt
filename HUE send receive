@@ -202,7 +202,8 @@ function cudHue(initial)
     end
     hue[alias].name = pn
     hue[alias].hueid = hueIds[pn]
-    hue[alias].state = GetCBusLevel(net, app, group)
+    local level = nil; pcall(function () level = GetCBusLevel(net, app, group) end); if not level then level = -1 end
+    hue[alias].state = level
     hueDevices[pn] = alias
     hueDeviceStatus[hueV1Ids[pn]].alias = alias
     if hueDeviceStatus[hueV1Ids[pn]].brightness ~= nil then hue[alias].dimmable = true end
@@ -287,18 +288,21 @@ function outstandingBridgeMessage()
         else
           level = 0
         end
-        if GetCBusLevel(net, app, group) ~= level then
+        local lvl = nil; pcall(function () lvl = GetCBusLevel(net, app, group) end)
+        if lvl ~= level then
           if logging then logger('Setting '..alias..' to '..level) end
           SetCBusLevel(net, app, group, level, 0)
         end
       else
         -- Switchable
-        if not GetCBusState(net, app, group) then
+        local state = nil; pcall(function () state = GetCBusState(net, app, group) end)
+        if state ~= hueDeviceStatus[id].on then
           if logging then logger('Setting '..alias..' to '..tostring(hueDeviceStatus[id].on)) end
           SetCBusState(net, app, group, hueDeviceStatus[id].on)
+          level = (hueDeviceStatus[id].on and 255) or 0
         end
       end
-      oldState = hue[alias].state; if oldState == nil then oldState = -1 end
+      oldState = hue[alias].state
       -- Setting CBus here will result in the HUE event script requesting publication of the state using publishHue() above.
       -- This is undesired, so ignoreBridge[alias] is used to ensure that the CBus change received does not publish to the bridge.
       if oldState ~= level then ignoreBridge[alias] = os.time() if logging then logger('Setting ignoreBridge for '..alias..', oldState='..tostring(oldState)..' level='..tostring(level)) end end
@@ -465,23 +469,23 @@ while true do
 
     if not err then
       if line then
-        if line:find('data:') and not line:find('geofence_client') then
+        if line:find('data:') and not line:find('geofence_client') then
           local payload = line:split(': ')[2]
           local stat, err = pcall(function () j = json.decode(payload) end)
           if stat then
             local msg
             for _, msg in ipairs(j) do updateMessage(msg) end
           end
-        elseif line:find(': hi') then
-          logger('Receiving event stream')
+        elseif line:find(': hi') then
+          logger('Receiving event stream')
           hueConnected = true
           storage.set('hueactive', true)
-        end
+        end
       end
     else
       if err ~= 'wantread' then
-        logger('Hue receive failed: ' .. tostring(err))
-        sock:close()
+        logger('Hue receive failed: ' .. tostring(err))
+        sock:close()
         do return end
       end
     end
