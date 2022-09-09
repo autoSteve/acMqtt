@@ -37,7 +37,7 @@ storage.set('hueactive', nil)
 eventStream = '/eventstream/clip/v2'
 resource = '/clip/v2/resource'
 clientKeyStorage = 'huesendreceive'
-socketTimeout = 0.01   -- Lower = higher CPU
+socketTimeout = 0.25   -- Lower = higher CPU, but this is dynamic... During ramp events the timeout is set to 0.01 seconds
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
 ignoreTimeout = 2      -- Timeout for stale ignore messages in seconds (two seconds is a long time...)
 rampTimeout = 8        -- Time beyond ramp to declare a ramp orphan in seconds
@@ -85,7 +85,7 @@ end
 Representational state transfer (REST) 
 --]]
 
-local http = require'socket.http'
+local http = require('socket.http')
 local ltn12 = require('ltn12')
 
 function rest(method, cmd, body)
@@ -142,7 +142,7 @@ function getResources(msg)
       if discovered == nil then discovered = {} end
       hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on, reachable = true}
       if d.dimming then
-        hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(d.dimming.brightness)
+        hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(math.ceil(d.dimming.brightness))
       else
         hueDeviceStatus[d.id_v1].level = (d.on.on and 255) or 0
       end
@@ -215,21 +215,20 @@ function cudHue(initial)
     hue[alias].name = pn
     hue[alias].hueid = hueIds[pn]
     hue[alias].hueV1id = hueV1Ids[pn]
-    --[[
-    This synchronisation can mess with operations in progress, given Hue status lag
-    if not ramp[alias] and not pendingEndRamp[alias] then -- Do not mess with the CBusLevel during ramping
-      local level = nil; pcall(function () level = GetCBusLevel(net, app, group) end); if not level then level = -1 end
-      local hueLevel = hueDeviceStatus[hueV1Ids[pn] ].level
-      if level ~= hueLevel and hueDeviceStatus[hueV1Ids[pn] ].on then
-        if logging then logger('Adjusting '..alias..' to match Hue, on=true, level='..level..', hueLevel='..hueLevel) end
-        SetCBusLevel(net, app, group, hueLevel, 0)
-      end
-      if level > 0 and not hueDeviceStatus[hueV1Ids[pn] ].on then
-        if logging then logger('Adjusting '..alias..' to match Hue, on=false, level='..level..', hueLevel='..hueLevel) end
-        SetCBusLevel(net, app, group, 0, 0)
+    if initial then
+      if not ramp[alias] and not pendingEndRamp[alias] then -- Do not mess with the CBusLevel during ramping
+        local level = nil; pcall(function () level = GetCBusLevel(net, app, group) end); if not level then level = -1 end
+        local hueLevel = hueDeviceStatus[hueV1Ids[pn] ].level
+        if level ~= hueLevel and hueDeviceStatus[hueV1Ids[pn] ].on then
+          if logging then logger('Adjusting '..alias..' to match Hue, on=true, level='..level..', hueLevel='..hueLevel) end
+          SetCBusLevel(net, app, group, hueLevel, 0)
+        end
+        if level > 0 and not hueDeviceStatus[hueV1Ids[pn] ].on then
+          if logging then logger('Adjusting '..alias..' to match Hue, on=false, level='..level..', hueLevel='..hueLevel) end
+          SetCBusLevel(net, app, group, 0, 0)
+        end
       end
     end
-    --]]
     if not hue[alias].state then hue[alias].state = hueState end
     if not storage.get('pre'..alias) then storage.set('pre'..alias, hueLevel) end
     hue[alias].state = level
@@ -243,6 +242,43 @@ function cudHue(initial)
     local f = false; for _, v in ipairs(found) do if k == v then f = true; break end end
     if not f then
       kill = hue[k].name; hue[k] = nil; hueDevices[kill] = nil
+    end
+  end
+end
+
+
+--[[
+Last level storage
+--]]
+
+lastLevel = storage.get('lastlvl', {})
+
+function saveLastLevel()
+  -- Get old levels to see if anything changed
+  local oldLastLevel = storage.get('lastlvl', {})
+  local changed = {}
+  local k, v
+
+  for k, v in pairs(lastLevel) do
+    if oldLastLevel[k] == nil or oldLastLevel[k] ~= v then -- Add to changes
+      changed[#changed + 1] = k..' '..tostring(oldLastLevel[k])..'->'..tostring(v)
+    end
+  end
+
+  if #changed then
+    storage.set('lastlvl', lastLevel)
+    if logging then logger('Saved last levels. Object(s) changed: '..table.concat(changed, ', ')) end
+  end
+end
+
+function checkNewLastLevel(alias)
+  local parts = string.split(alias, '/')
+  local target = GetCBusTargetLevel(tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3]))
+  if target ~= 0 then
+    if target ~= lastLevel[alias] then
+      lastLevel[alias] = target
+      if logging then logger('Set lastLevel to '..target..' for '..alias) end
+      saveLastLevel()
     end
   end
 end
@@ -265,33 +301,28 @@ function publishHue(alias, level, rampRate)
     hueState = state
   end
   
-  if hue[alias].state ~= hueState then
-    if ignoreBridge[alias] and (socket.gettime() - ignoreBridge[alias] > ignoreTimeout) then
-      ignoreBridge[alias] = nil
-      if logging then logger('Ignoring older bridge ignore flag for '..alias) end
-    end
-    if not ignoreBridge[alias] then
-      if hueDeviceStatus[hueV1Ids[hue[alias].name]].reachable then
-        local toPut = json.encode(payload)
-        local resource = '/api/'..clientKey..hueV1Ids[hue[alias].name]..'/state'
-        if logging then logger('PUT '..resource..' '..toPut) end
-        rest('PUT', resource, toPut)
-        -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
-        -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
-        if hueState ~= hue[alias].state then ignoreCbus[alias] = socket.gettime(); if logging then logger('Setting ignoreCBus for '..alias) end end
-        if logging then logger('Published Hue state and level '..hue[alias].name..' to '..toPut) end
-      else
-        if logging then logger('Warning: Not publishing state and level for '..hue[alias].name..' - unreachable') end
-      end
+  if ignoreBridge[alias] and (socket.gettime() - ignoreBridge[alias] > ignoreTimeout) then
+    ignoreBridge[alias] = nil
+    if logging then logger('Ignoring older bridge ignore flag for '..alias) end
+  end
+  if not ignoreBridge[alias] then
+    if hueDeviceStatus[hueV1Ids[hue[alias].name]].reachable then
+      local toPut = json.encode(payload)
+      local resource = '/api/'..clientKey..hueV1Ids[hue[alias].name]..'/state'
+      if logging then logger('PUT '..resource..' '..toPut) end
+      rest('PUT', resource, toPut)
+      -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
+      -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
+      if hueState ~= hue[alias].state then ignoreCbus[alias] = socket.gettime(); if logging then logger('Setting ignoreCBus for '..alias) end end
+      if logging then logger('Published Hue state and level '..hue[alias].name..' to '..toPut) end
     else
-      ignoreBridge[alias] = nil
-      if logging then logger('Ignoring bridge publish for '..alias) end
+      if logging then logger('Warning: Not publishing state and level for '..hue[alias].name..' - unreachable') end
     end
-    hue[alias].state = hueState
   else
     ignoreBridge[alias] = nil
     if logging then logger('Ignoring bridge publish for '..alias) end
   end
+  hue[alias].state = hueState
 end
 
 
@@ -304,12 +335,13 @@ function outstandingCbusMessage()
     local parts = string.split(cmd, '/')
     local alias = parts[1]..'/'..parts[2]..'/'..parts[3]
     
-    local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
+    local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3])
     local setting = true
     local setRamp = false
     local payload = tonumber(parts[4])
     if payload == nil then logger('Warning: Nil level for '..alias); do return end end
     if not ramp[alias] then
+      if not setRamp then checkNewLastLevel(alias) end
       setRamp = true
       if GetCBusRampRate(net, app, group) > 0 then
         ramp[alias] = { ts = socket.gettime(), ramp = GetCBusRampRate(net, app, group), target = GetCBusTargetLevel(net, app, group) }
@@ -359,9 +391,12 @@ end
 Publish the next queued messages from bridge to CBus
 --]]
 function outstandingBridgeMessage()
-  local level, oldState
-  for _, id in ipairs(bridgeMessages) do
-    alias = hueDeviceStatus[id].alias
+  local level, oldState, msg
+  for _, msg in ipairs(bridgeMessages) do
+    local id = msg.id
+    local alias = hueDeviceStatus[id].alias
+    local forceBridge = false
+    local lvl
 
     local parts = string.split(alias, '/')
     local net = parts[1]; local app = parts[2]; local group = parts[3]
@@ -372,12 +407,11 @@ function outstandingBridgeMessage()
     if hueDeviceStatus[id].brightness ~= nil then
       -- Dimmable
       if hue[alias].dimmable == nil then hue[alias].dimmable = true end
-      level = hueDeviceStatus[id].level
+      level = (hueDeviceStatus[id].on and hueDeviceStatus[id].level) or 0
     else
       level = (hueDeviceStatus[id].on and 255) or 0
     end
     if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change
-      local lvl
       if hueDeviceStatus[id].brightness ~= nil then
         -- Dimmable
         if pendingEndRamp[alias] then
@@ -389,9 +423,16 @@ function outstandingBridgeMessage()
           end
         end
         if not ramp[alias] and not pendingEndRamp[alias] then
-          lvl = nil; pcall(function () lvl = GetCBusLevel(net, app, group) end)
+          lvl = nil; local stat, err = pcall(function () lvl = GetCBusLevel(net, app, group) end)
+          -- log('lvl='..tostring(lvl)..', stat='..tostring(stat)..', err='..tostring(err)..', level='..level..', msg.on='..tostring(msg.on)..', msg.lvl='..tostring(msg.lvl))
           if lvl ~= level then
-            if logging then logger('Setting '..alias..' to '..level) end
+            if msg.on and not msg.lvl then -- No level set, so return to lastLevel
+              if level > 0 and level ~= lastLevel[alias] then
+                forceBridge = true  -- If HueDeviceStatus level is different to lastLevel then force a bridge message
+                level = lastLevel[alias]
+              end
+            end
+            if logging then logger('Setting '..alias..' to '..level..tostring((forceBridge and ' (last level)') or '')) end
             SetCBusLevel(net, app, group, level, 0)
           end
         else
@@ -410,7 +451,7 @@ function outstandingBridgeMessage()
       if not ramp[alias] and not pendingEndRamp[alias] then
         -- Setting CBus here will result in the HUE event script requesting publication of the state using publishHue() above.
         -- This is undesired, so ignoreBridge[alias] is used to ensure that the CBus change received does not publish to the bridge.
-        if oldState ~= level and lvl ~= level then ignoreBridge[alias] = socket.gettime() if logging then logger('Setting ignoreBridge for '..alias..', oldState='..tostring(oldState)..' level='..tostring(level)) end end
+        if not forceBridge and oldState ~= level and lvl ~= level then ignoreBridge[alias] = socket.gettime() if logging then logger('Setting ignoreBridge for '..alias..', oldState='..tostring(oldState)..' level='..tostring(level)) end end
       end
     else
       ignoreCbus[alias] = nil
@@ -453,7 +494,7 @@ function updateMessage(msg)
         local on = nil; if d.on then on = d.on.on; update = true end
         local bri = nil; local lvl = nil; if d.dimming then
           update = true
-          bri = math.floor(d.dimming.brightness + 0.5); lvl = CBusPctToLevel(bri)
+          bri = d.dimming.brightness; lvl = CBusPctToLevel(math.ceil(bri)) -- PctToLevel does not work with fractional numbers. Hue goes down to 0.39 as lowest brightness
           local alias = hueDeviceStatus[id].alias
           local target = nil
           if ramp[alias] then target = ramp[alias].target end
@@ -473,7 +514,7 @@ function updateMessage(msg)
             hueV1Ids[d.metadata.name] = hueV1Ids[oldName]; hueV1Ids[oldName] = nil
           end
           if update then
-            bridgeMessages[#bridgeMessages + 1] = id -- Queue update
+            bridgeMessages[#bridgeMessages + 1] = {id = id, on = on, lvl = lvl } -- Queue update
           end
         end
       end
@@ -522,9 +563,9 @@ while true do
   -- Read the bridge event stream. The entire socket buffer is collected each iteration
   repeat
     local line, err = sock:receive()
-    sock:settimeout(0)
 
     if not err then
+      sock:settimeout(0)
       if line then
         if line:find('data:') and not line:find('geofence_client') then
           local payload = line:split(': ')[2]
@@ -547,7 +588,7 @@ while true do
       end
     end
   until err == 'wantread'
-  sock:settimeout(socketTimeout)
+  if not ramp and not pendingEndRamp then sock:settimeout(socketTimeout) else sock:settimeout(0.01) end
 
   -- Check for new messages from CBus. The entire socket buffer is collected each iteration
   local more = false
@@ -562,7 +603,7 @@ while true do
       end
       server:settimeout(0); more = true; goto checkAgain -- Immediately check for more buffered inbound messages to queue
     else
-      if more then server:settimeout(socketTimeout) end
+      if more then if not ramp and not pendingEndRamp then server:settimeout(socketTimeout) else server:settimeout(0.01) end end
     end
   end)
   if not stat then logger('Socket receive error: '..err) end
