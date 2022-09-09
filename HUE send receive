@@ -38,8 +38,9 @@ eventStream = '/eventstream/clip/v2'
 resource = '/clip/v2/resource'
 clientKeyStorage = 'huesendreceive'
 socketTimeout = 0.01   -- Lower = higher CPU
-checkChanges = 60      -- Interval in seconds to check for changes to object keywords
+checkChanges = 30      -- Interval in seconds to check for changes to object keywords
 ignoreTimeout = 2      -- Timeout for stale ignore messages in seconds (two seconds is a long time...)
+rampTimeout = 8        -- Time beyond ramp to declare a ramp orphan in seconds
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 
 huePort = 5435
@@ -56,9 +57,12 @@ cbusMessages = {}      -- Incoming message queue
 bridgeMessages = {}    -- Incoming message queue
 ignoreCbus = {}        -- To prevent message loops
 ignoreBridge = {}      -- To prevent message loops
-ramp = {}              -- Keeps track of ramping to ignore some zero level publish events outstandingCbusMessage()
+ramp = {}              -- Keeps track of CBus ramping to ignore some zero level publish events outstandingCbusMessage()
+pendingEndRamp = {}    -- Keeps track of Hue ramping
+nonTargetUpdate = false -- Watch for non-ramp target Hue updates 
 
 started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
+function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get number of dictionary members
 
 heartbeat = os.time()
 
@@ -71,6 +75,7 @@ server = require('socket').udp()
 server:settimeout(socketTimeout)
 if not server:setsockname('127.0.0.1', huePort) then -- Listen on huePort for Hue object changes
   logger('Error: Could not listen on port '..huePort)
+  storage.set('hueactive', true) -- Ensure that Heartbeat can re-start this script
   socket.sleep(60)
   do return end
 end
@@ -95,7 +100,10 @@ function rest(method, cmd, body)
     headers = headers,
     sink = ltn12.sink.table(respbody)
   }
-  if respcode ~= 200 then log('Error: Received response '..respcode..' requesting '..cmd) end
+  if respcode ~= 200 then
+    local j = json.decode(respbody[1])
+    logger('Error: Received response '..respcode..' requesting '..method..' '..cmd..' '..j.errors[1].description)
+  end
   return table.concat(respbody)
 end
 
@@ -133,7 +141,11 @@ function getResources(msg)
     if d.type == 'light' and not hueDeviceStatus[d.id_v1] then
       if discovered == nil then discovered = {} end
       hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on, reachable = true}
-      if d.dimming then hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(d.dimming.brightness) end
+      if d.dimming then
+        hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(d.dimming.brightness)
+      else
+        hueDeviceStatus[d.id_v1].level = (d.on.on and 255) or 0
+      end
       hueIds[d.metadata.name] = d.id
       hueV1Ids[d.metadata.name] = d.id_v1
       discovered[d.id_v1] = hueDeviceStatus[d.id_v1]
@@ -202,7 +214,24 @@ function cudHue(initial)
     end
     hue[alias].name = pn
     hue[alias].hueid = hueIds[pn]
-    local level = nil; pcall(function () level = GetCBusLevel(net, app, group) end); if not level then level = -1 end
+    hue[alias].hueV1id = hueV1Ids[pn]
+    --[[
+    This synchronisation can mess with operations in progress, given Hue status lag
+    if not ramp[alias] and not pendingEndRamp[alias] then -- Do not mess with the CBusLevel during ramping
+      local level = nil; pcall(function () level = GetCBusLevel(net, app, group) end); if not level then level = -1 end
+      local hueLevel = hueDeviceStatus[hueV1Ids[pn] ].level
+      if level ~= hueLevel and hueDeviceStatus[hueV1Ids[pn] ].on then
+        if logging then logger('Adjusting '..alias..' to match Hue, on=true, level='..level..', hueLevel='..hueLevel) end
+        SetCBusLevel(net, app, group, hueLevel, 0)
+      end
+      if level > 0 and not hueDeviceStatus[hueV1Ids[pn] ].on then
+        if logging then logger('Adjusting '..alias..' to match Hue, on=false, level='..level..', hueLevel='..hueLevel) end
+        SetCBusLevel(net, app, group, 0, 0)
+      end
+    end
+    --]]
+    if not hue[alias].state then hue[alias].state = hueState end
+    if not storage.get('pre'..alias) then storage.set('pre'..alias, hueLevel) end
     hue[alias].state = level
     hueDevices[pn] = alias
     hueDeviceStatus[hueV1Ids[pn]].alias = alias
@@ -222,33 +251,34 @@ end
 --[[
 Publish Philips Hue objects to bridge
 --]]
-function publishHue(alias, level)
+function publishHue(alias, level, rampRate)
   local state = (level ~= 0) and true or false
   local hueState
   local payload = {}
-  payload.on = {}; payload.on.on = state
+
+  payload.on = state
   if hue[alias].dimmable then
     hueState = level
-    if state then -- Only add brightness to the message when turning on
-      payload.dimming = {}; payload.dimming.brightness = CBusLevelToPct(hueState)
-    end
+    payload.bri = level
+    if rampRate then payload.transitiontime = rampRate*10; nonTargetUpdate = false end
   else
     hueState = state
   end
+  
   if hue[alias].state ~= hueState then
-    if ignoreBridge[alias] and (os.time() - ignoreBridge[alias] > ignoreTimeout) then
+    if ignoreBridge[alias] and (socket.gettime() - ignoreBridge[alias] > ignoreTimeout) then
       ignoreBridge[alias] = nil
       if logging then logger('Ignoring older bridge ignore flag for '..alias) end
     end
     if not ignoreBridge[alias] then
       if hueDeviceStatus[hueV1Ids[hue[alias].name]].reachable then
         local toPut = json.encode(payload)
-        local resource = resource..'/light/'..hueIds[hue[alias].name]
+        local resource = '/api/'..clientKey..hueV1Ids[hue[alias].name]..'/state'
         if logging then logger('PUT '..resource..' '..toPut) end
         rest('PUT', resource, toPut)
         -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
         -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
-        if hueState ~= hue[alias].state then ignoreCbus[alias] = os.time(); if logging then logger('Setting ignoreCBus for '..alias) end end
+        if hueState ~= hue[alias].state then ignoreCbus[alias] = socket.gettime(); if logging then logger('Setting ignoreCBus for '..alias) end end
         if logging then logger('Published Hue state and level '..hue[alias].name..' to '..toPut) end
       else
         if logging then logger('Warning: Not publishing state and level for '..hue[alias].name..' - unreachable') end
@@ -266,61 +296,6 @@ end
 
 
 --[[
-Publish the next queued messages from bridge to CBus
---]]
-function outstandingBridgeMessage()
-  local level, oldState
-  for _, id in ipairs(bridgeMessages) do
-    alias = hueDeviceStatus[id].alias
-
-    local parts = string.split(alias, '/')
-    local net = parts[1]; local app = parts[2]; local group = parts[3]
-    if ignoreCbus[alias] and os.time() - ignoreCbus[alias] > ignoreTimeout then -- Don't worry about older 'ignore' flags
-      ignoreCbus[alias] = nil
-      if logging then logger('Ignoring older CBus ignore flag for '..alias) end
-    end
-    if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change
-      if hueDeviceStatus[id].brightness ~= nil then
-        -- Dimmable
-        if hue[alias].dimmable == nil then hue[alias].dimmable = true end
-        if hueDeviceStatus[id].on then
-          level = hueDeviceStatus[id].level
-        else
-          level = 0
-        end
-        local lvl = nil; pcall(function () lvl = GetCBusLevel(net, app, group) end)
-        if lvl ~= level then
-          if logging then logger('Setting '..alias..' to '..level) end
-          SetCBusLevel(net, app, group, level, 0)
-        end
-      else
-        -- Switchable
-        local state = nil; pcall(function () state = GetCBusState(net, app, group) end)
-        if state ~= hueDeviceStatus[id].on then
-          if logging then logger('Setting '..alias..' to '..tostring(hueDeviceStatus[id].on)) end
-          SetCBusState(net, app, group, hueDeviceStatus[id].on)
-          level = (hueDeviceStatus[id].on and 255) or 0
-        end
-      end
-      oldState = hue[alias].state
-      -- Setting CBus here will result in the HUE event script requesting publication of the state using publishHue() above.
-      -- This is undesired, so ignoreBridge[alias] is used to ensure that the CBus change received does not publish to the bridge.
-      if oldState ~= level then ignoreBridge[alias] = os.time() if logging then logger('Setting ignoreBridge for '..alias..', oldState='..tostring(oldState)..' level='..tostring(level)) end end
-    else
-      ignoreCbus[alias] = nil
-      if logging then logger('Ignoring CBus publish for '..alias) end
-    end
-    if not hueDeviceStatus[id].on then
-      hue[alias].state = 0
-    else
-      hue[alias].state = level
-    end
-  end
-  bridgeMessages = {}
-end
-
-
---[[
 Publish the next queued messages from CBus to bridge
 --]]
 function outstandingCbusMessage()
@@ -331,21 +306,15 @@ function outstandingCbusMessage()
     
     local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
     local setting = true
+    local setRamp = false
     local payload = tonumber(parts[4])
     if payload == nil then logger('Warning: Nil level for '..alias); do return end end
-    if logging then logger('Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group))) end
-    -- A CBus ramp up and down can annoyingly begin with a zero level, then steadily converge to the target level. This initial
-    -- zero should not be published to the  bridge so it is ignored. If an initial zero is not seen then the ramp will be orphaned (and
-    -- ultimately cleaned up/published, albeit a bit late after rampTimeout seconds).
     if not ramp[alias] then
+      setRamp = true
       if GetCBusRampRate(net, app, group) > 0 then
-        ramp[alias] = { ['ts'] = os.time(), ['ramp'] = GetCBusRampRate(net, app, group), ['target'] = GetCBusTargetLevel(net, app, group) }
-        if payload == 0 then
-          setting = false
-          if logging then logger('Set ramp for '..alias..' and suppress zero send') end
-        else
-          if logging then logger('Set ramp for '..alias) end
-        end
+        ramp[alias] = { ts = socket.gettime(), ramp = GetCBusRampRate(net, app, group), target = GetCBusTargetLevel(net, app, group) }
+        if logging then logger('Set ramp for '..alias) end
+        if pendingEndRamp[alias] then pendingEndRamp[alias] = nil; if logging then logger('Removing previous pending end ramp for '..alias) end end
       end
     else
       if ramp[alias].target ~= GetCBusTargetLevel(net, app, group) then -- Target level has changed so cancel ramp
@@ -355,8 +324,10 @@ function outstandingCbusMessage()
       end
     end
     if setting then
-      publishHue(alias, payload)
-      if ramp[alias] and payload == ramp[alias].target then
+      if setRamp then publishHue(alias, (ramp[alias] and ramp[alias].target) or payload, (ramp[alias] and ramp[alias].ramp) or nil) end
+      if ramp[alias] and socket.gettime()-ramp[alias].ts > 1 and payload == ramp[alias].target then
+        if logging then logger('Set pending end ramp for '..alias) end
+        pendingEndRamp[alias] = {ts = socket.gettime(), rampts = ramp[alias].ts, ramp = ramp[alias].ramp, target = ramp[alias].target}
         ramp[alias] = nil
         if logging then logger('Clear ramp for '..alias) end
       end
@@ -375,18 +346,96 @@ Remove any orphaned ramp flags
 function checkRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do
-    if os.time() > v.ts + v.ramp + rampTimeout then
+    if socket.gettime() > v.ts + v.ramp + rampTimeout then
       -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur, but does occasionally)
-      -- Remove the orphan, and publish the final target, which will be zero
-      -- Occurs when a ramp to off does not begin with a zero level during the ramp, or if a ramp to zero starts
-      -- when the group is already at zero.
       table.insert(orphan, k)
-      parts = string.split(k, '/')
-      local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
-      publish(tNetCBus(net), app, group, v.target)
     end
   end
   for _, k in ipairs(orphan) do ramp[k] = nil; if logging then logger('Removing orphaned ramp for '..k) end end
+end
+
+
+--[[
+Publish the next queued messages from bridge to CBus
+--]]
+function outstandingBridgeMessage()
+  local level, oldState
+  for _, id in ipairs(bridgeMessages) do
+    alias = hueDeviceStatus[id].alias
+
+    local parts = string.split(alias, '/')
+    local net = parts[1]; local app = parts[2]; local group = parts[3]
+    if ignoreCbus[alias] and socket.gettime() - ignoreCbus[alias] > ignoreTimeout then -- Don't worry about older 'ignore' flags
+      ignoreCbus[alias] = nil
+      if logging then logger('Ignoring older CBus ignore flag for '..alias) end
+    end
+    if hueDeviceStatus[id].brightness ~= nil then
+      -- Dimmable
+      if hue[alias].dimmable == nil then hue[alias].dimmable = true end
+      level = hueDeviceStatus[id].level
+    else
+      level = (hueDeviceStatus[id].on and 255) or 0
+    end
+    if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change
+      local lvl
+      if hueDeviceStatus[id].brightness ~= nil then
+        -- Dimmable
+        if pendingEndRamp[alias] then
+          if nonTargetUpdate and pendingEndRamp[alias].target == level and socket.gettime() - pendingEndRamp[alias].rampts >= pendingEndRamp[alias].ramp-1 then
+            if logging then logger('Cleared pending end ramp for '..alias) end
+            pendingEndRamp[alias] = nil
+          else
+            do return end
+          end
+        end
+        if not ramp[alias] and not pendingEndRamp[alias] then
+          lvl = nil; pcall(function () lvl = GetCBusLevel(net, app, group) end)
+          if lvl ~= level then
+            if logging then logger('Setting '..alias..' to '..level) end
+            SetCBusLevel(net, app, group, level, 0)
+          end
+        else
+          if logging then logger('Not setting '..alias..' - ramp in progress') end
+        end
+      else
+        -- Switchable
+        local state = nil; pcall(function () state = GetCBusState(net, app, group) end)
+        lvl = (state and 255) or 0
+        if state ~= hueDeviceStatus[id].on then
+          if logging then logger('Setting '..alias..' to '..tostring(hueDeviceStatus[id].on)) end
+          SetCBusState(net, app, group, hueDeviceStatus[id].on)
+        end
+      end
+      oldState = hue[alias].state
+      if not ramp[alias] and not pendingEndRamp[alias] then
+        -- Setting CBus here will result in the HUE event script requesting publication of the state using publishHue() above.
+        -- This is undesired, so ignoreBridge[alias] is used to ensure that the CBus change received does not publish to the bridge.
+        if oldState ~= level and lvl ~= level then ignoreBridge[alias] = socket.gettime() if logging then logger('Setting ignoreBridge for '..alias..', oldState='..tostring(oldState)..' level='..tostring(level)) end end
+      end
+    else
+      ignoreCbus[alias] = nil
+      if logging then logger('Ignoring CBus publish for '..alias) end
+    end
+    if not hueDeviceStatus[id].on then
+      hue[alias].state = 0
+    else
+      hue[alias].state = level
+    end
+  end
+  bridgeMessages = {}
+end
+
+--[[
+Remove any orphaned pending end ramp flags
+--]]
+function checkEndRampOrphans()
+  local k, v; local orphan = {}
+  for k, v in pairs(pendingEndRamp) do
+    if socket.gettime() - v.rampts > v.ramp + rampTimeout then
+      table.insert(orphan, k)
+    end
+  end
+  for _, k in ipairs(orphan) do pendingEndRamp[k] = nil; if logging then logger('Removing orphaned pending end ramp for '..k) end end
 end
 
 
@@ -399,10 +448,18 @@ function updateMessage(msg)
     for _, d in ipairs(msg.data) do
       if d.type == 'light' then
         local update = false
-        local on = nil; if d.on then on = d.on.on; update = true end
-        local bri = nil; local lvl = nil; if d.dimming then bri = d.dimming.brightness; lvl = CBusPctToLevel(bri); update = true end
-        local status = nil; if d.status then status = d.status end
         local id = d.id_v1
+        local status = nil; if d.status then status = d.status end
+        local on = nil; if d.on then on = d.on.on; update = true end
+        local bri = nil; local lvl = nil; if d.dimming then
+          update = true
+          bri = math.floor(d.dimming.brightness + 0.5); lvl = CBusPctToLevel(bri)
+          local alias = hueDeviceStatus[id].alias
+          local target = nil
+          if ramp[alias] then target = ramp[alias].target end
+          if pendingEndRamp[alias] then target = pendingEndRamp[alias].target end
+          if lvl ~= target and not nonTargetUpdate then nonTargetUpdate = true; if logging then logger('Non-target update received for '..alias) end end
+        end
         if hueDeviceStatus[id] then
           if logging then logger('Hue event '..id..', stat='..tostring(status)..', on='..tostring(on)..', bri='..tostring(bri)..', lvl='..tostring(lvl)) end
           if status ~= nil  then if status == 'connected' then hueDeviceStatus[id].reachable = true else hueDeviceStatus[id].reachable = false end end
@@ -444,7 +501,7 @@ Main loop
 --]]
 
 cud = {
-  { func = cudHue, t = os.time() - checkChanges, init = true, script = 'HUE' } -- Create/update/delete script(s)
+  { func = cudHue, t = socket.gettime() - checkChanges, init = true, script = 'HUE' } -- Create/update/delete script(s)
 }
 
 -- Initial load of devices
@@ -512,9 +569,10 @@ while true do
 
   if #bridgeMessages > 0 then outstandingBridgeMessage() end -- Send outstanding messages to CBus
   if #cbusMessages > 0 then outstandingCbusMessage() end     -- Send outstanding messages to bridge
-  if #ramp > 0 then checkRampOrphans() end                   -- Some scenarios create ramp orphans
+  if len(ramp) > 0 then checkRampOrphans() end               -- Some scenarios create ramp orphans
+  if len(pendingEndRamp) > 0 then checkEndRampOrphans() end  -- Some scenarios create pending end ramp orphans
   if checkForChanges then                                    -- Periodically create/update/delete device items that change
-    for _, c in ipairs(cud) do if os.time() - c.t >=checkChanges then c.t = os.time(); c.func() end end
+    for _, c in ipairs(cud) do if socket.gettime() - c.t >=checkChanges then c.t = socket.gettime(); c.func() end end
   end
 
   --[[
