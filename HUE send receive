@@ -413,6 +413,8 @@ function outstandingBridgeMessage()
     local alias = hueDeviceStatus[id].alias
     local forceBridge = false
     local lvl
+    
+    if not alias then goto next end
 
     local parts = string.split(alias, '/')
     local net = parts[1]; local app = parts[2]; local group = parts[3]
@@ -478,6 +480,7 @@ function outstandingBridgeMessage()
     else
       hue[alias].state = level
     end
+    ::next::
   end
   bridgeMessages = {}
 end
