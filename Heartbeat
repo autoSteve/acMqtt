@@ -17,9 +17,14 @@ scripts = {
   ['HUE send receive'] = { ['max'] = 20, ['storageExists'] = 'hueactive' },
 }
 
+if server then server:close() end  -- Handle script re-entry
 server = require('socket').udp()
 server:settimeout(1)
-server:setsockname('127.0.0.1', 5433)
+if not server:setsockname('127.0.0.1', 5433) then
+  logger('Error: Could not listen on port 5433')
+  socket.sleep(60)
+  do return end
+end
 
 function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
 
@@ -29,6 +34,10 @@ for k, v in pairs(scripts) do v.heartbeat = os.time() end
 
 log('Heartbeat initialised')
 
+
+--[[
+Monitor heartbeats
+--]]
 
 while true do
   local timeCheck, cmd, s
@@ -51,15 +60,6 @@ while true do
     end
     
   end
-
-  --[[
-  Heartbeats:
-
-  ---- TODO ---- WTF?
-  Ironically, a failure in this script will cause heartbeats to stop being received for some reason,
-  causing repeated 'MQTT send receive' restarts. This script is simple, though, so it should not break...
-  A failure should cause re-entry because zero sleep, so should be good, but socket turns to custard.
-  --]]
 
   local k, v, storageE
   
