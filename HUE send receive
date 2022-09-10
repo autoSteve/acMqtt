@@ -36,6 +36,7 @@ storage.set('hueactive', nil)
 
 eventStream = '/eventstream/clip/v2'
 resource = '/clip/v2/resource'
+connectivity = '/clip/v2/resource/zigbee_connectivity'
 clientKeyStorage = 'huesendreceive'
 socketTimeout = 0.25   -- Lower = higher CPU, but this is dynamic... During ramp events the timeout is set to 0.01 seconds
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
@@ -140,12 +141,19 @@ function getResources(msg)
   for _, d in ipairs(msg.data) do
     if d.type == 'light' and not hueDeviceStatus[d.id_v1] then
       if discovered == nil then discovered = {} end
-      hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on, reachable = true}
+      hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on}
       if d.dimming then
         hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(math.ceil(d.dimming.brightness))
       else
         hueDeviceStatus[d.id_v1].level = (d.on.on and 255) or 0
       end
+      local dmsg = json.decode(rest('GET', resource..'/device/'..d.owner.rid))
+      local s
+      for _, s in ipairs(dmsg['data'][1].services) do
+        if s.rtype == 'zigbee_connectivity' then hueDeviceStatus[d.id_v1].zid = s.rid break end
+      end
+      hueDeviceStatus[d.id_v1].reachable = json.decode(rest('GET', connectivity..'/'..hueDeviceStatus[d.id_v1].zid))['data'][1].status == 'connected'
+
       hueIds[d.metadata.name] = d.id
       hueV1Ids[d.metadata.name] = d.id_v1
       discovered[d.id_v1] = hueDeviceStatus[d.id_v1]
@@ -306,18 +314,14 @@ function publishHue(alias, level, rampRate)
     if logging then logger('Ignoring older bridge ignore flag for '..alias) end
   end
   if not ignoreBridge[alias] then
-    if hueDeviceStatus[hueV1Ids[hue[alias].name]].reachable then
-      local toPut = json.encode(payload)
-      local resource = '/api/'..clientKey..hueV1Ids[hue[alias].name]..'/state'
-      if logging then logger('PUT '..resource..' '..toPut) end
-      rest('PUT', resource, toPut)
-      -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
-      -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
-      if hueState ~= hue[alias].state then ignoreCbus[alias] = socket.gettime(); if logging then logger('Setting ignoreCBus for '..alias) end end
-      if logging then logger('Published Hue state and level '..hue[alias].name..' to '..toPut) end
-    else
-      if logging then logger('Warning: Not publishing state and level for '..hue[alias].name..' - unreachable') end
-    end
+    local toPut = json.encode(payload)
+    local resource = '/api/'..clientKey..hueV1Ids[hue[alias].name]..'/state'
+    if logging then logger('PUT '..resource..' '..toPut) end
+    rest('PUT', resource, toPut)
+    -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
+    -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
+    if hueState ~= hue[alias].state then ignoreCbus[alias] = socket.gettime(); if logging then logger('Setting ignoreCBus for '..alias) end end
+    if logging then logger('Published Hue state and level '..hue[alias].name..' to '..toPut) end
   else
     ignoreBridge[alias] = nil
     if logging then logger('Ignoring bridge publish for '..alias) end
@@ -329,17 +333,29 @@ end
 --[[
 Publish the next queued messages from CBus to bridge
 --]]
+
 function outstandingCbusMessage()
   local cmd
   for _, cmd in ipairs(cbusMessages) do
     local parts = string.split(cmd, '/')
     local alias = parts[1]..'/'..parts[2]..'/'..parts[3]
+    local sKey = 'pre'..alias
     
     local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3])
     local setting = true
     local setRamp = false
     local payload = tonumber(parts[4])
     if payload == nil then logger('Warning: Nil level for '..alias); do return end end
+
+    if not hueDeviceStatus[hueV1Ids[hue[alias].name]].reachable then
+      if storage.get(sKey) then
+        SetCBusLevel(net, app, group, storage.get(sKey), 0)
+        logger('Warning: No connectivity for '..hue[alias].name..' reverting '..alias..' to previous value')
+        ignoreBridge[alias] = socket.gettime() if logging then logger('Setting ignoreBridge for '..alias) end
+      end
+      goto next
+    end
+    
     if not ramp[alias] then
       if not setRamp then checkNewLastLevel(alias) end
       setRamp = true
@@ -363,11 +379,11 @@ function outstandingCbusMessage()
         ramp[alias] = nil
         if logging then logger('Clear ramp for '..alias) end
       end
-      sKey = 'pre'..alias
       local p = payload
       if tonumber(payload) then p = string.format('%.3f', payload) end
       storage.set(sKey, p) -- Save payload as 'previous' for use in the HUE event-based script
     end
+    ::next::
   end
   cbusMessages = {}
 end
@@ -490,7 +506,6 @@ function updateMessage(msg)
       if d.type == 'light' then
         local update = false
         local id = d.id_v1
-        local status = nil; if d.status then status = d.status end
         local on = nil; if d.on then on = d.on.on; update = true end
         local bri = nil; local lvl = nil; if d.dimming then
           update = true
@@ -502,8 +517,7 @@ function updateMessage(msg)
           if lvl ~= target and not nonTargetUpdate then nonTargetUpdate = true; if logging then logger('Non-target update received for '..alias) end end
         end
         if hueDeviceStatus[id] then
-          if logging then logger('Hue event '..id..', stat='..tostring(status)..', on='..tostring(on)..', bri='..tostring(bri)..', lvl='..tostring(lvl)) end
-          if status ~= nil  then if status == 'connected' then hueDeviceStatus[id].reachable = true else hueDeviceStatus[id].reachable = false end end
+          if logging then logger('Hue event '..id..', on='..tostring(on)..', bri='..tostring(bri)..', lvl='..tostring(lvl)) end
           if on ~= nil then hueDeviceStatus[id].on = on end
           if bri ~= nil then hueDeviceStatus[id].brightness = bri; hueDeviceStatus[id].level = lvl end
           if d.metadata ~= nil and d.metadata.name ~= hueDeviceStatus[id].name then -- Device has been renamed
@@ -516,6 +530,15 @@ function updateMessage(msg)
           if update then
             bridgeMessages[#bridgeMessages + 1] = {id = id, on = on, lvl = lvl } -- Queue update
           end
+        end
+      elseif d.type == 'zigbee_connectivity' then
+        local id = d.id_v1
+        local status = nil; if d.status then status = d.status end
+        if hueDeviceStatus[id] then
+          if status ~= nil  then if status == 'connected' then hueDeviceStatus[id].reachable = true else hueDeviceStatus[id].reachable = false end end
+        end
+        if status then
+          logger(hueDeviceStatus[id].name..' is '..tostring((hueDeviceStatus[id].reachable and 'reachable') or 'NOT reachable'))
         end
       end
     end
