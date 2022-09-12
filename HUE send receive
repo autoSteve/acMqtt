@@ -41,7 +41,7 @@ clientKeyStorage = 'huesendreceive'
 socketTimeout = 0.25   -- Lower = higher CPU, but this is dynamic... During ramp events the timeout is set to 0.01 seconds
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
 ignoreTimeout = 2      -- Timeout for stale ignore messages in seconds (two seconds is a long time...)
-rampTimeout = 8        -- Time beyond ramp to declare a ramp orphan in seconds
+rampTimeout = 10        -- Time beyond ramp to declare a ramp orphan in seconds
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 
 huePort = 5435
@@ -72,6 +72,7 @@ heartbeat = os.time()
 UDP listener - receive messages from the event script 'HUE'
 --]]
 
+if server then server:close() end -- Handle script re-entry
 server = require('socket').udp()
 server:settimeout(socketTimeout)
 if not server:setsockname('127.0.0.1', huePort) then -- Listen on huePort for Hue object changes
@@ -316,7 +317,6 @@ function publishHue(alias, level, rampRate)
   if not ignoreBridge[alias] then
     local toPut = json.encode(payload)
     local resource = '/api/'..clientKey..hueV1Ids[hue[alias].name]..'/state'
-    if logging then logger('PUT '..resource..' '..toPut) end
     rest('PUT', resource, toPut)
     -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
     -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
@@ -577,10 +577,11 @@ for _, c in ipairs(cud) do if c.init then c.func(true); if c.script and script.s
 function validateIncoming(cmd) -- Reject any weird socket messages received
   local _, count = cmd:gsub("/", ''); if count < 3 or count > 4 then return false end
   local parts = string.split(cmd, '/')
-  local dstC, payload
+  local dstC
+  local payload = nil
   if parts[2] and parts[2] == '228' then dstC = 4; payload = parts[5] else dstC = 3; payload = parts[4] end -- Measurement app is four dest parts, else three
-  if payload == nil then return false end
-  for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dst parts are not whole decimal numbers
+  if not payload then return false end
+  for i = 1,dstC,1 do n = tonumber(parts[i], 10); if not n then return false end end -- Test whether any dst parts are not whole decimal numbers
   return true
 end
 
@@ -611,10 +612,11 @@ while true do
         logger('Hue receive failed: ' .. tostring(err))
         sock:close()
         do return end
+      else
+        if len(ramp) == 0 and len(pendingEndRamp) == 0 then sock:settimeout(socketTimeout) else sock:settimeout(0.01) end
       end
     end
   until err == 'wantread'
-  if not ramp and not pendingEndRamp then sock:settimeout(socketTimeout) else sock:settimeout(0.01) end
 
   -- Check for new messages from CBus. The entire socket buffer is collected each iteration
   local more = false
@@ -629,7 +631,7 @@ while true do
       end
       server:settimeout(0); more = true; goto checkAgain -- Immediately check for more buffered inbound messages to queue
     else
-      if more then if not ramp and not pendingEndRamp then server:settimeout(socketTimeout) else server:settimeout(0.01) end end
+      if more then if len(ramp) == 0 and len(pendingEndRamp) == 0 then server:settimeout(socketTimeout) else server:settimeout(0.01) end end
     end
   end)
   if not stat then logger('Socket receive error: '..err) end
