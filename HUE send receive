@@ -41,7 +41,8 @@ clientKeyStorage = 'huesendreceive'
 socketTimeout = 0.25   -- Lower = higher CPU, but this is dynamic... During ramp events the timeout is set to 0.01 seconds
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
 ignoreTimeout = 2      -- Timeout for stale ignore messages in seconds (two seconds is a long time...)
-rampTimeout = 10        -- Time beyond ramp to declare a ramp orphan in seconds
+rampTimeout = 5        -- Time beyond ramp to declare an orphan in seconds
+pendingTimeout = 15    -- Time beyond pernding end ramp to declare an orphan in seconds
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 
 huePort = 5435
@@ -60,7 +61,7 @@ ignoreCbus = {}        -- To prevent message loops
 ignoreBridge = {}      -- To prevent message loops
 ramp = {}              -- Keeps track of CBus ramping to ignore some zero level publish events outstandingCbusMessage()
 pendingEndRamp = {}    -- Keeps track of Hue ramping
-nonTargetUpdate = false -- Watch for non-ramp target Hue updates 
+nonTargetUpdate = {}   -- Watch for non-ramp target Hue updates 
 
 started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get number of dictionary members
@@ -305,7 +306,7 @@ function publishHue(alias, level, rampRate)
   if hue[alias].dimmable then
     hueState = level
     payload.bri = level
-    if rampRate then payload.transitiontime = rampRate*10; nonTargetUpdate = false end
+    if rampRate then payload.transitiontime = rampRate*10; nonTargetUpdate[alias] = false end
   else
     hueState = state
   end
@@ -373,7 +374,7 @@ function outstandingCbusMessage()
     end
     if setting then
       if setRamp then publishHue(alias, (ramp[alias] and ramp[alias].target) or payload, (ramp[alias] and ramp[alias].ramp) or nil) end
-      if ramp[alias] and socket.gettime()-ramp[alias].ts > 1 and payload == ramp[alias].target then
+      if ramp[alias] and socket.gettime()-ramp[alias].ts > 0.5 and payload == ramp[alias].target then
         if logging then logger('Set pending end ramp for '..alias) end
         pendingEndRamp[alias] = {ts = socket.gettime(), rampts = ramp[alias].ts, ramp = ramp[alias].ramp, target = ramp[alias].target}
         ramp[alias] = nil
@@ -433,7 +434,7 @@ function outstandingBridgeMessage()
       if hueDeviceStatus[id].brightness ~= nil then
         -- Dimmable
         if pendingEndRamp[alias] then
-          if nonTargetUpdate and pendingEndRamp[alias].target == level and socket.gettime() - pendingEndRamp[alias].rampts >= pendingEndRamp[alias].ramp-1 then
+          if nonTargetUpdate[alias] and pendingEndRamp[alias].target == level and socket.gettime() - pendingEndRamp[alias].rampts >= pendingEndRamp[alias].ramp-1 then
             if logging then logger('Cleared pending end ramp for '..alias) end
             pendingEndRamp[alias] = nil
           else
@@ -491,7 +492,7 @@ Remove any orphaned pending end ramp flags
 function checkEndRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(pendingEndRamp) do
-    if socket.gettime() - v.rampts > v.ramp + rampTimeout then
+    if socket.gettime() - v.rampts > v.ramp + pendingTimeout then
       table.insert(orphan, k)
     end
   end
@@ -517,7 +518,7 @@ function updateMessage(msg)
           local target = nil
           if ramp[alias] then target = ramp[alias].target end
           if pendingEndRamp[alias] then target = pendingEndRamp[alias].target end
-          if lvl ~= target and not nonTargetUpdate then nonTargetUpdate = true; if logging then logger('Non-target update received for '..alias) end end
+          if lvl ~= target and not nonTargetUpdate[alias] then nonTargetUpdate[alias] = true; if logging then logger('Non-target update received for '..alias) end end
         end
         if hueDeviceStatus[id] then
           if logging then logger('Hue event '..id..', on='..tostring(on)..', bri='..tostring(bri)..', lvl='..tostring(lvl)) end
