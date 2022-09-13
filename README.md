@@ -22,7 +22,7 @@ LUA scripts for the automation controller:
 
 If you don't care for integrating Philips Hue, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there and will just be unused.
 
-Note that some of these scripts require automation controller firmware 1.10.0+. Also note that 1.10.0 and 1.11.0 contain a bug where event-based scripts that are set to not execute during ramping actually do, and this has significance for a future enhancement proposed for Hue ramping.
+Note that some of these scripts require automation controller firmware 1.10.0+. Also note that 1.10.0 and 1.11.0 contain a bug where event-based scripts that are set to not execute during ramping actually do, and this has significance for a future enhancement proposed for Hue ramping. See issue #10.
 
 ## Keywords used for Automation Controller objects
 Newly added keywords can be regularly detected by both the 'MQTT send receive' and 'HUE send receive' scripts. This is configurable by setting an option that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is sixty seconds, and that is also a configurable variable.

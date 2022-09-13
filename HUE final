@@ -1,0 +1,20 @@
+--[[
+Event-based, DO NOT execute during ramping, name: "HUE final"
+
+Pushes HUE final level events to resident script via socket.
+
+Tag required objects with the "HUE" keyword and this script will run whenever one of those objects reaches its target level.
+--]]
+
+logging = true
+huePort = 5435
+hueServer = '192.168.10.3'
+
+
+server = require('socket').udp()
+
+val = event.getvalue()
+
+-- Send a final level event to bridge
+if logging then log('Sending final level for '..event.dst..' of '..val) end
+server:sendto(event.dst..">"..val, hueServer, huePort)

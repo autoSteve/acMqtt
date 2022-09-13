@@ -1,7 +1,7 @@
 --[[
 Event-based, execute during ramping, name: "HUE"
 
-Pushes HUE events to MQTT resident scripts via internal sockets.
+Pushes HUE events to resident script via socket.
 
 Tag required objects with the "HUE" keyword and this script will run whenever one of those objects change.
 --]]
@@ -25,15 +25,15 @@ if tonumber(val) then comp = string.format('%.3f', val) end
 if pre ~= nil then
   if comp == pre then
     toSet = false
-    if logging and not toSet then log('Not setting '..event.dst..' to '..comp..', previous value is '..pre) end
+    if logging and not toSet then log('Not sending '..event.dst..' to '..comp..', previous value is '..pre) end
   end
 else
   pre = 'not recorded'
 end
 
--- Send an event to publish to broker if changed
+-- Send an event to publish to bridge if changed
 if toSet then
-  if logging then log('Setting '..event.dst..' to '..comp..', previous='..pre) end
+  if logging then log('Sending '..event.dst..' value '..comp..', previous='..pre) end
 
   server:sendto(event.dst.."/"..val, '127.0.0.1', huePort)
 end
