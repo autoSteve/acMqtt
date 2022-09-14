@@ -261,11 +261,11 @@ end
 Last level storage
 --]]
 
-lastLevel = storage.get('lastlvl', {})
+lastLevel = storage.get('lastlvlhue', {})
 
 function saveLastLevel()
   -- Get old levels to see if anything changed
-  local oldLastLevel = storage.get('lastlvl', {})
+  local oldLastLevel = storage.get('lastlvlhue', {})
   local changed = {}
   local k, v
 
@@ -276,7 +276,7 @@ function saveLastLevel()
   end
 
   if #changed then
-    storage.set('lastlvl', lastLevel)
+    storage.set('lastlvlhue', lastLevel)
     if logging then logger('Saved last levels. Object(s) changed: '..table.concat(changed, ', ')) end
   end
 end
@@ -355,7 +355,7 @@ function outstandingCbusMessage()
         ramp[alias] = nil
         local p = payload
         if tonumber(payload) then p = string.format('%.3f', payload) end
-        storage.set(sKey, p) if logging then logger('Previous for '..alias..' saved in outstandingCbus target level as '..p) end -- Save 'previous' for use in the HUE event-based script
+        storage.set(sKey, p) if logging then logger('Previous for '..alias..' has been saved in outstandingCbus target level as '..p) end -- Save 'previous' for use in the HUE event-based script
       end
       goto next
     end
@@ -401,7 +401,7 @@ function outstandingCbusMessage()
       end
       local p = payload
       if tonumber(payload) then p = string.format('%.3f', payload) end
-      storage.set(sKey, p) if logging then logger('Previous for '..alias..' saved in outstandingCbus setting as '..p) end -- Save 'previous' for use in the HUE event-based script
+      storage.set(sKey, p) if logging then logger('Previous for '..alias..' has been saved in outstandingCbus setting as '..p) end -- Save 'previous' for use in the HUE event-based script
     end
     ::next::
   end
@@ -488,7 +488,7 @@ function outstandingBridgeMessage()
           p = string.format('%.3f', (hueDeviceStatus[id].on and 255) or 0)
         end
       end
-      if p ~= nil then storage.set(sKey, p) if logging then logger('Previous for '..alias..' saved in outstandingBridge as '..p) end end -- Save 'previous' for use in the HUE event-based script
+      if p ~= nil then storage.set(sKey, p) if logging then logger('Previous for '..alias..' has been saved in outstandingBridge as '..p) end end -- Save 'previous' for use in the HUE event-based script
       oldState = hue[alias].state
       if not ramp[alias] and not pendingEndRamp[alias] then
         -- Setting CBus here will result in the HUE event script requesting publication of the state using publishHue() above.
