@@ -353,10 +353,10 @@ function outstandingCbusMessage()
         if logging then logger('Clearing ramp and setting pending end ramp for '..alias) end
         pendingEndRamp[alias] = {ts = socket.gettime(), rampts = ramp[alias].ts, target = ramp[alias].target, transitiontime = ramp[alias].transitiontime}
         ramp[alias] = nil
+        local p = payload
+        if tonumber(payload) then p = string.format('%.3f', payload) end
+        storage.set(sKey, p) if logging then logger('Previous for '..alias..' saved in outstandingCbus target level as '..p) end -- Save 'previous' for use in the HUE event-based script
       end
-      local p = payload
-      if tonumber(payload) then p = string.format('%.3f', payload) end
-      storage.set(sKey, p) -- Save payload as 'previous' for use in the HUE event-based script
       goto next
     end
     
@@ -401,7 +401,7 @@ function outstandingCbusMessage()
       end
       local p = payload
       if tonumber(payload) then p = string.format('%.3f', payload) end
-      storage.set(sKey, p) -- Save payload as 'previous' for use in the HUE event-based script
+      storage.set(sKey, p) if logging then logger('Previous for '..alias..' saved in outstandingCbus setting as '..p) end -- Save 'previous' for use in the HUE event-based script
     end
     ::next::
   end
@@ -433,6 +433,7 @@ function outstandingBridgeMessage()
     local alias = hueDeviceStatus[id].alias
     local forceBridge = false
     local lvl
+    local sKey = 'pre'..alias
     
     if not alias then goto next end
 
@@ -450,6 +451,7 @@ function outstandingBridgeMessage()
       level = (hueDeviceStatus[id].on and 255) or 0
     end
     if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change
+      local p = nil
       if hueDeviceStatus[id].brightness ~= nil then
         -- Dimmable
         if pendingEndRamp[alias] then
@@ -470,6 +472,7 @@ function outstandingBridgeMessage()
               end
             end
             if logging then logger('Setting '..alias..' to '..level..tostring((forceBridge and ' (last level)') or '')) end
+            if not forceBridge then p = string.format('%.3f', level) end
             SetCBusLevel(net, app, group, level, 0)
           end
         else
@@ -482,8 +485,10 @@ function outstandingBridgeMessage()
         if state ~= hueDeviceStatus[id].on then
           if logging then logger('Setting '..alias..' to '..tostring(hueDeviceStatus[id].on)) end
           SetCBusState(net, app, group, hueDeviceStatus[id].on)
+          p = string.format('%.3f', (hueDeviceStatus[id].on and 255) or 0)
         end
       end
+      if p ~= nil then storage.set(sKey, p) if logging then logger('Previous for '..alias..' saved in outstandingBridge as '..p) end end -- Save 'previous' for use in the HUE event-based script
       oldState = hue[alias].state
       if not ramp[alias] and not pendingEndRamp[alias] then
         -- Setting CBus here will result in the HUE event script requesting publication of the state using publishHue() above.

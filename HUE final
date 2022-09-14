@@ -6,9 +6,9 @@ Pushes HUE final level events to resident script via socket.
 Tag required objects with the "HUE" keyword and this script will run whenever one of those objects reaches its target level.
 --]]
 
-logging = true
+logging = false
 huePort = 5435
-hueServer = '192.168.10.3'
+hueServer = '192.168.10.3' -- Address of automation controller to send messages to
 
 
 server = require('socket').udp()
