@@ -103,7 +103,7 @@ Horizontal swing mode strings = ("auto", "left", "left_center", "center", "right
 Vertical swing mode strings = ("auto", "up", "up_center", "center", "down_center", "down")
 
 Note: target_temperature and sensors are an integer user parameter, while all others are strings.
-Note: Set all device names to 'Panasonic' in the 'climate' section, and make the 'esphome' name unique to identify the devices (this is the 'dev' keyword').
+Note: Set all device names to 'Panasonic' in the 'climate' section of the ESPHome configuration .yaml, and make 'esphome' name unique to identify the devices (this corresponds to the 'dev' keyword' applied in the automation controller).
 
 Panasonic keyword examples:
 
