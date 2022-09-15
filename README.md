@@ -14,10 +14,11 @@ The pieces of the puzzle include:
 
 LUA scripts for the automation controller:
 - *MQTT send receive*: resident, zero sleep
-- *HUE send receive*: resident, zero sleep
 - *MQTT*: event-based, execute during ramping, trigger on keyword 'MQTT'
-- *HUE*: event-based, execute during ramping, trigger on keyword 'HUE'
 - *AC*: event-based, execute during ramping, trigger on keyword 'AC'
+- *HUE send receive*: resident, zero sleep
+- *HUE*: event-based, execute during ramping, trigger on keyword 'HUE'
+- *HUE final*: event-based, NO NOT execute during ramping, trigger on keyword 'HUE'
 - *Heartbeat*: resident, zero sleep (optional ... monitors for failure of 'MQTT send receive' and 'HUE send receive' and re-starts them on failure)
 
 If you don't care for integrating Philips Hue, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there and will just be unused.
