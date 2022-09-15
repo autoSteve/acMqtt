@@ -24,6 +24,11 @@ The CBus groups for Hue devices are usually not used for any purpose other than 
 Turning on/off one of these groups will result in the Philips Hue hub turning the loads on/off. It is possible
 that these CBus Hue groups could be used to also control CBus loads, giving them dual purpose.
 
+Ramping in CBus is by way of selecting a 'ramp rate'. This is not the same as 'transition time' for Philips Hue.
+A translation of ramp rate to an approximate transition time for Hue devices is done to align CBus level with
+that of the Hue device. A CBus ramp rate is the time to transition from fully off to on (0->255), so to ramp
+from 0->127 using a ramp rate of eight seconds will take just four seconds to transition.
+
 Note: This script only handles on/off, as well as levels for dimmable Hue devices, but not colours/colour
 temperature, as that's not a CBus thing. Colour details will return to previously set values done in the Hue app.
 --]]
@@ -38,29 +43,29 @@ eventStream = '/eventstream/clip/v2'
 resource = '/clip/v2/resource'
 connectivity = '/clip/v2/resource/zigbee_connectivity'
 clientKeyStorage = 'huesendreceive'
-socketTimeout = 0.25   -- Lower = higher CPU, but this is dynamic... During ramp events the timeout is set to 0.01 seconds
+socketTimeout = 0.2    -- Lower = higher CPU, but this is dynamic... During ramp events the timeout is set to 0.01 seconds
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
 ignoreTimeout = 2      -- Timeout for stale ignore messages in seconds (two seconds is a long time...)
 rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
-pendingTimeout = 10     -- Time beyond pernding end ramp to declare an orphan in seconds
+pendingTimeout = 8     -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream is quite delayed)
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 
-huePort = 5435
-port = 443
-protocol = 'tlsv12'
+huePort = 5435         -- Listening port to receive messages from 'HUE' and 'HUE final' scripts
+port = 443             -- Listening port of the Hue bridge
+protocol = 'tlsv12'    -- TLS 1.2 is used for bridge eventstream
 
 hue = {}               -- Hue device details (name, state, dimmable, etc) 
 hueDevices = {}        -- Quick lookup to determine whether an object is a Hue device
 hueDeviceStatus = {}   -- Hue device status
-hueConnected = false   -- Receiving event stream?
-hueIds = {}            -- Lookup Hue object ID from metadata name
-hueV1Ids = {}          -- Lookup Hue object ID from metadata name
+hueConnected = false   -- Event stream is being received
+hueIds = {}            -- Lookup Hue object ID using metadata name
+hueV1Ids = {}          -- Lookup Hue object V1 ID using metadata name
 cbusMessages = {}      -- Incoming message queue
 bridgeMessages = {}    -- Incoming message queue
 ignoreCbus = {}        -- To prevent message loops
 ignoreBridge = {}      -- To prevent message loops
-ramp = {}              -- Keeps track of CBus ramping to ignore some zero level publish events outstandingCbusMessage()
-pendingEndRamp = {}    -- Keeps track of Hue ramping
+ramp = {}              -- Keeps track of CBus ramping
+pendingEndRamp = {}    -- Keeps track of the end of Hue transition (always occurs after the CBus ramp conclusion is reported)
 nonTargetUpdate = {}   -- Watch for non-ramp target Hue updates 
 
 started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
@@ -78,7 +83,7 @@ server = require('socket').udp()
 server:settimeout(socketTimeout)
 if not server:setsockname('0.0.0.0', huePort) then -- Listen on huePort/all interfaces for Hue object changes
   logger('Error: Could not listen on port '..huePort)
-  storage.set('hueactive', true) -- Ensure that Heartbeat can re-start this script
+  storage.set('hueactive', true) -- Ensure that Heartbeat can re-start this script should an error occur
   socket.sleep(60)
   do return end
 end
@@ -127,6 +132,7 @@ if clientKey == nil then
   until response.success
   clientKey = response.success.username
   storage.set(clientKeyStorage, clientKey)
+  heartbeat = os.time()
 end
 
 
@@ -467,7 +473,7 @@ function outstandingBridgeMessage()
           if lvl ~= level then
             if msg.on and not msg.lvl then -- No level set, so return to lastLevel
               if level > 0 and level ~= lastLevel[alias] then
-                forceBridge = true  -- If HueDeviceStatus level is different to lastLevel then force a bridge message
+                forceBridge = true  -- If hueDeviceStatus level is different to lastLevel then force a bridge message
                 level = lastLevel[alias]
               end
             end
@@ -515,7 +521,7 @@ Remove any orphaned pending end ramp flags
 function checkEndRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(pendingEndRamp) do
-    if socket.gettime() - v.rampts > v.transitiontime + pendingTimeout then
+    if socket.gettime() - v.ts > pendingTimeout then
       table.insert(orphan, k)
     end
   end

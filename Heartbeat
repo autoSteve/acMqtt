@@ -65,11 +65,13 @@ while true do
   
   for k, v in pairs(scripts) do
     if script.status(k) ~= nil then
-      secondsSince = os.time() - v.heartbeat
       if v.storageExists ~= nil then
         storageE = storage.get(v.storageExists)
+        if not storageE then v.heartbeat = os.time() end
       end
-      
+
+      secondsSince = os.time() - v.heartbeat
+
       if secondsSince >= v.max and (not v.storageExists or storageE) then -- No heartbeat received for specified period, so re-start the script
         log('Missed '..k..' script heartbeat (last received '..secondsSince..' seconds ago) - Re-starting script')
         script.disable(k); script.enable(k)
