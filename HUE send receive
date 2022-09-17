@@ -43,10 +43,12 @@ eventStream = '/eventstream/clip/v2'
 resource = '/clip/v2/resource'
 connectivity = '/clip/v2/resource/zigbee_connectivity'
 clientKeyStorage = 'huesendreceive'
+
 socketTimeout = 0.2    -- Lower = higher CPU, but this is dynamic... During ramp events the timeout is set to 0.01 seconds
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
 ignoreTimeout = 2      -- Timeout for stale ignore messages in seconds (two seconds is a long time...)
-rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
+shortRamp = 4          -- Short transition times for Hue will result in a final Hue level message not arriving
+rampTimeout = 2        -- Time beyond ramp to declare an orphan in seconds
 pendingTimeout = 8     -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream is quite delayed)
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 
@@ -151,7 +153,7 @@ function getResources(msg)
       if discovered == nil then discovered = {} end
       hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on}
       if d.dimming then
-        hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = CBusPctToLevel(math.ceil(d.dimming.brightness))
+        hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = math.floor(d.dimming.brightness * 254 / 100 + 0.5)
       else
         hueDeviceStatus[d.id_v1].level = (d.on.on and 255) or 0
       end
@@ -232,14 +234,14 @@ function cudHue(initial)
     hue[alias].hueid = hueIds[pn]
     hue[alias].hueV1id = hueV1Ids[pn]
     if initial then
-      if not ramp[alias] and not pendingEndRamp[alias] then -- Do not mess with the CBusLevel during ramping
+      if not ramp[alias] then -- Do not mess with the CBusLevel during ramping
         local level = nil; pcall(function () level = GetCBusLevel(net, app, group) end); if not level then level = -1 end
-        local hueLevel = hueDeviceStatus[hueV1Ids[pn] ].level
-        if level ~= hueLevel and hueDeviceStatus[hueV1Ids[pn] ].on then
+        local hueLevel = hueDeviceStatus[hueV1Ids[pn]].level
+        if level ~= hueLevel and hueDeviceStatus[hueV1Ids[pn]].on then
           if logging then logger('Adjusting '..alias..' to match Hue, on=true, level='..level..', hueLevel='..hueLevel) end
           SetCBusLevel(net, app, group, hueLevel, 0)
         end
-        if level > 0 and not hueDeviceStatus[hueV1Ids[pn] ].on then
+        if level > 0 and not hueDeviceStatus[hueV1Ids[pn]].on then
           if logging then logger('Adjusting '..alias..' to match Hue, on=false, level='..level..', hueLevel='..hueLevel) end
           SetCBusLevel(net, app, group, 0, 0)
         end
@@ -312,7 +314,7 @@ function publishHue(alias, level, rampRate)
   if hue[alias].dimmable then
     hueState = level
     payload.bri = level
-    if rampRate then payload.transitiontime = rampRate*10; nonTargetUpdate[alias] = false end
+    if rampRate then payload.transitiontime = math.floor(rampRate*10 + 0.5); nonTargetUpdate[alias] = false end
   else
     hueState = state
   end
@@ -356,8 +358,12 @@ function outstandingCbusMessage()
 
     if f[2] then -- End of ramp/target level message
       if ramp[alias] then
-        if logging then logger('Clearing ramp and setting pending end ramp for '..alias) end
-        pendingEndRamp[alias] = {ts = socket.gettime(), rampts = ramp[alias].ts, target = ramp[alias].target, transitiontime = ramp[alias].transitiontime}
+        if ramp[alias].transitionTime > shortRamp or nonTargetUpdate[alias] then
+          if logging then logger('Clearing ramp and setting pending end ramp for '..alias..', nonTargetUpdate='..tostring(nonTargetUpdate[alias])) end
+          pendingEndRamp[alias] = {ts = socket.gettime(), rampts = ramp[alias].ts, target = ramp[alias].target, transitionTime = ramp[alias].transitionTime}
+        else
+          if logging then logger('Clearing ramp and not setting pending end ramp for '..alias..' - short ramp, nonTargetUpdate='..tostring(nonTargetUpdate[alias])) end -- Short ramp, so not expecting a Hue level update
+        end
         ramp[alias] = nil
         local p = payload
         if tonumber(payload) then p = string.format('%.3f', payload) end
@@ -386,24 +392,45 @@ function outstandingCbusMessage()
       else
         if not setRamp then checkNewLastLevel(alias) end
         setRamp = true
-        if GetCBusRampRate(net, app, group) > 0 then
-          ramp[alias] = { ts = socket.gettime(), ramp = GetCBusRampRate(net, app, group), target = GetCBusTargetLevel(net, app, group) }
+        local targetRamp = GetCBusRampRate(net, app, group)
+        if targetRamp > 0 then
           local prev = storage.get(sKey, 0)
-          ramp[alias].transitiontime = math.floor(math.abs(ramp[alias].target - prev) * ramp[alias].ramp / 256 + 0.5)
+          local targetLevel = GetCBusTargetLevel(net, app, group)
+          local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp
+          ramp[alias] = {
+            ts = socket.gettime(),
+            ramp = targetRamp,
+            target = targetLevel,
+            transitionTime = transitionTime
+          }
           if logging then logger('Set ramp for '..alias) end
         end
       end
     else
-      if ramp[alias].target ~= GetCBusTargetLevel(net, app, group) then -- Target level has changed so cancel ramp
-        ramp[alias] = nil
-        if logging then logger('Cancel ramp for '..alias) end
-        if payload == 0 and GetCBusRampRate(net, app, group) > 0 then setting = false end -- Ignore initial zero if ramp on
+      if ramp[alias].target ~= GetCBusTargetLevel(net, app, group) then -- Target level has changed so change or cancel ramp
+        local targetRamp = GetCBusRampRate(net, app, group)
+        if targetRamp > 0 then
+          local prev = storage.get(sKey, 0)
+          local targetLevel = GetCBusTargetLevel(net, app, group)
+          local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp
+          ramp[alias] = {
+            ts = socket.gettime(),
+            ramp = targetRamp,
+            target = targetLevel,
+            transitionTime = transitionTime
+          }
+          if logging then logger('Re-set ramp for '..alias) end
+        else
+          ramp[alias] = nil
+          if logging then logger('Cancel ramp for '..alias) end
+        end
+        if payload == 0 and GetCBusRampRate(net, app, group) > 0 then setting = false end -- Ignore initial zero if ramp on/up
       end
       if payload == ramp[alias].target then setting = false end -- Final level has not yet arrived, so suppress set
     end
     if setting then
       if setRamp then
-        publishHue(alias, (ramp[alias] and ramp[alias].target) or payload, (ramp[alias] and ramp[alias].transitiontime) or nil)
+        publishHue(alias, (ramp[alias] and ramp[alias].target) or payload, (ramp[alias] and ramp[alias].transitionTime) or nil)
       end
       local p = payload
       if tonumber(payload) then p = string.format('%.3f', payload) end
@@ -420,7 +447,7 @@ Remove any orphaned ramp flags
 function checkRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do
-    if socket.gettime() > v.ts + v.ramp + rampTimeout then
+    if socket.gettime() - v.ts >= v.transitionTime + rampTimeout then
       -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur, but does occasionally)
       table.insert(orphan, k)
     end
@@ -450,7 +477,6 @@ function outstandingBridgeMessage()
       if logging then logger('Ignoring older CBus ignore flag for '..alias) end
     end
     if hueDeviceStatus[id].brightness ~= nil then
-      -- Dimmable
       if hue[alias].dimmable == nil then hue[alias].dimmable = true end
       level = (hueDeviceStatus[id].on and hueDeviceStatus[id].level) or 0
     else
@@ -458,10 +484,10 @@ function outstandingBridgeMessage()
     end
     if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change
       local p = nil
-      if hueDeviceStatus[id].brightness ~= nil then
+      if hue[alias].dimmable then
         -- Dimmable
         if pendingEndRamp[alias] then
-          if nonTargetUpdate[alias] and pendingEndRamp[alias].target == level and socket.gettime() - pendingEndRamp[alias].rampts >= pendingEndRamp[alias].transitiontime - 0.1 then
+          if nonTargetUpdate[alias] and pendingEndRamp[alias].target == level and socket.gettime() - pendingEndRamp[alias].rampts >= pendingEndRamp[alias].transitionTime - 0.1 then
             if logging then logger('Cleared pending end ramp for '..alias) end
             pendingEndRamp[alias] = nil
           else
@@ -521,7 +547,7 @@ Remove any orphaned pending end ramp flags
 function checkEndRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(pendingEndRamp) do
-    if socket.gettime() - v.ts > pendingTimeout then
+    if socket.gettime() - v.ts > pendingTimeout and not nonTargetUpdate[k] then
       table.insert(orphan, k)
     end
   end
@@ -544,7 +570,8 @@ function updateMessage(msg)
         local bri = nil; local lvl = nil;
         if d.dimming then
           update = true
-          bri = d.dimming.brightness; lvl = CBusPctToLevel(math.ceil(bri)) -- PctToLevel does not work with fractional numbers. Hue goes down to 0.39 as lowest brightness
+          bri = d.dimming.brightness
+          lvl = math.floor(bri * 254 / 100 + 0.5)
           local alias = hueDeviceStatus[id].alias
           local target = nil
           if ramp[alias] then target = ramp[alias].target end
@@ -649,7 +676,7 @@ while true do
         sock:close()
         do return end
       else
-        if len(ramp) == 0 and len(pendingEndRamp) == 0 then sock:settimeout(socketTimeout) else sock:settimeout(0.01) end
+        if len(ramp) == 0 then sock:settimeout(socketTimeout) else sock:settimeout(0.01) end
       end
     end
   until err == 'wantread'
@@ -667,7 +694,7 @@ while true do
       end
       server:settimeout(0); more = true; goto checkAgain -- Immediately check for more buffered inbound messages to queue
     else
-      if more then if len(ramp) == 0 and len(pendingEndRamp) == 0 then server:settimeout(socketTimeout) else server:settimeout(0.01) end end
+      if more then if len(ramp) == 0 then server:settimeout(socketTimeout) else server:settimeout(0.01) end end
     end
   end)
   if not stat then logger('Socket receive error: '..err) end
