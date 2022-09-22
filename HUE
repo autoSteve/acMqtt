@@ -20,6 +20,12 @@ comp = val
 parts = string.split(event.dst, '/')
 net = tonumber(parts[1]); app = tonumber(parts[2]); group = tonumber(parts[3])
 
+if val == 0 and GetCBusRampRate(net, app, group) > 0 then
+  if logging then log('Sending zero for '..event.dst) end
+  server:sendto(event.dst.."<"..val, '127.0.0.1', huePort)
+  do return end
+end
+
 pre = storage.get(sKey, nil)
 if tonumber(val) then comp = string.format('%.3f', val) end
 if pre ~= nil then
