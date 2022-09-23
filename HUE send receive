@@ -47,9 +47,9 @@ clientKeyStorage = 'huesendreceive'
 socketTimeout = 0.2    -- Lower = higher CPU, but this is dynamic... During ramp events the timeout is set to 0.01 seconds
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
 ignoreTimeout = 2      -- Timeout for stale ignore messages in seconds (two seconds is a long time...)
-minHueBri = '0.39'     -- Transitioning a Hue light arrives at a low brightness level, with the lamp then turned off 
+minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brightness level, with the lamp then turned off 
 rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
-pendingTimeout = 20    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream is quite delayed)
+pendingTimeout = 45    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream is quite delayed)
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 
 huePort = 5435         -- Listening port to receive messages from 'HUE' and 'HUE final' scripts
@@ -172,7 +172,7 @@ function getResources(msg)
   if discovered ~= nil then
     local ds = ''
     for _, d in pairs(discovered) do
-      ds = ds..'\n'..d.name..', id: '..d.id -- ..', rid: '..d.rid
+      ds = ds..'\n'..d.name..', id: '..d.id
     end
     logger('Discovered devices:'..ds)
   end
@@ -358,15 +358,17 @@ function outstandingCbusMessage()
     local sKey = 'pre'..alias
 
     if ramp[alias] and f[2] then -- End of ramp/target level message
-      if string.format('%.2f', hueDeviceStatus[hueV1Ids[hue[alias].name]].brightness) == minHueBri then
-        if logging then logger('Clear ramp for '..alias..' and lamp at target level') end -- Transition complete, so not expecting any more Hue level update
+      local expectingMore = true
+      if ramp[alias].target == 0 and not hueDeviceStatus[hueV1Ids[hue[alias].name]].on and hueDeviceStatus[hueV1Ids[hue[alias].name]].brightness == minHueBri then expectingMore = false end
+      if ramp[alias].target > 0 and hueDeviceStatus[hueV1Ids[hue[alias].name]].on then
+        if hueDeviceStatus[hueV1Ids[hue[alias].name]].level == ramp[alias].target then expectingMore = false end
+        if ramp[alias].target == 255 and hueDeviceStatus[hueV1Ids[hue[alias].name]].level == 254 then expectingMore = false end
+      end
+      if expectingMore then
+        if logging then logger('Clear ramp for '..alias..' (setting pending end ramp to wait for lamp at target level)') end
+        pendingEndRamp[alias] = {ts = socket.gettime(), rampts = ramp[alias].ts, target = ramp[alias].target, transitionTime = ramp[alias].transitionTime}
       else
-        if nonTargetUpdate[alias] then
-          if logging then logger('Clear ramp and setting pending end ramp for '..alias..', nonTargetUpdate=true') end
-          pendingEndRamp[alias] = {ts = socket.gettime(), rampts = ramp[alias].ts, target = ramp[alias].target, transitionTime = ramp[alias].transitionTime}
-        else
-          if logging then logger('Clear ramp for '..alias..', not expecting further Hue events') end
-        end
+        if logging then logger('Clear ramp for '..alias..' (lamp at target level)') end -- Transition complete, so no more Hue updates will arrive
       end
       ramp[alias] = nil
       local p = payload
@@ -475,10 +477,13 @@ function outstandingBridgeMessage()
       if hue[alias].dimmable then
         -- Dimmable
         if pendingEndRamp[alias] then
-          if (
-              (((level == 254 and pendingEndRamp[alias].target ~= 254 and 255) or level) == pendingEndRamp[alias].target and nonTargetUpdate[alias]) or -- Max Hue level is 254
-              (pendingEndRamp[alias].target == 0 and nonTargetUpdate[alias] and level == minHueBri)
-            ) then
+          local pendingDone = false
+          if pendingEndRamp[alias].target == 0 and not hueDeviceStatus[id].on and hueDeviceStatus[id].brightness == minHueBri then pendingDone = true end
+          if pendingEndRamp[alias].target > 0 and hueDeviceStatus[id].on then
+            if level == pendingEndRamp[alias].target then pendingDone = true end
+            if pendingEndRamp[alias].target == 255 and level == 254 then pendingDone = true end
+          end
+          if pendingDone then
             if logging then logger('Cleared pending end ramp for '..alias) end
             pendingEndRamp[alias] = nil
           else
@@ -497,6 +502,7 @@ function outstandingBridgeMessage()
             if logging then logger('Setting '..alias..' to '..level..tostring((forceBridge and ' (last level)') or '')) end
             if not forceBridge then p = string.format('%.3f', level) end
             SetCBusLevel(net, app, group, level, 0)
+            checkNewLastLevel(alias)
           end
         else
           if logging then logger('Not setting '..alias..' - ramp in progress') end
@@ -700,9 +706,9 @@ while true do
 
   if #bridgeMessages > 0 then outstandingBridgeMessage() end -- Send outstanding messages to CBus
   if #cbusMessages > 0 then outstandingCbusMessage() end     -- Send outstanding messages to bridge
-  if len(ramp) > 0 then checkRampOrphans() end               -- Some scenarios create ramp orphans
-  if len(pendingEndRamp) > 0 then checkEndRampOrphans() end  -- Some scenarios create pending end ramp orphans
-  if len(ignoreCbus) > 0 or len(ignoreBridge) > 0 then checkIgnoreOrphans() end  -- Some scenarios create ignore orphans
+  if len(ramp) > 0 then checkRampOrphans() end               -- Some scenarios occasioanlly create ramp orphans (should never happen)
+  if len(pendingEndRamp) > 0 then checkEndRampOrphans() end  -- Some scenarios occasioanlly create pending end ramp orphans (should never happen)
+  if len(ignoreCbus) > 0 or len(ignoreBridge) > 0 then checkIgnoreOrphans() end  -- Some scenarios occasioanlly create ignore orphans (should never happen)
   if checkForChanges then                                    -- Periodically create/update/delete device items that change
     for _, c in ipairs(cud) do if socket.gettime() - c.t >=checkChanges then c.t = socket.gettime(); c.func() end end
   end
