@@ -31,10 +31,15 @@ from 0->127 using a ramp rate of eight seconds will take just four seconds to tr
 
 Note: This script only handles on/off, as well as levels for dimmable Hue devices, but not colours/colour
 temperature, as that's not a CBus thing. Colour details will return to previously set values done in the Hue app.
+
+While executing a CBus ramp the status of lamps in HomeAssistant will not match the actual hue bulb state. This
+is likely because the Hue event stream does not provide notification that a transition from one state to another
+is occurring, and so HomeAssistant adjusts its status as updates during the transition are received. This looks
+a little crazy, especially when triggering a CBus scene from HomeAssistant but it works.
 --]]
 
 
-logging = false        -- Enable detailed logging
+logging = false        -- Enable detailed logging (impacts performance)
 logms = false          -- Include timestamp in milliseconds for logs
 
 storage.set('hueactive', nil)
@@ -44,7 +49,8 @@ resource = '/clip/v2/resource'
 connectivity = '/clip/v2/resource/zigbee_connectivity'
 clientKeyStorage = 'huesendreceive'
 
-socketTimeout = 0.2    -- Lower = higher CPU, but this is dynamic... During ramp events the timeout is set to 0.01 seconds
+socketTimeout = 0.2    -- Lower = higher CPU, higher = less responsiveness - both timeouts often occur each main loop
+bridgeTimeout = 0.1    -- Lower = higher CPU, higher = less responsiveness
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
 ignoreTimeout = 2      -- Timeout for stale ignore messages in seconds (two seconds is a long time...)
 minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brightness level, with the lamp then turned off 
@@ -192,7 +198,7 @@ if res then
   res, err = sock:dohandshake()
   if res then
     logger('Connected to Philips Hue bridge')
-    sock:settimeout(socketTimeout)
+    sock:settimeout(bridgeTimeout)
     getResources()
     sock:send('GET '..eventStream..' HTTP/1.1\nHost: '..bridge..'\nAccept: text/event-stream\nhue-application-key: '..clientKey..'\n\n')
   else
@@ -291,9 +297,11 @@ function saveLastLevel()
   end
 end
 
-function checkNewLastLevel(alias)
-  local parts = string.split(alias, '/')
-  local target = GetCBusTargetLevel(tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3]))
+function checkNewLastLevel(alias, target)
+  if target == nil then
+    local parts = string.split(alias, '/')
+    target = GetCBusTargetLevel(tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3]))
+  end
   if target ~= 0 then
     if target ~= lastLevel[alias] then
       lastLevel[alias] = target
@@ -341,6 +349,7 @@ Publish the next queued messages from CBus to bridge
 --]]
 
 function outstandingCbusMessage()
+  if logging and logms then logger('Entering outstandingCbusMessage()') end
   local cmd
   for _, cmd in ipairs(cbusMessages) do
     local parts, payload
@@ -382,8 +391,10 @@ function outstandingCbusMessage()
     if payload == nil then logger('Warning: Nil level for '..alias); goto next end
 
     local prev = tonumber(storage.get(sKey, 0))
+    local targetRamp = GetCBusRampRate(net, app, group)
+    local targetLevel = GetCBusTargetLevel(net, app, group)
     
-    if GetCBusRampRate(net, app, group) > 0 and payload == GetCBusTargetLevel(net, app, group) then
+    if targetRamp > 0 and payload == targetLevel then
       -- Target level handled above
       if payload == prev then goto next end
     end
@@ -401,12 +412,10 @@ function outstandingCbusMessage()
       if pendingEndRamp[alias] then
         setting = false -- End of ramp/target reached, so suppress set 
       else
-        if not setRamp then checkNewLastLevel(alias) end
+        checkNewLastLevel(alias, targetLevel)
         setRamp = true
-        local targetRamp = GetCBusRampRate(net, app, group)
         if targetRamp > 0 then
-          local targetLevel = GetCBusTargetLevel(net, app, group)
-          local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp
+          local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp + 10 -- Calculate transition time from ramp rate, plus margin to ensure the transition finishes after the CBus ramp
           ramp[alias] = {
             ts = socket.gettime(),
             ramp = targetRamp,
@@ -417,11 +426,9 @@ function outstandingCbusMessage()
         end
       end
     else
-      if ramp[alias].target ~= GetCBusTargetLevel(net, app, group) then -- Target level has changed so change or cancel ramp
-        local targetRamp = GetCBusRampRate(net, app, group)
+      if ramp[alias].target ~= targetLevel then -- Target level has changed so change or cancel ramp
         if targetRamp > 0 then
-          local targetLevel = GetCBusTargetLevel(net, app, group)
-          local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp
+          local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp + 10 -- Calculate transition time from ramp rate, plus margin to ensure the transition finishes after the CBus ramp
           ramp[alias] = {
             ts = socket.gettime(),
             ramp = targetRamp,
@@ -447,6 +454,7 @@ function outstandingCbusMessage()
     ::next::
   end
   cbusMessages = {}
+  if logging and logms then logger('Exiting outstandingCbusMessage()') end
 end
 
 
@@ -486,6 +494,10 @@ function outstandingBridgeMessage()
           if pendingDone then
             if logging then logger('Cleared pending end ramp for '..alias) end
             pendingEndRamp[alias] = nil
+            -- Purge any queued CBus messages for alias that may have arrived simultaneously
+            local purged = false
+            local i; for i=#cbusMessages,1,-1 do if cbusMessages[i].find(alias) then table.remove(cbusMessages, i); purged = true end end
+            if purged and logging then logger('Removed queued messages for '..alias) end
           else
             goto exit
           end
@@ -697,9 +709,7 @@ while true do
       else
         logger('Invalid command received: '..cmd)
       end
-      server:settimeout(0); more = true; goto checkAgain -- Immediately check for more buffered inbound messages to queue
-    else
-      if more then if len(ramp) == 0 then server:settimeout(socketTimeout) else server:settimeout(0.01) end end
+      more = true; goto checkAgain -- Immediately check for more buffered inbound messages to queue
     end
   end)
   if not stat then logger('Socket receive error: '..err) end
