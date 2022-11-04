@@ -123,6 +123,7 @@ Changes:
 1.20 - 27/08/2022 Add support for lighting groups as buttons
 1.21 - 28/08/2022 Add support for select, and implement last will/status for Home Assistant availability
 1.22 - 04/09/2022 Move Philips Hue integration to separate script 'HUE send receive' removing reliance on MQTT
+1.23 - 04/11/2022 Handle duplicate deletion when light, fan, cover, select, etc. changes
 --]]
 
 --[[
@@ -143,7 +144,7 @@ blindKey = nil         -- If blind fully open is desirable instead of lastlevel,
 Timing variables. Adjust to taste if you know what you're doing. These provide a good compromise, but your deployment may vary.
 --]]
 rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
-socketTimeout = 0.01   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
+socketTimeout = 0.05   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
@@ -161,6 +162,8 @@ mqttDiscoveryTopic = 'homeassistant/'
 --[[
 Variables not to be messed with unless you definitely know what you're doing.
 --]]
+discovery = {}         -- MQTT discovery topics lookup
+discoveryDelete = {}   -- If duplicate discovery topics are detected on startup then they will be removed
 mqttDevices = {}       -- CBus groups to send MQTT topics for
 ac = {}                -- AC device details
 acDevices = {}         -- Quick lookup to determine whether an object is an AC device
@@ -196,11 +199,13 @@ function trim(s) return s:match "^%s*(.-)%s*$" end -- Remove leading and trailin
 function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
 function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
 started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
+function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get dictionary members
 
 --[[
 UDP listener - receive messages from the event scripts 'MQTT' and 'AC'
 --]]
 
+if server then server:close() end  -- Handle script re-entry
 server = require('socket').udp()
 server:settimeout(socketTimeout)
 server:setsockname('127.0.0.1', 5432) -- Listen on port 5432 for CBus changes
@@ -223,11 +228,9 @@ client.ON_CONNECT = function(success)
     mqttStatus = 1
     -- Subscribe to relevant topics
     client:subscribe(mqttWriteTopic..'#', mqttQoS)
+    client:subscribe(mqttDiscoveryTopic..'#', mqttQoS)
     for k, _ in pairs(acBoards) do client:subscribe(k..'/#', mqttQoS) end
     for k, _ in pairs(envBoards) do client:subscribe(k..'/#', mqttQoS) end
-
-    -- Full publish CBus topics
-    publishCurrent()
   end
 end
 
@@ -237,7 +240,17 @@ client.ON_DISCONNECT = function(...)
 end
 
 client.ON_MESSAGE = function(mid, topic, payload)
-  mqttMessages[#mqttMessages + 1] = { topic=topic, payload=payload } -- Queue the MQTT message
+  -- Record discovery topics to check for duplication
+  local parts = string.split(topic, '/')
+  if parts[1] == string.split(mqttDiscoveryTopic, '/')[1] then
+    if discovery[parts[3]] ~= nil and discovery[parts[3]] ~= parts[2] then
+      discoveryDelete[parts[3]..'/'..parts[2]] = true
+    else
+      discovery[parts[3]] = parts[2] -- Dictionary of CBus addresses with type as the value
+    end
+  else
+    mqttMessages[#mqttMessages + 1] = { topic=topic, payload=payload } -- Queue the MQTT message
+  end
 end
 
 
@@ -559,6 +572,10 @@ function addDiscover(net, app, group, channel, tags, name)
           dev = { name=pn, ids=oid, sa=sa, mf='Schneider Electric', mdl='CBus' },
         }
         if img ~= '' then payload.ic = img end
+        -- If dType has changed for an existing discovery topic then remove the previous topic
+        if discovery[boid] ~= nil and discovery[boid] ~= dType then
+          client:publish(mqttDiscoveryTopic..discovery[boid]..'/'..boid..'/config', '', mqttQoS, RETAIN)
+        end
         -- Publish to MQTT broker
         local j = json.encode(payload)
         client:publish(mqttDiscoveryTopic..dType..'/'..boid..'/config', j, mqttQoS, RETAIN)
@@ -587,7 +604,13 @@ function addDiscover(net, app, group, channel, tags, name)
   payload.dev = { name=pn, ids=oid, sa=sa, mf='Schneider Electric', mdl='CBus' }
   if img ~= '' then payload.ic = img end
 
+  -- If dType has changed for an existing discovery topic then remove the previous topic
+  if discovery[oid] ~= nil and discovery[oid] ~= dType then
+    client:publish(mqttDiscoveryTopic..discovery[oid]..'/'..oid..'/config', '', mqttQoS, RETAIN)
+  end
+
   -- Publish to MQTT broker
+  discovery[oid] = dType
   local j = json.encode(payload)
   client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
 end
@@ -1131,10 +1154,11 @@ Main loop
 
 -- Create/update/delete scripts spread evenly over the period 'trackChanges'
 cud = {
-  { func = cudCBusTopics, t = os.time() - checkChanges + 1, init = false },
-  { func = cudAc, t = os.time() - checkChanges*0.67 + 1, init = true, script = 'AC' },
-  { func = cudEnv, t = os.time() - checkChanges*.33 + 1, init = true },
+  { func = cudCBusTopics, init = false },
+  { func = cudAc, init = true, script = 'AC' },
+  { func = cudEnv, init = true },
 }
+for i, c in ipairs(cud) do c.t = os.time() - checkChanges * 1/#cud * i + checkChanges/#cud end
 
 -- Initial load of devices excluding CBus, suppressing MQTT re-subscribe
 for _, c in ipairs(cud) do if c.init then c.func(true); if c.script and script.status(c.script) ~= nil then script.disable(c.script); script.enable(c.script) end end end
@@ -1178,7 +1202,7 @@ while true do
     if #mqttMessages > 0 then outstandingMqttMessage() end -- Send outstanding messages to CBus
     if #cbusMessages > 0 then outstandingCbusMessage() end -- Send outstanding messages to MQTT
     if #unpublished > 0 then outstandingPublish() end      -- Publish outstanding discovery topics
-    if #ramp > 0 then checkRampOrphans() end               -- Some scenarios create ramp orphans
+    if len(ramp) > 0 then checkRampOrphans() end           -- Some scenarios create ramp orphans
     if checkForChanges then                                -- Periodically create/update/delete device items that change
       for _, c in ipairs(cud) do if os.time() - c.t >=checkChanges then c.t = os.time(); c.func() end end
     end
@@ -1186,8 +1210,22 @@ while true do
     -- MQTT is disconnected, so attempt a connection every five seconds
     mqttConnected = os.time()
     client:connect(mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
-
-    time = socket.gettime() while socket.gettime() - time < 2 do client:loop(0) end -- Allow some settling time for subscriptions with retain flag
+    -- Allow some settling time for subscriptions with retain flag
+    time = socket.gettime() while socket.gettime() - time < 2 do client:loop(0) end
+    -- If duplicate discovery topics are detected then remove them
+    if len(discoveryDelete) > 0 then
+      logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics')
+      for toDelete, _ in pairs(discoveryDelete) do
+        local parts = string.split(toDelete, '/')
+        local oid = parts[1]
+        local dType = parts[2]
+        logger('Removing '..mqttDiscoveryTopic..dType..'/'..oid..'/config')
+        client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
+      end
+      discoveryDelete = {}
+    end
+    -- Full publish CBus topics
+    publishCurrent()
   end
 
   --[[
