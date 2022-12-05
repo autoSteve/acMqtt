@@ -33,7 +33,7 @@ Lighting, measurement, user parameter and trigger control applications are imple
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-One of light, fan, cover, select, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
+One of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
 - sa=     Suggested area
 - img=    Image
 - pn=     Preferred name (defaults to CBus tag)
@@ -55,6 +55,8 @@ Using lvl= for select is mandatory. This defines the selection name and its corr
 If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable in the 'MQTT send receive' script, otherwise that script will force the level to be set to the nearest select level.
 
 For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
+
+CBus fan controller objects can use either 'fan' or 'fan_pct' keywords. The former will use a preset mode of low/medium/high, while the latter discovers as a raw percentage fan in Home Assistant.
 
 Keyword examples:
 
