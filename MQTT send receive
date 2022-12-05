@@ -16,7 +16,7 @@ Lighting, measurement, user parameter and trigger applications are implemented.
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-  One of  light, fan, cover, select, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
+  One of  light, fan, fan_perc, cover, select, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
   Note that these device types are case sensitive. Other keywords are ignored.
   sa=     Suggested area
   img=    Image
@@ -124,6 +124,7 @@ Changes:
 1.21 - 28/08/2022 Add support for select, and implement last will/status for Home Assistant availability
 1.22 - 04/09/2022 Move Philips Hue integration to separate script 'HUE send receive' removing reliance on MQTT
 1.23 - 04/11/2022 Handle duplicate deletion when light, fan, cover, select, etc. changes
+1.24 - 05/12/2022 Add fan_perc to allow fan percentage discovery
 --]]
 
 --[[
@@ -359,7 +360,7 @@ end
 Build and publish a MQTT discovery topic
 --]]
 function addDiscover(net, app, group, channel, tags, name)
-  local allow = {'light', 'fan', 'cover', 'select', 'sensor', 'switch', 'binary_sensor', 'bsensor', 'button'}
+  local allow = {'light', 'fan', 'fan_perc', 'cover', 'select', 'sensor', 'switch', 'binary_sensor', 'bsensor', 'button'}
   local function allowed(val) local v; for _, v in ipairs(allow) do if v == val then return true end end return false end
   if not name then if channel == nil then do return end else name = 'measurement' end end -- Need a name from tag lookup for everything but measurement app
   local pn = name
@@ -456,6 +457,19 @@ function addDiscover(net, app, group, channel, tags, name)
       pr_mode_val_tpl = '{% if value == 0 %} OFF {% elif value == 86 %} low {% elif value == 170 %} medium {% elif value == 255 %} high {% endif %}',
       pr_modes = {'low', 'medium', 'high'}
     }
+    fan[aAlias] = true
+
+  elseif dType == 'fan_perc' then
+    payload = {
+      stat_t = mqttReadTopic..alias..'/state',
+      cmd_t = mqttWriteTopic..alias..'/switch',
+      pl_on = 'ON',
+      pl_off = 'OFF',
+      pct_cmd_t = mqttWriteTopic..alias..'/ramp',
+      pct_stat_t = mqttReadTopic..alias..'/level',
+      opt = true,
+    }
+    dType = 'fan'
     fan[aAlias] = true
 
   elseif dType == 'cover' then
