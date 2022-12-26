@@ -400,11 +400,9 @@ function outstandingCbusMessage()
     end
 
     if not hueDeviceStatus[hueV1Ids[hue[alias].name]].reachable then
-      if prev then
-        SetCBusLevel(net, app, group, prev, 0)
-        logger('Warning: No connectivity for '..hue[alias].name..' reverting '..alias..' to previous value')
-        ignoreBridge[alias] = socket.gettime() if logging then logger('Setting ignoreBridge for '..alias) end
-      end
+      SetCBusLevel(net, app, group, prev, 0)
+      logger('Warning: No connectivity for '..hue[alias].name..' reverting '..alias..' to previous value')
+      ignoreBridge[alias] = socket.gettime() if logging then logger('Setting ignoreBridge for '..alias) end
       goto next
     end
     
@@ -427,6 +425,8 @@ function outstandingCbusMessage()
       end
     else
       if ramp[alias].target ~= targetLevel then -- Target level has changed so change or cancel ramp
+        checkNewLastLevel(alias, targetLevel)
+        setRamp = true
         if targetRamp > 0 then
           local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp + 10 -- Calculate transition time from ramp rate, plus margin to ensure the transition finishes after the CBus ramp
           ramp[alias] = {
@@ -468,12 +468,13 @@ function outstandingBridgeMessage()
     local alias = hueDeviceStatus[id].alias
     local forceBridge = false
     local lvl
-    local sKey = 'pre'..alias
-    
+
     if not alias then goto next end
 
+    local sKey = 'pre'..alias
     local parts = string.split(alias, '/')
     local net = parts[1]; local app = parts[2]; local group = parts[3]
+
     if hueDeviceStatus[id].brightness ~= nil then
       if hue[alias].dimmable == nil then hue[alias].dimmable = true end
       level = (hueDeviceStatus[id].on and hueDeviceStatus[id].level) or 0
