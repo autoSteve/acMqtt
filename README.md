@@ -118,6 +118,8 @@ Panasonic keyword examples:
 - AC, dev=storeac, sense=current_temperature, topic=climate
 - AC, dev=storeac, sense=outside_temperature
 
+See https://github.com/DomiStyle/esphome-panasonic-ac for ESP32 hardware/wiring hints.
+
 ### Environment Monitors (MQTT send receive)
 Environment monitors can pass sensor data to CBus (using ESPHome devices, see example .yaml).
 
