@@ -202,13 +202,15 @@ if res then
     getResources()
     sock:send('GET '..eventStream..' HTTP/1.1\nHost: '..bridge..'\nAccept: text/event-stream\nhue-application-key: '..clientKey..'\n\n')
   else
-    logger('Handshake failed: '..tostring(err))
+    logger('Handshake failed, restarting in 60 seconds: '..tostring(err))
     sock:close()
+    socket.sleep(60)
     do return end
   end
 else
-  logger('Connect failed: '..tostring(err))
+  logger('Connect failed, restarting in 60 seconds: '..tostring(err))
   sock:close()
+  socket.sleep(60)
   do return end
 end
 
@@ -330,12 +332,12 @@ function publishHue(alias, level, rampRate, prev)
   end
   
   if not ignoreBridge[alias] then
-    local toPut = json.encode(payload)
-    local resource = '/api/'..clientKey..hueV1Ids[hue[alias].name]..'/state'
-    rest('PUT', resource, toPut)
     -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
     -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
     if hueState ~= prev then ignoreCbus[alias] = socket.gettime(); if logging then logger('Setting ignoreCBus for '..alias) end end
+    local toPut = json.encode(payload)
+    local resource = '/api/'..clientKey..hueV1Ids[hue[alias].name]..'/state'
+    rest('PUT', resource, toPut)
     if logging then logger('Published Hue state and level '..hue[alias].name..' to '..toPut) end
   else
     ignoreBridge[alias] = nil
@@ -672,12 +674,15 @@ function validateIncoming(cmd) -- Reject any weird socket messages received
 end
 
 
+lastReceived = socket.gettime()
+
 while true do
   -- Read the bridge event stream
   local line, err = sock:receive()
 
   if not err then
     if line then
+      lastReceived = socket.gettime()
       if line:find('data:') and not line:find('geofence_client') then
         local payload = line:split(': ')[2]
         local stat, err = pcall(function () j = json.decode(payload) end)
@@ -693,10 +698,17 @@ while true do
     end
   else
     if err ~= 'wantread' then
-      logger('Hue receive failed: ' .. tostring(err))
+      logger('Hue receive failed, restarting in 60 seconds: ' .. tostring(err))
       sock:close()
+      socket.sleep(60)
       do return end
     end
+  end
+
+  if socket.gettime() - lastReceived > 90 then -- If no event stream traffic for 90 seconds then restart
+    logger('Hue event stream not received for ninety seconds')
+    sock:close()
+    do return end
   end
 
   -- Check for new messages from CBus. The entire socket buffer is collected each iteration
