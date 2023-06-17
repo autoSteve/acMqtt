@@ -1,0 +1,47 @@
+--[[
+Event-based, execute during ramping, name: "HUE final work-around"
+
+Pushes HUE final level events to resident script via socket.
+
+Tag required objects with the "HUE" keyword and this script will run whenever one of those objects reaches its target level.
+
+This script is a work-around version of 'HUE final' that avounds a bug introduced after firmware 1.6.0, where scripts always
+execute during ramping, regardless of the setting of "Execute during ramping" for the script. Report filed for 1.10.0, but
+the bug remains up to 1.14.0... 🤦🏻
+
+But for the bug, these 30 lines should be just 11, which would be far easier to understand what's going on.
+--]]
+
+logging = false
+huePort = 5435
+hueServer = '127.0.0.1' -- Address of automation controller to send messages to
+
+val = event.getvalue()
+dest = event.dst
+parts = string.split(event.dst, '/')
+net = tonumber(parts[1]); app = tonumber(parts[2]); group = tonumber(parts[3])
+rate = GetCBusRampRate(net, app, group)
+target = GetCBusTargetLevel(net, app, group)
+
+if rate > 0 then
+  final = false
+  -- Ramp almost always begins with zero level (but very occasionally not)
+  if val == 0 or not storage.get('ramping'..dest, false) then -- Initial?
+    if not storage.get('ramping'..dest, false) then
+      storage.set('ramping'..dest, true)
+      if logging then log('Ramp detected for '..dest) end
+    elseif val == 0 and val == target then
+      final = true
+    end
+  else
+    if val == target then
+      final = true
+    end
+  end
+  if final then
+    storage.delete('ramping'..dest)
+    server = require('socket').udp()
+    if logging then log('Sending final level for '..event.dst..' of '..val) end
+    server:sendto(dest..">"..val, hueServer, huePort)
+  end
+end
