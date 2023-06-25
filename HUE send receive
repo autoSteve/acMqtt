@@ -682,7 +682,6 @@ while true do
 
   if not err then
     if line then
-      lastReceived = socket.gettime()
       if line:find('data:') and not line:find('geofence_client') then
         local payload = line:split(': ')[2]
         local stat, err = pcall(function () j = json.decode(payload) end)
@@ -705,8 +704,14 @@ while true do
     end
   end
 
-  if socket.gettime() - lastReceived > 90 then -- If no event stream traffic for 90 seconds then restart
-    logger('Hue event stream not received for ninety seconds')
+  -- Get the bridge details every thirty seconds
+  -- If no valid response after 90 seconds then restart
+  if socket.gettime() - lastReceived >= 30 then
+    local msg; msg = json.decode(rest('GET', resource..'/bridge'))
+    for k, _ in pairs(msg) do if k == 'data' then lastReceived = socket.gettime() end end
+  end
+  if socket.gettime() - lastReceived > 90 then
+    logger('Failed to get bridge details, restarting')
     sock:close()
     do return end
   end

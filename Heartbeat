@@ -14,7 +14,7 @@ logging = false
 -- Scripts to monitor
 scripts = {
   ['MQTT send receive'] = { ['max'] = 20, },
-  ['HUE send receive'] = { ['max'] = 20, ['storageExists'] = 'hueactive' },
+  ['HUE send receive'] = { ['max'] = 90, ['storageExists'] = 'hueactive' },
 }
 
 if server then server:close() end  -- Handle script re-entry

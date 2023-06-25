@@ -308,9 +308,18 @@ end
 Publish measurement application objects to MQTT 
 --]]
 function publishMeasurement(net, app, group, channel, value)
+  local units, v
   if value == nil then logger('Warning: Nil CBus measurement value for '..net..'/'..app..'/'..group); do return end end
   local adjust = publishAdj[net..'/'..app..'/'..group..'/'..channel]
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
+  _, units = GetCBusMeasurement(net, group, channel)
+  if units == '$' then
+    v = units..tostring(v)
+  elseif units == '%' then
+    v = v..units
+  else
+    v = v..' '..units
+  end
   client:publish(mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/state', v, mqttQoS, RETAIN)
   -- if logging then logger('Publishing measurement '..mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..' to '..v) end
 end
@@ -1226,20 +1235,22 @@ while true do
     client:connect(mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
     -- Allow some settling time for subscriptions with retain flag
     time = socket.gettime() while socket.gettime() - time < 2 do client:loop(0) end
-    -- If duplicate discovery topics are detected then remove them
-    if len(discoveryDelete) > 0 then
-      logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics')
-      for toDelete, _ in pairs(discoveryDelete) do
-        local parts = string.split(toDelete, '/')
-        local oid = parts[1]
-        local dType = parts[2]
-        logger('Removing '..mqttDiscoveryTopic..dType..'/'..oid..'/config')
-        client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
+    if mqttConnected == 1 then
+      -- If duplicate discovery topics are detected then remove them
+      if len(discoveryDelete) > 0 then
+        logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics')
+        for toDelete, _ in pairs(discoveryDelete) do
+          local parts = string.split(toDelete, '/')
+          local oid = parts[1]
+          local dType = parts[2]
+          logger('Removing '..mqttDiscoveryTopic..dType..'/'..oid..'/config')
+          client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
+        end
+        discoveryDelete = {}
       end
-      discoveryDelete = {}
+      -- Full publish CBus topics
+      publishCurrent()
     end
-    -- Full publish CBus topics
-    publishCurrent()
   end
 
   --[[
