@@ -1,5 +1,5 @@
 # acMqtt
-CBus Automation Controller: Home Assistant, MQTT, Philips Hue and more
+CBus Automation Controller integration: Home Assistant, MQTT, Philips Hue and more
 
 Functions:
 - Get Home Assistant talking to CBus, with MQTT discovery to eliminate any manual CBus config in HA
