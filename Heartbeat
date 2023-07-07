@@ -7,15 +7,47 @@ Receives messages of the format: "[net]/[app]/[group]+[os.time()]"
 
 The 'storageExists' element ensures that this script only monitors for heartbeat when a given storage value is set.
 An example use case is when the 'HUE'send receive' script has not yet gained a Hue bridge client key.
+
+This script does not need to start before the scripts being monitored.
 --]]
 
 logging = false
 
--- Scripts to monitor
-scripts = {
-  ['MQTT send receive'] = { ['max'] = 20, },
-  ['HUE send receive'] = { ['max'] = 90, ['storageExists'] = 'hueactive' },
-}
+--[[
+*** Use code like the following to register with this Heartbeat script...
+
+heartbeatConditions = { ['max'] = 90, ['storageExists'] = 'hueactive' } -- At most 90 seconds without a heartbeat or else restart, but only if hueactive exists
+
+function isRegistered() hbeat = storage.get('heartbeat', {}) for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
+if sendHeartbeat > 0 then
+  -- Check whether registration is required, and if not registered then do so
+  local r, hbeat = isRegistered()
+  if not r then
+    if logging then log('Registering '.._SCRIPTNAME..' with Heartbeat') end
+    hbeat[_SCRIPTNAME] = heartbeatConditions
+    storage.set('heartbeat', hbeat)
+  end
+else
+  local r, hbeat = isRegistered() if r then hbeat[_SCRIPTNAME] = nil storage.set('heartbeat', hbeat) end
+end
+
+*** And use code like this to periodically send a heartbeat from monitored resident scripts...
+
+sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
+heartbeat = os.time()
+
+if sendHeartbeat > 0 then
+  local stat, err = pcall(function ()
+    if os.time() - heartbeat >= sendHeartbeat then
+      heartbeat = os.time(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
+    end
+  end)
+  if not stat then logger('A fault occurred sending heartbeat. Restarting...'); do return end end
+end
+
+--]]
+
+scripts = {}
 
 if server then server:close() end  -- Handle script re-entry
 server = require('socket').udp()
@@ -27,10 +59,6 @@ if not server:setsockname('127.0.0.1', 5433) then
 end
 
 function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
-
-local k, v
-
-for k, v in pairs(scripts) do v.heartbeat = os.time() end
 
 log('Heartbeat initialised')
 
@@ -78,5 +106,18 @@ while true do
         v.heartbeat = os.time()
       end
     end
+  end
+
+  -- Check for heartbeat changes
+  hbeat = storage.get('heartbeat', {})
+  for k, v in pairs(hbeat) do
+    if scripts[k] == nil then
+      scripts[k] = v
+      v.heartbeat = os.time()
+    end
+  end
+  ::again::
+  for k, v in pairs(scripts) do
+    if hbeat[k] == nil then scripts[k] = nil goto again end
   end
 end

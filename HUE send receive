@@ -57,6 +57,7 @@ minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brightness 
 rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
 pendingTimeout = 45    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream is quite delayed)
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
+heartbeatConditions = { ['max'] = 90, ['storageExists'] = 'hueactive' } -- At most 90 seconds without a heartbeat or else restart, but only if hueactive exists
 
 huePort = 5435         -- Listening port to receive messages from 'HUE' and 'HUE final' scripts
 port = 443             -- Listening port of the Hue bridge
@@ -80,6 +81,23 @@ started = socket.gettime(); function logger(msg) if logms then ts = string.forma
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get number of dictionary members
 
 heartbeat = os.time()
+
+
+--[[
+Register with the Heartbeat script
+--]]
+function isRegistered() hbeat = storage.get('heartbeat', {}) for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
+if sendHeartbeat > 0 then
+  -- Check whether registration is required, and if not registered then do so
+  local r, hbeat = isRegistered()
+  if not r then
+    if logging then log('Registering '.._SCRIPTNAME..' with Heartbeat') end
+    hbeat[_SCRIPTNAME] = heartbeatConditions
+    storage.set('heartbeat', hbeat)
+  end
+else
+  local r, hbeat = isRegistered() if r then hbeat[_SCRIPTNAME] = nil storage.set('heartbeat', hbeat) end
+end
 
 
 --[[
@@ -751,7 +769,7 @@ while true do
   if sendHeartbeat > 0 then
     local stat, err = pcall(function ()
       if os.time() - heartbeat >= sendHeartbeat then
-        heartbeat = os.time(); require('socket').udp():sendto('HUE send receive+'..heartbeat, '127.0.0.1', 5433)
+        heartbeat = os.time(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
       end
     end)
     if not stat then logger('A fault occurred sending heartbeat. Restarting...'); do return end end

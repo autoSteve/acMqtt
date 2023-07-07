@@ -134,6 +134,8 @@ logging = false        -- Enable detailed logging
 logms = false          -- Include timestamp in milliseconds for logs
 
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
+sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
+heartbeatConditions = { ['max'] = 20, } -- At most 20 seconds without a heartbeat or else restart
 publishNoLevel = false -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
 selectExact = true     -- For select, if a CBus level other than in the select levels is set then adjust the CBus level to the closest select level
 mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
@@ -148,7 +150,6 @@ rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
 socketTimeout = 0.05   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
-sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 
 --[[
 Topic prefixes for read/write/publish. The mqttDiscovery topic is recommended to be set to 'homeassistant/'
@@ -201,6 +202,22 @@ function tNetCBus(net) if net == 0 then return 254 else return net end end -- Tr
 function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
 started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get dictionary members
+
+--[[
+Register with the Heartbeat script
+--]]
+function isRegistered() hbeat = storage.get('heartbeat', {}) for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
+if sendHeartbeat > 0 then
+  -- Check whether registration is required, and if not registered then do so
+  local r, hbeat = isRegistered()
+  if not r then
+    if logging then log('Registering '.._SCRIPTNAME..' with Heartbeat') end
+    hbeat[_SCRIPTNAME] = heartbeatConditions
+    storage.set('heartbeat', hbeat)
+  end
+else
+  local r, hbeat = isRegistered() if r then hbeat[_SCRIPTNAME] = nil storage.set('heartbeat', hbeat) end
+end
 
 --[[
 UDP listener - receive messages from the event scripts 'MQTT' and 'AC'
@@ -1273,7 +1290,7 @@ while true do
   if sendHeartbeat > 0 then
     local stat, err = pcall(function ()
       if os.time() - heartbeat >= sendHeartbeat then
-        heartbeat = os.time(); require('socket').udp():sendto('MQTT send receive+'..heartbeat, '127.0.0.1', 5433)
+        heartbeat = os.time(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
       end
     end)
     if not stat then logger('A fault occurred sending heartbeat. Restarting...'); do return end end
