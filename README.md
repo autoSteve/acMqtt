@@ -23,7 +23,9 @@ LUA scripts for the automation controller:
 
 If you don't care for integrating Philips Hue, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there and will just be unused.
 
-~~Note that some of my scripts require automation controller firmware 1.10.0+. Also note that 1.10.0 and 1.11.0 contain a bug where event-based scripts that are set to not execute during ramping actually do, and this has significance for Hue ramping. See issue #10. So if you're on v1.6.0 then these scripts are un-tested.~~ Note that a work-around script is provided for HUE final to address a firmware bug. See issue #10.
+**Note**: A change to the discovery behaviour has been made to accommodate a non-breaking change in HA 2023.8, which will become breaking in 2024.4. CBus devices are now created *per suggested area*, with multiple entities per device. This is a departure from the old behaviour where a device was created per entity, and allows entity naming to confirm to the less flexible new HA standard. Existing devices will not be cleaned up, but entities will be moved to the newly created devices. Entity IDs are unchanged.
+
+~~Note that some of my scripts require automation controller firmware 1.10.0+. Also note that 1.10.0 and 1.11.0 contain a bug where event-based scripts that are set to not execute during ramping actually do, and this has significance for Hue ramping. See issue #10. So if you're on v1.6.0 then these scripts are un-tested.~~ **Note**: A work-around script is provided for HUE final to address a firmware bug. See issue #10.
 
 ## Keywords used for Automation Controller objects
 Newly added keywords can be regularly detected by both the 'MQTT send receive' and 'HUE send receive' scripts. This is configurable by setting an option that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is sixty seconds, and that is also a configurable variable.
@@ -34,7 +36,7 @@ Lighting, measurement, user parameter and trigger control applications are imple
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
 One of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
-- sa=     Suggested area
+- sa=     Suggested area (*requied* to ensure correct device naming in HA)
 - img=    Image
 - pn=     Preferred name (defaults to CBus tag)
 - class=  Device class to use in Home Assistant (User param/sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
@@ -69,7 +71,7 @@ Keyword examples:
 - MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/0-Half open/137-Open/255, 
 - MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
-- MQTT, button, lvl=0-1-2-5-127, pn=Inside,       *(a trigger control group with various levels)*
+- MQTT, button, sa=Entry / Egress, lvl=0-1-2-5-127, pn=Inside      *(a trigger control group with various levels)*
 - MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
 - MQTT, button, sa=Outside, img=mdi:gate-open,    *(a lighting group button to open a gate)*
 

@@ -604,12 +604,17 @@ function addDiscover(net, app, group, channel, tags, name)
         if triggers[group] == nil then triggers[group] = {} end
         triggers[group][action] = tonumber(i)
         if pn == name then prefix = '' else prefix = pn..' ' end
+        local entity = prefix..tag
+        local startIdx, endIdx = entity:find(sa, 1, true)
+        if startIdx and startIdx == 1 then
+          entity = entity:sub(endIdx + 1)
+        end
         payload = {
-          name = prefix..tag,
+          name = entity,
           obj_id = boid,
           uniq_id = boid,
           cmd_t = mqttWriteTopic..alias..'/'..action..'/press',
-          dev = { name=pn, ids=oid, sa=sa, mf='Schneider Electric', mdl='CBus' },
+          dev = { name=sa, ids=sa, sa=sa, mf='Schneider Electric', mdl='CBus' },
         }
         if img ~= '' then payload.ic = img end
         -- If dType has changed for an existing discovery topic then remove the previous topic
@@ -641,7 +646,7 @@ function addDiscover(net, app, group, channel, tags, name)
   payload.obj_id = oid
   payload.uniq_id = oid
   payload.avty_t = mqttCbus..'status'
-  payload.dev = { name=pn, ids=oid, sa=sa, mf='Schneider Electric', mdl='CBus' }
+  payload.dev = { name=sa, ids=sa, sa=sa, mf='Schneider Electric', mdl='CBus' }
   if img ~= '' then payload.ic = img end
 
   -- If dType has changed for an existing discovery topic then remove the previous topic
@@ -1262,7 +1267,7 @@ while true do
     client:connect(mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
     -- Allow some settling time for subscriptions with retain flag
     time = socket.gettime() while socket.gettime() - time < 2 do client:loop(0) end
-    if mqttConnected == 1 then
+    if mqttStatus == 1 then
       -- If duplicate discovery topics are detected then remove them
       if len(discoveryDelete) > 0 then
         logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics')
