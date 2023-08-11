@@ -64,6 +64,7 @@ MQTT, button, sa=Outside, img=mdi:gate-open,    (a lighting group button to open
 For Panasonic air conditioners connected to MQTT via ESPHome, add the keyword 'AC' to user parameters, plus...
 
   dev=   ESPHome device name, required, and one of:
+
   func=  Function (mode, target_temperature, fan_mode, swing_mode, which results in {dev}/climate/panasonic/{func}/#)
 ... or
   sel=   Select (vertical_swing_mode, horizontal_swing_mode, which results in {dev}/select/{sel}/#)
@@ -85,6 +86,17 @@ AC, dev=storeac, func=target_temperature
 AC, dev=storeac, sel=vertical_swing_mode
 AC, dev=storeac, sense=current_temperature, topic=climate
 AC, dev=storeac, sense=outside_temperature
+
+>>> AIRTOPIA A/C IR BLASTER
+
+For Airtopia devices, add the keyword 'AT' to user parameters, plus...
+
+  dev=   Airtopia device name (you choose, lowercase word, no spaces), required, and one of:
+  sa=    Suggested area
+
+  func=  Function (power, mode, vert_swing, horiz_swing, target_temperature, fan, which results in airtopia/{dev}/func/{func}/#)
+... or
+  sense= A read only sensor like temperature, current, which results in airtopia/{dev}/sense/{sense}/#)
 
 >>> ENVIRONMENT SENSORS
 
@@ -166,10 +178,16 @@ Variables not to be messed with unless you definitely know what you're doing.
 --]]
 discovery = {}         -- MQTT discovery topics lookup
 discoveryDelete = {}   -- If duplicate discovery topics are detected on startup then they will be removed
+atDiscovery = {}       -- AT discovery topics lookup
+atDiscoveryDelete = {} -- If duplicate discovery topics are detected on startup then they will be removed
 mqttDevices = {}       -- CBus groups to send MQTT topics for
 ac = {}                -- AC device details
 acDevices = {}         -- Quick lookup to determine whether an object is an AC device
 acBoards = {}          -- All physical AC boards (esp32)
+at = {}                -- AT device details
+atDevices = {}         -- Quick lookup to determine whether an object is an AT device
+atBoards = {}          -- All physical AT boards
+atArea = {}            -- Suggested area for AT boards
 env = {}               -- Environment device details
 envDevices = {}        -- Quick lookup to determine whether an object is an environment device
 envBoards = {}         -- All physical environment boards (esp32)
@@ -191,6 +209,8 @@ unpublished = {}       -- The current set of objects to publish discovery topics
 mqttStatus = 2         -- Initially disconnected 1=connected, 2=disconnected
 mqttConnected = 0      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
 
+atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
+
 RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
 NORETAIN = false
 
@@ -202,6 +222,7 @@ function tNetCBus(net) if net == 0 then return 254 else return net end end -- Tr
 function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
 started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get dictionary members
+function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end
 
 --[[
 Register with the Heartbeat script
@@ -248,6 +269,7 @@ client.ON_CONNECT = function(success)
     client:subscribe(mqttWriteTopic..'#', mqttQoS)
     client:subscribe(mqttDiscoveryTopic..'#', mqttQoS)
     for k, _ in pairs(acBoards) do client:subscribe(k..'/#', mqttQoS) end
+    for k, _ in pairs(atBoards) do client:subscribe('airtopia/'..k..'/#', mqttQoS) end
     for k, _ in pairs(envBoards) do client:subscribe(k..'/#', mqttQoS) end
   end
 end
@@ -261,10 +283,12 @@ client.ON_MESSAGE = function(mid, topic, payload)
   -- Record discovery topics to check for duplication
   local parts = string.split(topic, '/')
   if parts[1] == string.split(mqttDiscoveryTopic, '/')[1] then
-    if discovery[parts[3]] ~= nil and discovery[parts[3]] ~= parts[2] then
-      discoveryDelete[parts[3]..'/'..parts[2]] = true
-    else
-      discovery[parts[3]] = parts[2] -- Dictionary of CBus addresses with type as the value
+    if discovery[parts[3]] ~= nil then
+      if discovery[parts[3]] ~= parts[2] then
+        discoveryDelete[parts[3]..'/'..parts[2]] = true
+      else
+        discovery[parts[3]] = parts[2] -- Dictionary of CBus addresses with type as the value
+      end
     end
   else
     mqttMessages[#mqttMessages + 1] = { topic=topic, payload=payload } -- Queue the MQTT message
@@ -375,6 +399,37 @@ function publishAc(net, app, group, level, select)
       if logging then logger('Ignoring MQTT publish for '..alias) end
     end
     ac[alias].state = level
+  else
+    ignoreMqtt[alias] = nil
+    if logging then logger('Ignoring MQTT publish for '..alias) end
+  end
+end
+
+--[[
+Publish AT objects to MQTT 
+--]]
+function publishAt(net, app, group, level)
+  if level == nil then logger('Warning: Nil AT level for '..net..'/'..app..'/'..group); do return end end
+  local alias = net..'/'..app..'/'..group
+  if at[alias].state ~= level then
+    if ignoreMqtt[alias] and (os.time() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
+      ignoreMqtt[alias] = nil
+      if logging then logger('Ignoring older MQTT ignore flag for '..alias) end
+    end
+    if not ignoreMqtt[alias] then
+      local parts = string.split(at[alias].name, '-')
+      local board = parts[1]
+      local topic = 'airtopia/'..board..'/state/'..parts[2]
+      client:publish(topic, level, mqttQoS, RETAIN)
+      -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
+      -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
+      if atState ~= at[alias].state then ignoreCbus[alias] = os.time() end
+      if logging then logger('Published AT '..at[alias].name..' to '..level) end
+    else
+      ignoreMqtt[alias] = nil
+      if logging then logger('Ignoring MQTT publish for '..alias) end
+    end
+    at[alias].state = level
   else
     ignoreMqtt[alias] = nil
     if logging then logger('Ignoring MQTT publish for '..alias) end
@@ -671,6 +726,42 @@ function addDiscover(net, app, group, channel, tags, name)
   client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
 end
 
+--[[
+Build and publish an AT discovery topic
+--]]
+function addAtDiscover(name, sa)
+  if logging then
+    if sa == '' then dSa = 'no preferred area' else dSa = sa end
+    logger('Publish discovery '..name..' in area '..dSa)
+  end
+
+  -- Build an OID
+  oid = 'cbus_mqtt_'..string.lower(name:gsub("% ", "_"))
+
+  payload = {
+    mode_command_topic = 'airtopia/'..name..'/cmd/mode',
+    mode_state_topic = 'airtopia/'..name..'/state/modeha',
+    power_command_topic = 'airtopia/'..name..'/cmd/power',
+    temperature_command_topic = 'airtopia/'..name..'/cmd/target_temperature',
+    temperature_state_topic = 'airtopia/'..name..'/state/target_temperature',
+    optimistic = false,
+    pl_on = 'ON',
+    pl_off = 'OFF',
+    precision = 1.0,
+  }
+
+  payload.name = name
+  payload.obj_id = oid
+  payload.uniq_id = oid
+  payload.avty_t = mqttCbus..'status'
+  payload.dev = { name=sa, ids=sa, sa=sa, mf='Airtopia', mdl='CBus' }
+
+  -- Publish to MQTT broker
+  discovery[oid] = 'climate'
+  local j = json.encode(payload)
+  client:publish(mqttDiscoveryTopic..'climate/'..oid..'/config', j, mqttQoS, RETAIN)
+end
+
 
 --[[
 Queue up initial discovery and current state CBus objects 
@@ -747,6 +838,105 @@ function cudAc(initial)
       script.disable('AC'); script.enable('AC')
     end
     for k, _ in pairs(acBoards) do client:subscribe(k..'/#', 2) end
+  end
+end
+
+--[[
+Create / update / delete AT devices
+--]]
+function cudAt(initial)
+  local grps = GetCBusByKW('AT', 'or')
+  local found = {}
+  local boards = {}
+  local addition = false
+  local k, v
+
+  for k, v in pairs(grps) do
+    local net = v.address[1]; local app = v.address[2]; local group = v.address[3]
+    local pn = v.name
+    local alias = table.concat(v.address, '/')
+
+    table.insert(found, alias)
+
+    local dev = ''; local func = ''; local sense = ''; local sa = ''; local tags = v.keywords
+    for _, t in ipairs(tags) do
+      tp = string.split(t, '=')
+      tp[1] = trim(tp[1])
+      if tp[2] then
+        tp[2] = trim(tp[2])
+        if tp[1] == 'dev' then dev = tp[2] -- Device
+        elseif tp[1] == 'func' then func = tp[2] -- Function
+        elseif tp[1] == 'sense' then sense = tp[2] -- Sensor
+        elseif tp[1] == 'sa' then sa = tp[2] -- Suggested area
+        end
+      end
+    end
+    if (func ~= '' or sense ~= '') and sa ~= '' then -- Found a suggested area
+      if atArea[dev] == nil then
+        atArea[dev] = sa
+        -- Publish
+        addAtDiscover(dev, sa)
+      end
+    end
+    if func ~= '' then
+      if not at[alias] then
+        at[alias] = {}; addition = true
+    	  at[alias].name = dev..'-'..func; at[alias].select = 'func'; atDevices[dev..'-'..func] = alias;
+        if atBoards[dev] == nil and func == 'power' then atBoards[dev] = alias end
+        publishAt(net, app, group, GetUserParam(net, group))
+      end
+    elseif sense ~= '' then
+      if not at[alias] then
+        at[alias] = {}; addition = true
+    	  at[alias].name = dev..'-'..sel; at[alias].select = 'sense'; at[alias].sense = sense; atDevices[dev..'-'..sense] = alias
+        publishAt(net, app, group, GetUserParam(net, group))
+      end
+    end
+  end
+    
+  -- Handle deletions
+  local kill
+  for k, _ in pairs(at) do
+    local f = false; for _, v in ipairs(found) do if k == v then f = true; break end end
+    if not f then kill = at[k].name; at[k] = nil; atDevices[kill] = nil end
+  end
+  local newBoards = {}
+  for k, _ in pairs(atDevices) do
+    local parts = string.split(k, '-')
+    newBoards[parts[1]] = true
+  end
+  kill = {} for k, _ in pairs(atBoards) do if newBoards[k] == nil then table.insert(kill, k) end end
+  for _, k in ipairs(kill) do
+    atBoards[k] = nil; topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'
+    client:publish(topic, '', mqttQoS, RETAIN)
+    --client:publish('airtopia/'..k, '', mqttQoS, RETAIN)
+    logger('Removed discovery topic '..topic)
+  end
+
+  -- Handle additions, and re-subscribe all board topics to get status of newly added devices
+  if addition then
+    if not initial then
+      -- Ensure that newly tagged/removed groups with the AT keyword send updates.
+      logger('AT object keywords added, restarting event script')
+      script.disable('AT'); script.enable('AT')
+    end
+    for k, _ in pairs(atBoards) do
+      mode = atDevices[k..'-mode']
+      power = atDevices[k..'-power']
+      if mode ~= nil and power ~= nil then
+        parts = string.split(mode, '/'); mnet = tonumber(parts[1]); mgroup = tonumber(parts[3])
+        parts = string.split(power, '/'); pnet = tonumber(parts[1]); pgroup = tonumber(parts[3])
+        local topic = 'airtopia/'..k..'/state/modeha'
+        local level
+        if GetUserParam(pnet, pgroup) == 0 then
+          level = 'off'
+        else
+          level = atmodes[GetUserParam(mnet, mgroup)]
+        end
+        client:publish(topic, level, mqttQoS, RETAIN)
+      end
+      client:subscribe('airtopia/'..k..'/#', 2)
+    end
   end
 end
 
@@ -1092,6 +1282,71 @@ function outstandingMqttMessage()
           ac[alias].state = payload
         end
       end
+    
+    -- Messages from AT boards
+    elseif parts[1] == 'airtopia' and parts[3] == 'cmd' then
+      device = parts[2]..'-'..parts[4]
+      local net, app, group
+      --log(parts, payload, atBoards[parts[2]])
+      
+      function pub(alias, payload, net, group) -- State publish to MQTT
+        local parts = string.split(at[alias].name, '-')
+        local board = parts[1]
+        local topic = 'airtopia/'..board..'/state/'..parts[2]
+        client:publish(topic, payload, mqttQoS, RETAIN)
+      end
+
+      if atDevices[device] then
+        alias = atDevices[device]
+        local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
+        if parts[4] == 'mode' then
+          i = indexOf(atmodes, payload)
+          if i ~= nil then
+            if payload ~= 'off' then
+              pub(alias, i)
+              pub(atBoards[parts[2]], 1) -- Power on
+            else
+              pub(atBoards[parts[2]], 0) -- Power off
+            end
+          end
+          local parts = string.split(at[alias].name, '-')
+          local board = parts[1]
+          local topic = 'airtopia/'..board..'/state/modeha'
+          client:publish(topic, payload, mqttQoS, RETAIN)
+        else
+          pub(alias, payload)
+        end
+      end
+    elseif parts[1] == 'airtopia' and parts[3] == 'state' then
+      device = parts[2]..'-'..parts[4]
+      local net, app, group
+      
+      if atDevices[device] then
+        alias = atDevices[device]
+        local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
+
+        if ignoreCbus[alias] and os.time() - ignoreCbus[alias] > ignoreTimeout then -- Don't worry about older 'ignore' flags
+          ignoreCbus[alias] = nil
+          if logging then logger('Ignoring older CBus ignore flag for '..alias) end
+        end
+        if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change, and if it is different to the current value
+          local set = false
+          local extant = GetUserParam(net, group)
+          local e = tonumber(extant)
+          if e ~= nil then
+            if string.format('%.3f', e) ~= string.format('%.3f', tonumber(payload)) then SetUserParam(net, group, payload); set = true end
+          else
+            if extant ~= payload then SetUserParam(net, group, payload); set = true end
+          end
+          -- Setting CBus here will result in the AT event script requesting publication of the state using 1() above.
+          -- This is undesired, so ignoreMqtt[alias] is used to ensure that the CBus change received does not publish to MQTT.
+          --if set then ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end end
+        else
+          ignoreCbus[alias] = nil
+          if logging then logger('Ignoring CBus publish for '..alias) end
+        end
+        at[alias].state = payload
+      end
     end
     
     -- Messages from ENV boards - simpler, only messages inbound
@@ -1128,6 +1383,8 @@ function outstandingCbusMessage()
     
     if ac[alias] then -- AC message to MQTT (no ramping involved for AC groups)
       publishAc(parts[1], parts[2], parts[3], parts[4], ac[alias].select)
+    elseif at[alias] then -- AT message to MQTT (no ramping involved for AT groups)
+      publishAt(parts[1], parts[2], parts[3], parts[4])
     else -- CBus message to MQTT
       local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
       if app ~= 228
@@ -1222,6 +1479,7 @@ Main loop
 cud = {
   { func = cudCBusTopics, init = false },
   { func = cudAc, init = true, script = 'AC' },
+  { func = cudAt, init = true, script = 'AT' },
   { func = cudEnv, init = true },
 }
 for i, c in ipairs(cud) do c.t = os.time() - checkChanges * 1/#cud * i + checkChanges/#cud end
