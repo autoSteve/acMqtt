@@ -906,7 +906,7 @@ function cudAt(initial)
       if not at[v['alias']] then
         at[v['alias']] = {}; addition = true
     	  at[v['alias']].name = sao..v['dev']..'-'..v['func']; at[v['alias']].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = v['alias'];
-        if atBoards[sao..dev] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
+        if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
         publishAt(net, app, group, GetUserParam(net, group))
       end
     elseif sense ~= '' then
