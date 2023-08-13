@@ -91,12 +91,14 @@ AC, dev=storeac, sense=outside_temperature
 
 For Airtopia devices, add the keyword 'AT' to user parameters, plus...
 
-  dev=   Airtopia device name (you choose, lowercase word, no spaces), required, and one of:
-  sa=    Suggested area
-
-  func=  Function (power, mode, vert_swing, horiz_swing, target_temperature, fan, which results in airtopia/{dev}/func/{func}/#)
+  dev=   Airtopia device name (you choose, lowercase word, no spaces), required
+  sa=    Suggested area (to at least one user parameter)
+And one or more of:
+  func=  Function (power, mode, vert_swing, horiz_swing, target_temperature, fan, which results in airtopia/{dev}/state/{func}/#, commands issued to airtopia/{dev}/cmd/{func}/#)
 ... or
-  sense= A read only sensor like temperature, current, which results in airtopia/{dev}/sense/{sense}/#)
+  sense= A read only sensor like temperature, current, which results in airtopia/{dev}/state/{sense}/#)
+
+Swing mode strings = ("off", "horiz_vert", "horiz_only", "vert_only")
 
 >>> ENVIRONMENT SENSORS
 
@@ -210,6 +212,7 @@ mqttStatus = 2         -- Initially disconnected 1=connected, 2=disconnected
 mqttConnected = 0      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
 
 atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
+atswings = {'Off', 'Horizontal only', 'Vertical only', 'Horizontal and Vertical'} -- Airtopia swing modes
 
 RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
 NORETAIN = false
@@ -223,6 +226,15 @@ function tNetAC(net) if net == 254 then return 0 else return net end end -- Tran
 started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get dictionary members
 function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end
+function copy(obj, seen)
+  if type(obj) ~= 'table' then return obj end
+  if seen and seen[obj] then return seen[obj] end
+  local s = seen or {}
+  local res = setmetatable({}, getmetatable(obj))
+  s[obj] = res
+  for k, v in pairs(obj) do res[copy(k, s)] = copy(v, s) end
+  return res
+end
 
 --[[
 Register with the Heartbeat script
@@ -411,6 +423,7 @@ Publish AT objects to MQTT
 function publishAt(net, app, group, level)
   if level == nil then logger('Warning: Nil AT level for '..net..'/'..app..'/'..group); do return end end
   local alias = net..'/'..app..'/'..group
+  log('publish', at[alias])
   if at[alias].state ~= level then
     if ignoreMqtt[alias] and (os.time() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
       ignoreMqtt[alias] = nil
@@ -735,29 +748,33 @@ function addAtDiscover(name, sa)
     logger('Publish discovery '..name..' in area '..dSa)
   end
 
-  -- Build an OID
-  oid = 'cbus_mqtt_'..string.lower(name:gsub("% ", "_"))
+  -- Build an OID and name prefix
+  local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
+  local oid = 'cbus_mqtt_'..sao..string.lower(name:gsub("% ", "_"))
 
   payload = {
-    mode_command_topic = 'airtopia/'..name..'/cmd/mode',
-    mode_state_topic = 'airtopia/'..name..'/state/modeha',
-    power_command_topic = 'airtopia/'..name..'/cmd/power',
-    temperature_command_topic = 'airtopia/'..name..'/cmd/target_temperature',
-    temperature_state_topic = 'airtopia/'..name..'/state/target_temperature',
-    optimistic = false,
+    name = name,
+    obj_id = oid,
+    uniq_id = oid,
+    avty_t = mqttCbus..'status',
+    dev = { name=sa, ids=sa, sa=sa, mf='Schneider Electric', mdl='Airtopia' },
+    mode_cmd_t = 'airtopia/'..sao..name..'/cmd/mode',
+    mode_stat_t = 'airtopia/'..sao..name..'/state/modeha',
+    pow_cmd_t = 'airtopia/'..sao..name..'/cmd/power',
+    temp_cmd_t = 'airtopia/'..sao..name..'/cmd/target_temperature',
+    temp_stat_t = 'airtopia/'..sao..name..'/state/target_temperature',
+    curr_temp_t = 'airtopia/'..sao..name..'/state/current_temperature',
+    swing_modes = atswings,
+    swing_mode_cmd_t = 'airtopia/'..sao..name..'/cmd/swing',
+    swing_mode_stat_t = 'airtopia/'..sao..name..'/state/swingha',
+    temp_unit = "C",
+    opt = false,
     pl_on = 'ON',
     pl_off = 'OFF',
     precision = 1.0,
   }
 
-  payload.name = name
-  payload.obj_id = oid
-  payload.uniq_id = oid
-  payload.avty_t = mqttCbus..'status'
-  payload.dev = { name=sa, ids=sa, sa=sa, mf='Airtopia', mdl='CBus' }
-
   -- Publish to MQTT broker
-  discovery[oid] = 'climate'
   local j = json.encode(payload)
   client:publish(mqttDiscoveryTopic..'climate/'..oid..'/config', j, mqttQoS, RETAIN)
 end
@@ -847,7 +864,8 @@ Create / update / delete AT devices
 function cudAt(initial)
   local grps = GetCBusByKW('AT', 'or')
   local found = {}
-  local boards = {}
+  local boards = copy(atBoards)
+  local scan = {}
   local addition = false
   local k, v
 
@@ -874,22 +892,29 @@ function cudAt(initial)
     if (func ~= '' or sense ~= '') and sa ~= '' then -- Found a suggested area
       if atArea[dev] == nil then
         atArea[dev] = sa
-        -- Publish
-        addAtDiscover(dev, sa)
       end
     end
-    if func ~= '' then
-      if not at[alias] then
-        at[alias] = {}; addition = true
-    	  at[alias].name = dev..'-'..func; at[alias].select = 'func'; atDevices[dev..'-'..func] = alias;
-        if atBoards[dev] == nil and func == 'power' then atBoards[dev] = alias end
+    scan[#scan+1] = {alias=alias, dev=dev, func=func, sense=sense}
+  end
+
+  for _, v in ipairs(scan) do
+    local sa = atArea[v['dev']]; if sa == nil then sa = '' end
+    local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
+    local parts = string.split(v['alias'], '/')
+    local net = parts[1]; local app = parts[2]; local group = parts[3]
+    if v['func'] ~= '' then
+      if not at[v['alias']] then
+        at[v['alias']] = {}; addition = true
+    	  at[v['alias']].name = sao..v['dev']..'-'..v['func']; at[v['alias']].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = v['alias'];
+        if atBoards[sao..dev] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
         publishAt(net, app, group, GetUserParam(net, group))
       end
     elseif sense ~= '' then
-      if not at[alias] then
-        at[alias] = {}; addition = true
-    	  at[alias].name = dev..'-'..sel; at[alias].select = 'sense'; at[alias].sense = sense; atDevices[dev..'-'..sense] = alias
+      if not at[v['alias']] then
+        at[v['alias']] = {}; addition = true
+    	  at[v['alias']].name = sao..v['dev']..'-'..v['sense']; at[v['alias']].select = 'sense'; at[v['alias']].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = v['alias']
         publishAt(net, app, group, GetUserParam(net, group))
+  log(net, app, group, GetUserParam(net, group))
       end
     end
   end
@@ -909,11 +934,17 @@ function cudAt(initial)
   for _, k in ipairs(kill) do
     atBoards[k] = nil; topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'
     client:publish(topic, '', mqttQoS, RETAIN)
-    --client:publish('airtopia/'..k, '', mqttQoS, RETAIN)
+    --TODO iterate through all possibilities killing topics... client:publish('airtopia/'..k, '', mqttQoS, RETAIN)
     logger('Removed discovery topic '..topic)
   end
 
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
+  for k, v in pairs(atBoards) do
+    if boards[k] == nil then
+      addAtDiscover(v['dev'], v['sa']) -- Publish discovery topic
+    end
+  end
+      
   if addition then
     if not initial then
       -- Ensure that newly tagged/removed groups with the AT keyword send updates.
@@ -921,11 +952,12 @@ function cudAt(initial)
       script.disable('AT'); script.enable('AT')
     end
     for k, _ in pairs(atBoards) do
+      local parts
       mode = atDevices[k..'-mode']
       power = atDevices[k..'-power']
       if mode ~= nil and power ~= nil then
-        parts = string.split(mode, '/'); mnet = tonumber(parts[1]); mgroup = tonumber(parts[3])
-        parts = string.split(power, '/'); pnet = tonumber(parts[1]); pgroup = tonumber(parts[3])
+        parts = string.split(mode, '/'); local mnet = tonumber(parts[1]); local mgroup = tonumber(parts[3])
+        parts = string.split(power, '/'); local pnet = tonumber(parts[1]); local pgroup = tonumber(parts[3])
         local topic = 'airtopia/'..k..'/state/modeha'
         local level
         if GetUserParam(pnet, pgroup) == 0 then
@@ -934,6 +966,18 @@ function cudAt(initial)
           level = atmodes[GetUserParam(mnet, mgroup)]
         end
         client:publish(topic, level, mqttQoS, RETAIN)
+      end
+      hswing = atDevices[k..'-horiz_swing']
+      vswing = atDevices[k..'-vert_swing']
+      if hswing ~= nil and vswing ~= nil then
+        parts = string.split(hswing, '/'); local hnet = tonumber(parts[1]); local hgroup = tonumber(parts[3])
+        parts = string.split(vswing, '/'); local vnet = tonumber(parts[1]); local vgroup = tonumber(parts[3])
+        local topic = 'airtopia/'..k..'/state/swingha'
+        local level
+        local h = GetUserParam(hnet, hgroup)
+        local v = bit.lshift(GetUserParam(vnet, vgroup), 1)
+        local s = bit.bor(h, v) + 1
+        client:publish(topic, atswings[s], mqttQoS, RETAIN)
       end
       client:subscribe('airtopia/'..k..'/#', 2)
     end
@@ -1287,33 +1331,54 @@ function outstandingMqttMessage()
     elseif parts[1] == 'airtopia' and parts[3] == 'cmd' then
       device = parts[2]..'-'..parts[4]
       local net, app, group
-      --log(parts, payload, atBoards[parts[2]])
+      log(device, atDevices[device], atDevices)
       
-      function pub(alias, payload, net, group) -- State publish to MQTT
+      function pub(alias, payload) -- State publish to MQTT
         local parts = string.split(at[alias].name, '-')
         local board = parts[1]
         local topic = 'airtopia/'..board..'/state/'..parts[2]
         client:publish(topic, payload, mqttQoS, RETAIN)
       end
 
-      if atDevices[device] then
-        alias = atDevices[device]
-        local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
-        if parts[4] == 'mode' then
+      if parts[4] == 'mode' then
+        if atDevices[device] then
+          alias = atDevices[device]
+          local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
           i = indexOf(atmodes, payload)
           if i ~= nil then
             if payload ~= 'off' then
               pub(alias, i)
-              pub(atBoards[parts[2]], 1) -- Power on
+              pub(atBoards[parts[2]]['alias'], 1) -- Power on
             else
-              pub(atBoards[parts[2]], 0) -- Power off
+              pub(atBoards[parts[2]]['alias'], 0) -- Power off
             end
           end
           local parts = string.split(at[alias].name, '-')
           local board = parts[1]
           local topic = 'airtopia/'..board..'/state/modeha'
           client:publish(topic, payload, mqttQoS, RETAIN)
-        else
+        end
+
+      elseif parts[4] == 'swing' then
+        hswing = atDevices[parts[2]..'-horiz_swing']
+        vswing = atDevices[parts[2]..'-vert_swing']
+        log(hswing, vswing)
+        if hswing ~= nil and vswing ~= nil then
+          local i, h, v
+          local s = 0; for i, v in ipairs(atswings) do if v == payload then s = i - 1; break; end end -- Get the swing index
+          h = bit.band(s, 1)
+          v = bit.rshift(bit.band(s, 2), 1)
+          local board = parts[2]
+          local topic = 'airtopia/'..board..'/state/swingha'
+          client:publish(topic, payload, mqttQoS, RETAIN)
+          parts = string.split(hswing, '/'); SetUserParam(parts[1], parts[3], h)
+          parts = string.split(vswing, '/'); SetUserParam(parts[1], parts[3], v)
+        end
+        
+      else
+        if atDevices[device] then
+          alias = atDevices[device]
+          local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
           pub(alias, payload)
         end
       end
