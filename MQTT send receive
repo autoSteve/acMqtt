@@ -96,7 +96,7 @@ For Airtopia devices, add the keyword 'AT' to user parameters, plus...
 And one or more of:
   func=  Function (power, mode, vert_swing, horiz_swing, target_temperature, fan, which results in airtopia/{dev}/state/{func}/#, commands issued to airtopia/{dev}/cmd/{func}/#)
 ... or
-  sense= A read only sensor like temperature, current, which results in airtopia/{dev}/state/{sense}/#)
+  sense= A read only sensor like current_temperature, power_consumption, which results in airtopia/{dev}/state/{sense}/#)
 
 Swing mode strings = ("off", "horiz_vert", "horiz_only", "vert_only")
 
@@ -262,7 +262,7 @@ server:settimeout(socketTimeout)
 server:setsockname('127.0.0.1', 5432) -- Listen on port 5432 for CBus changes
 
 --[[
-Mosquitto client and call-backs 
+Mosquitto client and call-backs
 --]]
 
 local publishCurrent
@@ -423,7 +423,6 @@ Publish AT objects to MQTT
 function publishAt(net, app, group, level)
   if level == nil then logger('Warning: Nil AT level for '..net..'/'..app..'/'..group); do return end end
   local alias = net..'/'..app..'/'..group
-  log('publish', at[alias])
   if at[alias].state ~= level then
     if ignoreMqtt[alias] and (os.time() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
       ignoreMqtt[alias] = nil
@@ -777,6 +776,19 @@ function addAtDiscover(name, sa)
   -- Publish to MQTT broker
   local j = json.encode(payload)
   client:publish(mqttDiscoveryTopic..'climate/'..oid..'/config', j, mqttQoS, RETAIN)
+
+  -- Add a power consumption sensor discovery topic
+  payload = {
+    name = name..' Power Consumption',
+    obj_id = oid..'_power',
+    uniq_id = oid..'_power',
+    avty_t = mqttCbus..'status',
+    dev = { name=sa, ids=sa, sa=sa, mf='Schneider Electric', mdl='Airtopia' },
+    stat_t = 'airtopia/'..sao..name..'/state/power_consumption',
+    unit_of_meas = "A",
+  }
+  local j = json.encode(payload)
+  client:publish(mqttDiscoveryTopic..'sensor/'..oid..'_power'..'/config', j, mqttQoS, RETAIN)
 end
 
 
@@ -914,7 +926,6 @@ function cudAt(initial)
         at[v['alias']] = {}; addition = true
     	  at[v['alias']].name = sao..v['dev']..'-'..v['sense']; at[v['alias']].select = 'sense'; at[v['alias']].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = v['alias']
         publishAt(net, app, group, GetUserParam(net, group))
-  log(net, app, group, GetUserParam(net, group))
       end
     end
   end
@@ -932,7 +943,10 @@ function cudAt(initial)
   end
   kill = {} for k, _ in pairs(atBoards) do if newBoards[k] == nil then table.insert(kill, k) end end
   for _, k in ipairs(kill) do
-    atBoards[k] = nil; topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'
+    atBoards[k] = nil;
+    topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'
+    client:publish(topic, '', mqttQoS, RETAIN)
+    topic = mqttDiscoveryTopic..'sensor/'..'cbus_mqtt_'..k..'_power/config'
     client:publish(topic, '', mqttQoS, RETAIN)
     --TODO iterate through all possibilities killing topics... client:publish('airtopia/'..k, '', mqttQoS, RETAIN)
     logger('Removed discovery topic '..topic)
@@ -1331,7 +1345,6 @@ function outstandingMqttMessage()
     elseif parts[1] == 'airtopia' and parts[3] == 'cmd' then
       device = parts[2]..'-'..parts[4]
       local net, app, group
-      log(device, atDevices[device], atDevices)
       
       function pub(alias, payload) -- State publish to MQTT
         local parts = string.split(at[alias].name, '-')
@@ -1362,7 +1375,6 @@ function outstandingMqttMessage()
       elseif parts[4] == 'swing' then
         hswing = atDevices[parts[2]..'-horiz_swing']
         vswing = atDevices[parts[2]..'-vert_swing']
-        log(hswing, vswing)
         if hswing ~= nil and vswing ~= nil then
           local i, h, v
           local s = 0; for i, v in ipairs(atswings) do if v == payload then s = i - 1; break; end end -- Get the swing index
