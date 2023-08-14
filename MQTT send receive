@@ -787,7 +787,7 @@ function addAtDiscover(name, sa)
     avty_t = mqttCbus..'status',
     dev = { name=sa, ids=sa, sa=sa, mf='Schneider Electric', mdl='Airtopia' },
     stat_t = 'airtopia/'..sao..name..'/state/power_consumption',
-    unit_of_meas = "A",
+    unit_of_meas = 'A',
   }
   local j = json.encode(payload)
   client:publish(mqttDiscoveryTopic..'sensor/'..oid..'_power'..'/config', j, mqttQoS, RETAIN)
@@ -902,7 +902,8 @@ function cudAt(initial)
         elseif tp[1] == 'func' then func = tp[2] -- Function
         elseif tp[1] == 'sense' then sense = tp[2] -- Sensor
         elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
-        elseif tp[1] == 'scale' then scale = tonumber(tp[2])
+        -- elseif tp[1] == 'scale' then scale = tonumber(tp[2])
+        -- elseif tp[1] == 'unit' then unit = tp[2]
         elseif tp[1] == 'sa' then sa = tp[2] -- Suggested area
         end
       end
@@ -913,7 +914,7 @@ function cudAt(initial)
       end
     end
     if sense ~= '' then
-      if scale ~= 1 or decimals ~= 2 then publishAdj[alias] = { dec = decimals, scale = scale } end
+      if scale ~= 1 or decimals ~= 2 then publishAdj[alias] = { dec = decimals, scale = 1 } end
     end
     scan[#scan+1] = {alias=alias, dev=dev, func=func, sense=sense}
   end
