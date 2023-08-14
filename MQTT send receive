@@ -432,6 +432,8 @@ function publishAt(net, app, group, level)
       local parts = string.split(at[alias].name, '-')
       local board = parts[1]
       local topic = 'airtopia/'..board..'/state/'..parts[2]
+      local adjust = publishAdj[alias]
+      if adjust then level = tonumber(string.format('%.'..adjust.dec..'f', level * adjust.scale)) end
       client:publish(topic, level, mqttQoS, RETAIN)
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
@@ -885,6 +887,8 @@ function cudAt(initial)
     local net = v.address[1]; local app = v.address[2]; local group = v.address[3]
     local pn = v.name
     local alias = table.concat(v.address, '/')
+    local scale = 1
+    local decimals = 2
 
     table.insert(found, alias)
 
@@ -897,6 +901,8 @@ function cudAt(initial)
         if tp[1] == 'dev' then dev = tp[2] -- Device
         elseif tp[1] == 'func' then func = tp[2] -- Function
         elseif tp[1] == 'sense' then sense = tp[2] -- Sensor
+        elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
+        elseif tp[1] == 'scale' then scale = tonumber(tp[2])
         elseif tp[1] == 'sa' then sa = tp[2] -- Suggested area
         end
       end
@@ -905,6 +911,9 @@ function cudAt(initial)
       if atArea[dev] == nil then
         atArea[dev] = sa
       end
+    end
+    if sense ~= '' then
+      if scale ~= 1 or decimals ~= 2 then publishAdj[alias] = { dec = decimals, scale = scale } end
     end
     scan[#scan+1] = {alias=alias, dev=dev, func=func, sense=sense}
   end
