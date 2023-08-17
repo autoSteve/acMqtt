@@ -1571,8 +1571,8 @@ Main loop
 cud = {
   { func = cudCBusTopics, init = false },
   { func = cudAc, init = true, script = 'AC' },
-  { func = cudAt, init = true, script = 'AT' },
   { func = cudEnv, init = true },
+  { func = cudAt, init = false, script = 'AT' },
 }
 for i, c in ipairs(cud) do c.t = os.time() - checkChanges * 1/#cud * i + checkChanges/#cud end
 
