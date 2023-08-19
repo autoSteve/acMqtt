@@ -682,11 +682,11 @@ function addDiscover(net, app, group, channel, tags, name)
           end
         until not startIdx or startIdx > 1
         payload = {
-          name = entity,
+          name = '',
           obj_id = boid,
           uniq_id = boid,
           cmd_t = mqttWriteTopic..alias..'/'..action..'/press',
-          dev = { name=sa, ids=sa, sa=sa, mf='Schneider Electric', mdl='CBus' },
+          dev = { name=entity, ids=sa..' '..entity, sa=sa, mf='Schneider Electric', mdl='CBus' },
         }
         if img ~= '' then payload.ic = img end
         -- If dType has changed for an existing discovery topic then remove the previous topic
@@ -722,11 +722,11 @@ function addDiscover(net, app, group, channel, tags, name)
       entity = entity:sub(endIdx + 1):match'^%s*(.*)'
     end
   until not startIdx or startIdx > 1
-  payload.name = entity
+  payload.name = ''
   payload.obj_id = oid
   payload.uniq_id = oid
   payload.avty_t = mqttCbus..'status'
-  payload.dev = { name=sa, ids=sa, sa=sa, mf='Schneider Electric', mdl='CBus' }
+  payload.dev = { name=entity, ids=sa..' '..entity, sa=sa, mf='Schneider Electric', mdl='CBus' }
   if img ~= '' then payload.ic = img end
 
   -- If dType has changed for an existing discovery topic then remove the previous topic
@@ -755,11 +755,11 @@ function addAtDiscover(name, sa, unit)
   local oid = 'cbus_mqtt_'..sao..string.lower(name:gsub("% ", "_"))
 
   payload = {
-    name = name,
+    name = '',
     obj_id = oid,
     uniq_id = oid,
     avty_t = mqttCbus..'status',
-    dev = { name=sa, ids=sa, sa=sa, mf='Schneider Electric', mdl='Airtopia' },
+    dev = { name=name, ids=sa..' '..name, sa=sa, mf='Schneider Electric', mdl='Airtopia' },
     mode_cmd_t = 'airtopia/'..sao..name..'/cmd/mode',
     mode_stat_t = 'airtopia/'..sao..name..'/state/modeha',
     pow_cmd_t = 'airtopia/'..sao..name..'/cmd/power',
@@ -782,11 +782,11 @@ function addAtDiscover(name, sa, unit)
 
   -- Add a power consumption sensor discovery topic
   payload = {
-    name = name..' Power Consumption',
+    name = '',
     obj_id = oid..'_power',
     uniq_id = oid..'_power',
     avty_t = mqttCbus..'status',
-    dev = { name=sa, ids=sa, sa=sa, mf='Schneider Electric', mdl='Airtopia' },
+    dev = { name=name..' Power Consumption', ids=sa..' '..name..' Power Consumption', sa=sa, mf='Schneider Electric', mdl='Airtopia' },
     stat_t = 'airtopia/'..sao..name..'/state/power_consumption',
     unit_of_meas = unit,
   }
@@ -1407,38 +1407,6 @@ function outstandingMqttMessage()
           pub(alias, payload)
         end
       end
-    elseif parts[1] == 'airtopia' and parts[3] == 'state' then
-      --[[
-      device = parts[2]..'-'..parts[4]
-      local net, app, group
-      
-      if atDevices[device] then
-        alias = atDevices[device]
-        local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
-
-        if ignoreCbus[alias] and os.time() - ignoreCbus[alias] > ignoreTimeout then -- Don't worry about older 'ignore' flags
-          ignoreCbus[alias] = nil
-          if logging then logger('Ignoring older CBus ignore flag for '..alias) end
-        end
-        if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change, and if it is different to the current value
-          local set = false
-          local extant = GetUserParam(net, group)
-          local e = tonumber(extant)
-          if e ~= nil then
-            if string.format('%.3f', e) ~= string.format('%.3f', tonumber(payload)) then SetUserParam(net, group, payload); set = true end
-          else
-            if extant ~= payload then SetUserParam(net, group, payload); set = true end
-          end
-          -- Setting CBus here will result in the AT event script requesting publication of the state using 1() above.
-          -- This is undesired, so ignoreMqtt[alias] is used to ensure that the CBus change received does not publish to MQTT.
-          --if set then ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end end
-        else
-          ignoreCbus[alias] = nil
-          if logging then logger('Ignoring CBus publish for '..alias) end
-        end
-        at[alias].state = payload
-      end
-      --]]
     end
     
     -- Messages from ENV boards - simpler, only messages inbound
