@@ -213,6 +213,7 @@ mqttConnected = 0      -- Timestamp of MQTT connection, initially zero which wil
 
 atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
 atswings = {'Off', 'Horizontal only', 'Vertical only', 'Horizontal and Vertical'} -- Airtopia swing modes
+atfans = {'Auto', '1', '2', '3', '4'} -- Airtopia fan speed (THIS IS UNTESTED, will result in 0, 1, 2, 3, 4 being set in user parameter in the order of the list)
 
 RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
 NORETAIN = false
@@ -439,6 +440,41 @@ function publishAt(net, app, group, level)
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
       if atState ~= at[alias].state then ignoreCbus[alias] = os.time() end
       if logging then logger('Published AT '..at[alias].name..' to '..level) end
+      -- Determine whether a HomeAssistant state topic needs to be also published
+      local st = nil
+      local prefix = nil
+      local dev = nil
+      for k, v in pairs(atDevices) do
+        if v == alias then prefix = string.split(k, '-')[1]; st = string.split(k, '-')[2]; break end
+      end
+      if st == nil then
+      elseif st == 'horiz_swing' then
+        -- Publish swingha
+        local o = atDevices[prefix..'-vert_swing']
+        if o ~= nil then
+          parts = string.split(o, '/'); net = parts[1]; group = parts[3]; 
+          local v = bit.lshift(GetUserParam(net, group), 1)
+          local topic = 'airtopia/'..prefix..'/state/swingha'
+          local s = bit.bor(tonumber(level), v) + 1
+          client:publish(topic, atswings[s], mqttQoS, RETAIN)
+        end
+      elseif st == 'vert_swing' then
+        -- Publish swingha
+        local o = atDevices[prefix..'-horiz_swing']
+        if o ~= nil then
+          parts = string.split(o, '/'); net = parts[1]; group = parts[3]; 
+          local h = GetUserParam(net, group)
+          local topic = 'airtopia/'..prefix..'/state/swingha'
+          local v = bit.lshift(tonumber(level), 1)
+          local s = bit.bor(h, v) + 1
+          client:publish(topic, atswings[s], mqttQoS, RETAIN)
+        end
+      elseif st == 'fan' then
+        -- Publish fanha
+        local fanv = atfans[level+1]
+        local topic = 'airtopia/'..board..'/state/fanha'
+        client:publish(topic, fanv, mqttQoS, RETAIN)
+      end
     else
       ignoreMqtt[alias] = nil
       if logging then logger('Ignoring MQTT publish for '..alias) end
@@ -769,6 +805,9 @@ function addAtDiscover(name, sa, unit)
     swing_modes = atswings,
     swing_mode_cmd_t = 'airtopia/'..sao..name..'/cmd/swing',
     swing_mode_stat_t = 'airtopia/'..sao..name..'/state/swingha',
+    fan_modes = atfans,
+    fan_mode_cmd_t = 'airtopia/'..sao..name..'/cmd/fan',
+    fan_mode_stat_t = 'airtopia/'..sao..name..'/state/fanha',
     temp_unit = "C",
     opt = false,
     pl_on = 'ON',
@@ -994,8 +1033,8 @@ function cudAt(initial)
         end
         client:publish(topic, level, mqttQoS, RETAIN)
       end
-      hswing = atDevices[k..'-horiz_swing']
-      vswing = atDevices[k..'-vert_swing']
+      local hswing = atDevices[k..'-horiz_swing']
+      local vswing = atDevices[k..'-vert_swing']
       if hswing ~= nil and vswing ~= nil then
         parts = string.split(hswing, '/'); local hnet = tonumber(parts[1]); local hgroup = tonumber(parts[3])
         parts = string.split(vswing, '/'); local vnet = tonumber(parts[1]); local vgroup = tonumber(parts[3])
@@ -1005,6 +1044,14 @@ function cudAt(initial)
         local v = bit.lshift(GetUserParam(vnet, vgroup), 1)
         local s = bit.bor(h, v) + 1
         client:publish(topic, atswings[s], mqttQoS, RETAIN)
+      end
+      local fan = atDevices[k..'-fan']
+      if fan ~= nil then
+        parts = string.split(fan, '/'); local fnet = tonumber(parts[1]); local fgroup = tonumber(parts[3])
+        local topic = 'airtopia/'..k..'/state/fanha'
+        local level
+        local f = GetUserParam(fnet, fgroup)
+        client:publish(topic, atfans[f+1], mqttQoS, RETAIN)
       end
       client:subscribe('airtopia/'..k..'/#', 2)
     end
@@ -1386,8 +1433,8 @@ function outstandingMqttMessage()
         end
 
       elseif parts[4] == 'swing' then
-        hswing = atDevices[parts[2]..'-horiz_swing']
-        vswing = atDevices[parts[2]..'-vert_swing']
+        local hswing = atDevices[parts[2]..'-horiz_swing']
+        local vswing = atDevices[parts[2]..'-vert_swing']
         if hswing ~= nil and vswing ~= nil then
           local i, h, v
           local s = 0; for i, v in ipairs(atswings) do if v == payload then s = i - 1; break; end end -- Get the swing index
@@ -1398,6 +1445,17 @@ function outstandingMqttMessage()
           client:publish(topic, payload, mqttQoS, RETAIN)
           parts = string.split(hswing, '/'); SetUserParam(parts[1], parts[3], h)
           parts = string.split(vswing, '/'); SetUserParam(parts[1], parts[3], v)
+        end
+        
+      elseif parts[4] == 'fan' then
+        local fan = atDevices[parts[2]..'-fan']
+        if fan ~= nil then
+          local i, f
+          local f = 0; for i, v in ipairs(atfans) do if v == payload then f = i - 1; break; end end -- Get the fan index
+          local board = parts[2]
+          local topic = 'airtopia/'..board..'/state/fanha'
+          client:publish(topic, payload, mqttQoS, RETAIN)
+          parts = string.split(fan, '/'); SetUserParam(parts[1], parts[3], f)
         end
         
       else
