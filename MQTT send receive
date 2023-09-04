@@ -1437,12 +1437,12 @@ function outstandingMqttMessage()
               ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..pld) end
               SetUserParam(net, pwrgrp, pld)
             end
-          end
-          -- publish to CBus
-          local extant = GetUserParam(net, group)
-          if i ~= nil and i ~= extant then
-            ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
-            SetUserParam(net, group, i)
+            -- publish to CBus
+            local extant = GetUserParam(net, group)
+            if i ~= extant and payload ~= 'off' then -- Set mode, but not if it is 'off'
+              ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
+              SetUserParam(net, group, i)
+            end
           end
           -- Publish state to broker
           local parts = string.split(at[alias].name, '-')
