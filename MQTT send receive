@@ -1419,13 +1419,32 @@ function outstandingMqttMessage()
           local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
           i = indexOf(atmodes, payload)
           if i ~= nil then
+            local set = false
+            local pwrgrp = tonumber(string.split(atBoards[parts[2]]['alias'], '/')[3]) -- Get the power user parameter
+            local extant = GetUserParam(net, pwrgrp)
+            local pld = nil
             if payload ~= 'off' then
               pub(alias, i)
               pub(atBoards[parts[2]]['alias'], 1) -- Power on
+              if extant ~= 1 then set = true; pld = 1 end
             else
               pub(atBoards[parts[2]]['alias'], 0) -- Power off
+              if extant ~= 0 then set = true; pld = 0 end
+            end
+            if set and pld ~= nil then
+              -- Send to CBus, ensuring MQTT ignore is set...
+              local alias = atBoards[parts[2]]['alias']
+              ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..pld) end
+              SetUserParam(net, pwrgrp, pld)
             end
           end
+          -- publish to CBus
+          local extant = GetUserParam(net, group)
+          if i ~= nil and i ~= extant then
+            ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
+            SetUserParam(net, group, i)
+          end
+          -- Publish state to broker
           local parts = string.split(at[alias].name, '-')
           local board = parts[1]
           local topic = 'airtopia/'..board..'/state/modeha'
@@ -1458,11 +1477,17 @@ function outstandingMqttMessage()
           parts = string.split(fan, '/'); SetUserParam(parts[1], parts[3], f)
         end
         
-      else
+      else -- Set target temp
         if atDevices[device] then
           alias = atDevices[device]
           local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
           pub(alias, payload)
+          -- publish to CBus
+          local extant = GetUserParam(net, group)
+          if payoad ~= extant then
+            ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
+            SetUserParam(net, group, payload)
+          end
         end
       end
     end
