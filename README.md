@@ -5,7 +5,9 @@ Functions:
 - Get Home Assistant talking to CBus, with MQTT discovery to eliminate any manual CBus config in HA
 - Return to previously set lighting levels when a 'turn on' command is issued in HA
 - Optionally include Philips Hue hub devices in CBus scenes, like having 'All Off' from a button or using AC visualisations
-- Optionally Panasonic air conditioners and ESPHome sensors for temperature and relative humidity integrated with the CBus Automation Controller (example .yaml files are for this.)
+- Optionally Panasonic air conditioners via ESPHome
+- Optionally ESPHome sensors for temperature and relative humidity (example .yaml files are for this.)
+- Optionally Airtopia I/R blasters
 
 The pieces of the puzzle include:
 - Home Assistant 'HAOS' running somewhere. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker going (but you could use a separately installed MQTT broker elsewhere on your network and use 'core'). HA Cloud talks to Google Assistant/Alexa, so a subscription is required if you want that.
@@ -16,12 +18,13 @@ LUA scripts for the automation controller:
 - *MQTT send receive*: resident, zero sleep
 - *MQTT*: event-based, execute during ramping, trigger on keyword 'MQTT'
 - *AC*: event-based, execute during ramping, trigger on keyword 'AC'
+- *AT*: event-based, execute during ramping, trigger on keyword 'AT'
 - *HUE send receive*: resident, zero sleep
 - *HUE*: event-based, execute during ramping, trigger on keyword 'HUE'
 - *HUE final*: event-based, DO NOT execute during ramping, trigger on keyword 'HUE'
 - *Heartbeat*: resident, zero sleep (optional ... monitors for failure of 'MQTT send receive' and 'HUE send receive' and re-starts them on failure)
 
-If you don't care for integrating Philips Hue, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there and will just be unused.
+If you don't care for integrating Philips Hue or Airtopia, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there and will just be unused.
 
 **Note**: A change to the discovery behaviour has been made to accommodate a non-breaking change in HA 2023.8, which will become breaking in 2024.2. CBus devices are now created *per suggested area*, with multiple entities per device. This is a departure from the old behaviour where a device was created per entity, and allows entity naming to confirm to the less flexible new HA standard. Existing devices will not be cleaned up, but entities will be moved to the newly created devices. Entity IDs are unchanged.
 
@@ -90,7 +93,7 @@ The CBus groups for Hue devices are usually not used for any purpose other than 
 
 Note: This script only handles on/off as well as levels for dimmable Hue devices, but not colours/colour temperature, as that's not a CBus thing. Colour details will return to previously set values done in the Hue app.
 
-### Panasonic Ar Conditioners (MQTT send receive)
+### Panasonic Air Conditioners (MQTT send receive)
 For Panasonic air conditioners connected to MQTT via ESPHome (see example .yaml file), add the keyword 'AC' to user parameters plus...
 
 - dev=   ESPHome device name, required, and one of:
@@ -121,6 +124,17 @@ Panasonic keyword examples:
 - AC, dev=storeac, sense=outside_temperature
 
 See https://github.com/DomiStyle/esphome-panasonic-ac for ESP32 hardware/wiring hints.
+
+### Airtopia Air Conditioner Controllers (IR blaster)
+
+For Airtopia devices, add the keyword 'AT' to user parameters, plus...
+
+  dev=   Airtopia device name (you choose, lowercase word, no spaces), required
+  sa=    Suggested area (to at least one of the device user parameters)
+And one or more of:
+  func=  Function (power, mode, vert_swing, horiz_swing, target_temperature, fan, which results in airtopia/{dev}/state/{func}/#, commands issued to airtopia/{dev}/cmd/{func}/#)
+... or
+  sense= A read only sensor like current_temperature, power_consumption, which results in airtopia/{dev}/state/{sense}/#)
 
 ### Environment Monitors (MQTT send receive)
 Environment monitors can pass sensor data to CBus (using ESPHome devices, see example .yaml).

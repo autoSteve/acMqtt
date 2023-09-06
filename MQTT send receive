@@ -112,33 +112,7 @@ Environment examples:
 
 ENV, dev=outsideenv, func=outside humidity
 
-Changes:
-1.00 - 25/05/2022 Initial version
-1.01 - 26/05/2022 Add trim() when examining keywords to remove leading and trailing spaces
-1.02 - 28/05/2022 Add Hue dimmable devices, prevent CBus/MQTT publishing loops for Hue, and clean up comments
-1.03 - 29/05/2022 Ignore older 'ignore' flags in MQTT/CBus publish functions, and fix an issue where Hue loads
-                  that were initially first switched from CBus after script startup failed to set
-1.04 - 29/05/2022 Queuing of inbound CBus messages, and don't use loop_start() for Mosquitto client to stop crashes
-1.05 - 30/05/2022 Add create/remove/update objects with HUE keyword change, and fix a bug in Hue publish
-1.06 - 01/07/2022 Add air conditioner control using ESPHome devices via MQTT/Panasonic AC serial control
-1.07 - 06/07/2022 Add environment monitors using ESPHome devices
-1.08 - 10/07/2022 Significant performance increase, and an occasional crash fixed that was caused by high message volume
-1.09 - 11/07/2022 Consolidate MQTT send and receive scripts into a single script
-1.10 - 18/07/2022 Prevent MQTT publish of initial zero level for CBus ramp off
-1.11 - 24/07/2022 Fixed bugs related to MQTT publish of string user parameters, and suppression of sending values already set
-1.12 - 25/07/2022 Fixed bugs in ramp detection, plus minor code optimisation
-1.13 - 29/07/2022 Handle multiple networks, and add air conditioner sensors
-1.14 - 07/08/2022 Add some error checks for nil values, and add timestamp to log messages with millisecond accuracy
-1.15 - 09/08/2022 Change last level storage to array (not string), plus MQTT lastlevel bug fixes
-1.16 - 11/08/2022 Revised ramp tracking for MQTT publish, support multiple lighting applications and improve comments
-1.17 - 12/08/2022 Add trigger group support, only button implemented and uni-directional HA->CBus. Thanks PaddyB.
-1.18 - 21/08/2022 Include ramp detection for Philips Hue groups
-1.19 - 26/08/2022 Add support for binary sensors and 'bsensors'
-1.20 - 27/08/2022 Add support for lighting groups as buttons
-1.21 - 28/08/2022 Add support for select, and implement last will/status for Home Assistant availability
-1.22 - 04/09/2022 Move Philips Hue integration to separate script 'HUE send receive' removing reliance on MQTT
-1.23 - 04/11/2022 Handle duplicate deletion when light, fan, cover, select, etc. changes
-1.24 - 05/12/2022 Add fan_pct to allow fan percentage discovery
+https://github.com/autoSteve/acMqtt
 --]]
 
 --[[
