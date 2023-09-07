@@ -181,7 +181,8 @@ binarySensor = {}      -- Quick lookup to determine whether an object is a binar
 lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
 userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 publishAdj = {}        -- For user parameters, holds scale and decimals to apply
-unpublished = {}       -- The current set of objects to publish discovery topics for
+unpublished = {}       -- The current set of CBus objects to publish discovery topics for
+unpublishedAt = {}     -- The current set of CBus Airtopia objects to publish discovery topics for
 mqttStatus = 2         -- Initially disconnected 1=connected, 2=disconnected
 mqttConnected = 0      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
 
@@ -239,8 +240,6 @@ server:setsockname('127.0.0.1', 5432) -- Listen on port 5432 for CBus changes
 --[[
 Mosquitto client and call-backs
 --]]
-
-local publishCurrent
 
 mqtt = require('mosquitto')
 client = mqtt.new(mqttClientId)
@@ -809,13 +808,82 @@ end
 
 
 --[[
+Add Airtopia objects 
+--]]
+function addAt(grps, found)
+  local k, v
+  local addition = false
+  local scan = {}
+  local found = {}
+  for k, v in pairs(grps) do
+    local net = v.address[1]; local app = v.address[2]; local group = v.address[3]
+    local pn = v.name
+    local alias = table.concat(v.address, '/')
+    local unit = 'A'
+    local scale = 1
+    local decimals = 2
+
+    table.insert(found, alias)
+
+    local dev = ''; local func = ''; local sense = ''; local sa = ''; local tags = v.keywords
+    for _, t in ipairs(tags) do
+      tp = string.split(t, '=')
+      tp[1] = trim(tp[1])
+      if tp[2] then
+        tp[2] = trim(tp[2])
+        if tp[1] == 'dev' then dev = tp[2] -- Device
+        elseif tp[1] == 'func' then func = tp[2] -- Function
+        elseif tp[1] == 'sense' then sense = tp[2] -- Sensor
+        elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
+        elseif tp[1] == 'scale' then scale = tonumber(tp[2])
+        elseif tp[1] == 'unit' then unit = tp[2]
+        elseif tp[1] == 'sa' then sa = tp[2] -- Suggested area
+        end
+      end
+    end
+    if (func ~= '' or sense ~= '') and sa ~= '' then -- Found a suggested area
+      if atArea[dev] == nil then
+        atArea[dev] = sa
+      end
+    end
+    if sense ~= '' then
+      if scale ~= 1 or decimals ~= 2 then publishAdj[alias] = { dec=decimals, scale=scale } end
+    end
+    scan[#scan+1] = {alias=alias, dev=dev, func=func, sense=sense, unit=unit}
+  end
+
+  for _, v in ipairs(scan) do
+    local sa = atArea[v['dev']]; if sa == nil then sa = '' end
+    local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
+    local parts = string.split(v['alias'], '/')
+    local net = parts[1]; local app = parts[2]; local group = parts[3]
+    if v['func'] ~= '' then
+      if not at[v['alias']] then
+        at[v['alias']] = {}; addition = true
+    	  at[v['alias']].name = sao..v['dev']..'-'..v['func']; at[v['alias']].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = v['alias'];
+        if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
+        publishAt(net, app, group, GetUserParam(net, group))
+      end
+    elseif sense ~= '' then
+      if not at[v['alias']] then
+        at[v['alias']] = {}; addition = true
+    	  at[v['alias']].name = sao..v['dev']..'-'..v['sense']; at[v['alias']].select = 'sense'; at[v['alias']].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = v['alias']
+        atBoards[sao..v['dev']]['unit'] = v['unit']
+        publishAt(net, app, group, GetUserParam(net, group))
+      end
+    end
+  end
+  return addition, found
+end
+
+--[[
 Queue up initial discovery and current state CBus objects 
 --]]
 function publishCurrent()
   mqttDevices = {}
   local grps = GetCBusByKW('MQTT', 'or')
   local n = 0
-  local k, v
+  local i, k, v
   for k, v in pairs(grps) do
     n = n + 1
     local alias = table.concat(v.address, '/')
@@ -824,7 +892,32 @@ function publishCurrent()
     unpublished[n] = {net=v.address[1], app=v.address[2], group=v.address[3], channel=v.address[4], tags=v.keywords, name=name}
     if not mqttDevices[alias] then mqttDevices[alias] = {}; mqttDevices[alias].tags = table.concat(v.keywords,',') end
   end
-  if logging then logger('Queued '..n..' objects with keyword MQTT for publication') end
+  if logging and n > 0 then logger('Queued '..n..' objects with keyword MQTT for publication') end
+
+  atDevices = {}
+  grps = GetCBusByKW('AT', 'or')
+  addAt(grps)
+  local raw = {}
+  local dev
+  for k, v in pairs(grps) do
+    local tags = v['keywords']
+    for _, tag in ipairs(tags) do
+      local parts = string.split(tag, '=')
+      if parts[1] == 'dev' then
+        if raw[parts[2]] == nil then raw[parts[2]] = {} end
+        dev = parts[2]
+      elseif parts[1] == 'sa' then
+        sa = parts[2]
+      end
+    end
+    if sa ~= nil then raw[dev] = sa end
+  end
+
+  n = 0
+  for k, v in pairs(raw) do
+    n = n + 1
+    unpublishedAt[n] = {name=k, sa=v}
+  end
 end
 
 
@@ -891,71 +984,11 @@ Create / update / delete AT devices
 --]]
 function cudAt(initial)
   local grps = GetCBusByKW('AT', 'or')
-  local found = {}
   local boards = copy(atBoards)
-  local scan = {}
-  local addition = false
   local k, v
+  
+  local addition, found = addAt(grps)
 
-  for k, v in pairs(grps) do
-    local net = v.address[1]; local app = v.address[2]; local group = v.address[3]
-    local pn = v.name
-    local alias = table.concat(v.address, '/')
-    local unit = 'A'
-    local scale = 1
-    local decimals = 2
-
-    table.insert(found, alias)
-
-    local dev = ''; local func = ''; local sense = ''; local sa = ''; local tags = v.keywords
-    for _, t in ipairs(tags) do
-      tp = string.split(t, '=')
-      tp[1] = trim(tp[1])
-      if tp[2] then
-        tp[2] = trim(tp[2])
-        if tp[1] == 'dev' then dev = tp[2] -- Device
-        elseif tp[1] == 'func' then func = tp[2] -- Function
-        elseif tp[1] == 'sense' then sense = tp[2] -- Sensor
-        elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
-        elseif tp[1] == 'scale' then scale = tonumber(tp[2])
-        elseif tp[1] == 'unit' then unit = tp[2]
-        elseif tp[1] == 'sa' then sa = tp[2] -- Suggested area
-        end
-      end
-    end
-    if (func ~= '' or sense ~= '') and sa ~= '' then -- Found a suggested area
-      if atArea[dev] == nil then
-        atArea[dev] = sa
-      end
-    end
-    if sense ~= '' then
-      if scale ~= 1 or decimals ~= 2 then publishAdj[alias] = { dec=decimals, scale=scale } end
-    end
-    scan[#scan+1] = {alias=alias, dev=dev, func=func, sense=sense, unit=unit}
-  end
-
-  for _, v in ipairs(scan) do
-    local sa = atArea[v['dev']]; if sa == nil then sa = '' end
-    local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
-    local parts = string.split(v['alias'], '/')
-    local net = parts[1]; local app = parts[2]; local group = parts[3]
-    if v['func'] ~= '' then
-      if not at[v['alias']] then
-        at[v['alias']] = {}; addition = true
-    	  at[v['alias']].name = sao..v['dev']..'-'..v['func']; at[v['alias']].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = v['alias'];
-        if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
-        publishAt(net, app, group, GetUserParam(net, group))
-      end
-    elseif sense ~= '' then
-      if not at[v['alias']] then
-        at[v['alias']] = {}; addition = true
-    	  at[v['alias']].name = sao..v['dev']..'-'..v['sense']; at[v['alias']].select = 'sense'; at[v['alias']].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = v['alias']
-        atBoards[sao..v['dev']]['unit'] = v['unit']
-        publishAt(net, app, group, GetUserParam(net, group))
-      end
-    end
-  end
-    
   -- Handle deletions
   local kill
   for k, _ in pairs(at) do
@@ -1228,8 +1261,26 @@ function outstandingPublish()
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
     if script.status('MQTT') ~= nil then script.disable('MQTT'); script.enable('MQTT') end
-    logger('Published '..#unpublished..' discovery and current level topic'..(#unpublished ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
+    logger('Published '..#unpublished..' CBus discovery and current level topic'..(#unpublished ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
     unpublished = {}
+  end
+end
+
+
+--[[
+Publish queued Airtopia topics
+--]]
+function outstandingAtPublish()
+  local nClock = socket.gettime()
+  local u
+  for _, u in ipairs(unpublishedAt) do
+    addAtDiscover(u['name'], u['sa'], nil)
+  end
+  if #unpublishedAt > 0 then
+    -- Ensure that newly tagged/removed groups with the AT keyword send updates
+    if script.status('AT') ~= nil then script.disable('AT'); script.enable('AT') end
+    logger('Published '..#unpublishedAt..' Airtopia discovery and current level topic'..(#unpublishedAt ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
+    unpublishedAt = {}
   end
 end
 
@@ -1642,7 +1693,8 @@ while true do
     -- When connected to the broker
     if #mqttMessages > 0 then outstandingMqttMessage() end -- Send outstanding messages to CBus
     if #cbusMessages > 0 then outstandingCbusMessage() end -- Send outstanding messages to MQTT
-    if #unpublished > 0 then outstandingPublish() end      -- Publish outstanding discovery topics
+    if #unpublished > 0 then outstandingPublish() end      -- Publish outstanding CBus discovery topics
+    if #unpublishedAt > 0 then outstandingAtPublish() end  -- Publish outstanding Airtopia discovery topics
     if len(ramp) > 0 then checkRampOrphans() end           -- Some scenarios create ramp orphans
     if checkForChanges then                                -- Periodically create/update/delete device items that change
       for _, c in ipairs(cud) do if os.time() - c.t >=checkChanges then c.t = os.time(); c.func() end end
