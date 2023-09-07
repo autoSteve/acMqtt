@@ -129,12 +129,13 @@ See https://github.com/DomiStyle/esphome-panasonic-ac for ESP32 hardware/wiring 
 
 For Airtopia devices, add the keyword 'AT' to user parameters, plus...
 
-  dev=   Airtopia device name (you choose, lowercase word, no spaces), required
-  sa=    Suggested area (to at least one of the device user parameters)
+-  dev=   Airtopia device name (you choose, lowercase word, no spaces), required
+-  sa=    Suggested area (to at least one of the device user parameters)
+
 And one or more of:
-  func=  Function (power, mode, vert_swing, horiz_swing, target_temperature, fan, which results in airtopia/{dev}/state/{func}/#, commands issued to airtopia/{dev}/cmd/{func}/#)
+-  func=  Function (power, mode, vert_swing, horiz_swing, target_temperature, fan, which results in airtopia/{dev}/state/{func}/#, commands issued to airtopia/{dev}/cmd/{func}/#)
 ... or
-  sense= A read only sensor like current_temperature, power_consumption, which results in airtopia/{dev}/state/{sense}/#)
+-  sense= A read only sensor like current_temperature, power_consumption, which results in airtopia/{dev}/state/{sense}/#)
 
 ### Environment Monitors (MQTT send receive)
 Environment monitors can pass sensor data to CBus (using ESPHome devices, see example .yaml).
