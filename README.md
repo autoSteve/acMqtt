@@ -134,6 +134,7 @@ For Airtopia devices, add the keyword 'AT' to user parameters, plus...
 
 And one or more of:
 -  func=  Function (power, mode, vert_swing, horiz_swing, target_temperature, fan, which results in airtopia/{dev}/state/{func}/#, commands issued to airtopia/{dev}/cmd/{func}/#)
+
 ... or
 -  sense= A read only sensor like current_temperature, power_consumption, which results in airtopia/{dev}/state/{sense}/#)
 
