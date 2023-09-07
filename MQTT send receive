@@ -979,6 +979,52 @@ function cudAc(initial)
   end
 end
 
+
+--[[
+Publish the state of AT devices
+--]]
+function publishAtState()
+  for k, _ in pairs(atBoards) do
+    local parts
+    mode = atDevices[k..'-mode']
+    power = atDevices[k..'-power']
+    if mode ~= nil and power ~= nil then
+      parts = string.split(mode, '/'); local mnet = tonumber(parts[1]); local mgroup = tonumber(parts[3])
+      parts = string.split(power, '/'); local pnet = tonumber(parts[1]); local pgroup = tonumber(parts[3])
+      local topic = 'airtopia/'..k..'/state/modeha'
+      local level
+      if GetUserParam(pnet, pgroup) == 0 then
+        level = 'off'
+      else
+        level = atmodes[GetUserParam(mnet, mgroup)]
+      end
+      client:publish(topic, level, mqttQoS, RETAIN)
+    end
+    local hswing = atDevices[k..'-horiz_swing']
+    local vswing = atDevices[k..'-vert_swing']
+    if hswing ~= nil and vswing ~= nil then
+      parts = string.split(hswing, '/'); local hnet = tonumber(parts[1]); local hgroup = tonumber(parts[3])
+      parts = string.split(vswing, '/'); local vnet = tonumber(parts[1]); local vgroup = tonumber(parts[3])
+      local topic = 'airtopia/'..k..'/state/swingha'
+      local level
+      local h = GetUserParam(hnet, hgroup)
+      local v = bit.lshift(GetUserParam(vnet, vgroup), 1)
+      local s = bit.bor(h, v) + 1
+      client:publish(topic, atswings[s], mqttQoS, RETAIN)
+    end
+    local fan = atDevices[k..'-fan']
+    if fan ~= nil then
+      parts = string.split(fan, '/'); local fnet = tonumber(parts[1]); local fgroup = tonumber(parts[3])
+      local topic = 'airtopia/'..k..'/state/fanha'
+      local level
+      local f = GetUserParam(fnet, fgroup)
+      client:publish(topic, atfans[f+1], mqttQoS, RETAIN)
+    end
+    client:subscribe('airtopia/'..k..'/#', 2)
+  end
+end
+
+
 --[[
 Create / update / delete AT devices
 --]]
@@ -1024,44 +1070,7 @@ function cudAt(initial)
       logger('AT object keywords added, restarting event script')
       script.disable('AT'); script.enable('AT')
     end
-    for k, _ in pairs(atBoards) do
-      local parts
-      mode = atDevices[k..'-mode']
-      power = atDevices[k..'-power']
-      if mode ~= nil and power ~= nil then
-        parts = string.split(mode, '/'); local mnet = tonumber(parts[1]); local mgroup = tonumber(parts[3])
-        parts = string.split(power, '/'); local pnet = tonumber(parts[1]); local pgroup = tonumber(parts[3])
-        local topic = 'airtopia/'..k..'/state/modeha'
-        local level
-        if GetUserParam(pnet, pgroup) == 0 then
-          level = 'off'
-        else
-          level = atmodes[GetUserParam(mnet, mgroup)]
-        end
-        client:publish(topic, level, mqttQoS, RETAIN)
-      end
-      local hswing = atDevices[k..'-horiz_swing']
-      local vswing = atDevices[k..'-vert_swing']
-      if hswing ~= nil and vswing ~= nil then
-        parts = string.split(hswing, '/'); local hnet = tonumber(parts[1]); local hgroup = tonumber(parts[3])
-        parts = string.split(vswing, '/'); local vnet = tonumber(parts[1]); local vgroup = tonumber(parts[3])
-        local topic = 'airtopia/'..k..'/state/swingha'
-        local level
-        local h = GetUserParam(hnet, hgroup)
-        local v = bit.lshift(GetUserParam(vnet, vgroup), 1)
-        local s = bit.bor(h, v) + 1
-        client:publish(topic, atswings[s], mqttQoS, RETAIN)
-      end
-      local fan = atDevices[k..'-fan']
-      if fan ~= nil then
-        parts = string.split(fan, '/'); local fnet = tonumber(parts[1]); local fgroup = tonumber(parts[3])
-        local topic = 'airtopia/'..k..'/state/fanha'
-        local level
-        local f = GetUserParam(fnet, fgroup)
-        client:publish(topic, atfans[f+1], mqttQoS, RETAIN)
-      end
-      client:subscribe('airtopia/'..k..'/#', 2)
-    end
+    publishAtState()
   end
 end
 
@@ -1282,6 +1291,7 @@ function outstandingAtPublish()
     logger('Published '..#unpublishedAt..' Airtopia discovery and current level topic'..(#unpublishedAt ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
     unpublishedAt = {}
   end
+  publishAtState()
 end
 
 
