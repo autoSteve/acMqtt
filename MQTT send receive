@@ -163,7 +163,6 @@ acBoards = {}          -- All physical AC boards (esp32)
 at = {}                -- AT device details
 atDevices = {}         -- Quick lookup to determine whether an object is an AT device
 atBoards = {}          -- All physical AT boards
-atArea = {}            -- Suggested area for AT boards
 env = {}               -- Environment device details
 envDevices = {}        -- Quick lookup to determine whether an object is an environment device
 envBoards = {}         -- All physical environment boards (esp32)
@@ -810,7 +809,10 @@ end
 --[[
 Add Airtopia objects 
 --]]
+atLog = {}
 function addAt(grps, found)
+  local atArea = {}
+  local atDevs = {}
   local k, v
   local addition = false
   local scan = {}
@@ -823,27 +825,25 @@ function addAt(grps, found)
     local scale = 1
     local decimals = 2
 
-    table.insert(found, alias)
-
     local dev = ''; local func = ''; local sense = ''; local sa = ''; local tags = v.keywords
     for _, t in ipairs(tags) do
       tp = string.split(t, '=')
       tp[1] = trim(tp[1])
       if tp[2] then
         tp[2] = trim(tp[2])
-        if tp[1] == 'dev' then dev = tp[2] -- Device
+        if tp[1] == 'dev' then dev = tp[2]; atDevs[dev] = true -- Device
         elseif tp[1] == 'func' then func = tp[2] -- Function
         elseif tp[1] == 'sense' then sense = tp[2] -- Sensor
         elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
         elseif tp[1] == 'scale' then scale = tonumber(tp[2])
         elseif tp[1] == 'unit' then unit = tp[2]
-        elseif tp[1] == 'sa' then sa = tp[2] -- Suggested area
+        elseif tp[1] == 'sa' then
+          sa = tp[2] -- Suggested area
+          if atArea[dev] == nil then
+            atArea[dev] = sa  -- The suggested area found is noted as being applicable for all user params of the device; only one is needed
+            atLog[dev] = nil
+          end
         end
-      end
-    end
-    if (func ~= '' or sense ~= '') and sa ~= '' then -- Found a suggested area
-      if atArea[dev] == nil then
-        atArea[dev] = sa
       end
     end
     if sense ~= '' then
@@ -853,24 +853,37 @@ function addAt(grps, found)
   end
 
   for _, v in ipairs(scan) do
-    local sa = atArea[v['dev']]; if sa == nil then sa = '' end
-    local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
-    local parts = string.split(v['alias'], '/')
-    local net = parts[1]; local app = parts[2]; local group = parts[3]
-    if v['func'] ~= '' then
-      if not at[v['alias']] then
-        at[v['alias']] = {}; addition = true
-    	  at[v['alias']].name = sao..v['dev']..'-'..v['func']; at[v['alias']].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = v['alias'];
-        if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
-        publishAt(net, app, group, GetUserParam(net, group))
+    if atLog[v['dev']] == nil and atArea[v['dev']] == nil then
+      log('Error: No suggested area set for Airtopia device '..v['dev']..'. At least one user parameter needs "sa="')
+      atLog[v['dev']] = true -- Logged for the device, so do not log any further related user param issues for the device
+      goto nextAt
+    end
+    if at[v['alias']] == nil and atArea[v['dev']] ~= nil then
+      local sa = atArea[v['dev']]; if sa == nil then sa = '' end
+      local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
+      local parts = string.split(v['alias'], '/')
+      local net = parts[1]; local app = parts[2]; local group = parts[3]
+      if v['func'] ~= '' then
+        if not at[v['alias']] then
+          at[v['alias']] = {}; addition = true
+          at[v['alias']].name = sao..v['dev']..'-'..v['func']; at[v['alias']].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = v['alias'];
+          if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
+          publishAt(net, app, group, GetUserParam(net, group))
+        end
+      elseif sense ~= '' then
+        if not at[v['alias']] then
+          if atBoards[sao..v['dev']] ~= nil then
+            at[v['alias']] = {}; addition = true
+            at[v['alias']].name = sao..v['dev']..'-'..v['sense']; at[v['alias']].select = 'sense'; at[v['alias']].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = v['alias']
+            atBoards[sao..v['dev']]['unit'] = v['unit']
+            publishAt(net, app, group, GetUserParam(net, group))
+          end
+        end
       end
-    elseif sense ~= '' then
-      if not at[v['alias']] then
-        at[v['alias']] = {}; addition = true
-    	  at[v['alias']].name = sao..v['dev']..'-'..v['sense']; at[v['alias']].select = 'sense'; at[v['alias']].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = v['alias']
-        atBoards[sao..v['dev']]['unit'] = v['unit']
-        publishAt(net, app, group, GetUserParam(net, group))
-      end
+    end
+    ::nextAt::
+    if at[v['alias']] ~= nil and atArea[v['dev']] ~= nil then
+      table.insert(found, v['alias']) -- Valid, having a sa=, so found (otherwise removed elsewhere if an existing device)
     end
   end
   return addition, found
@@ -880,6 +893,7 @@ end
 Queue up initial discovery and current state CBus objects 
 --]]
 function publishCurrent()
+  -- CBus
   mqttDevices = {}
   local grps = GetCBusByKW('MQTT', 'or')
   local n = 0
@@ -894,6 +908,7 @@ function publishCurrent()
   end
   if logging and n > 0 then logger('Queued '..n..' objects with keyword MQTT for publication') end
 
+  -- Airtopia
   atDevices = {}
   grps = GetCBusByKW('AT', 'or')
   addAt(grps)
@@ -904,7 +919,6 @@ function publishCurrent()
     for _, tag in ipairs(tags) do
       local parts = string.split(tag, '=')
       if parts[1] == 'dev' then
-        if raw[parts[2]] == nil then raw[parts[2]] = {} end
         dev = parts[2]
       elseif parts[1] == 'sa' then
         sa = parts[2]
@@ -912,7 +926,6 @@ function publishCurrent()
     end
     if sa ~= nil then raw[dev] = sa end
   end
-
   n = 0
   for k, v in pairs(raw) do
     n = n + 1
@@ -1032,6 +1045,7 @@ function cudAt(initial)
   local grps = GetCBusByKW('AT', 'or')
   local boards = copy(atBoards)
   local k, v
+  unpublishedAt = {}
   
   local addition, found = addAt(grps)
 
@@ -1051,16 +1065,39 @@ function cudAt(initial)
     atBoards[k] = nil;
     topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'
     client:publish(topic, '', mqttQoS, RETAIN)
+    logger('Removed discovery topic '..topic)
     topic = mqttDiscoveryTopic..'sensor/'..'cbus_mqtt_'..k..'_power/config'
     client:publish(topic, '', mqttQoS, RETAIN)
-    --TODO iterate through all possibilities killing topics... client:publish('airtopia/'..k, '', mqttQoS, RETAIN)
     logger('Removed discovery topic '..topic)
+    --TODO iterate through all possibilities killing topics. i.e. find a more elegant solution...
+    client:publish('airtopia/'..k..'/state/fanha', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/state/fan', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/state/horiz_swing', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/state/swingha', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/state/vert_swing', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/state/power', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/state/target_temperature', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/state/mode', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/state/modeha', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/state/current_temperature', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/state/power_consumption', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/cmd/power', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/cmd/mode', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/cmd/fan', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/cmd/swing', '', mqttQoS, RETAIN)
+    client:publish('airtopia/'..k..'/cmd/target_temperature', '', mqttQoS, RETAIN)
   end
 
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
+  local n = 0
   for k, v in pairs(atBoards) do
     if boards[k] == nil then
-      addAtDiscover(v['dev'], v['sa'], v['unit']) -- Publish discovery topic
+      if v['sa'] ~= nil then
+        n = n + 1
+        unpublishedAt[n] = {name=v['dev'], sa=v['sa'], unit=v['unit']}
+      else
+        log('Error publishing Airtopia '..k..'. No suggested area given')
+      end
     end
   end
       
@@ -1282,9 +1319,7 @@ Publish queued Airtopia topics
 function outstandingAtPublish()
   local nClock = socket.gettime()
   local u
-  for _, u in ipairs(unpublishedAt) do
-    addAtDiscover(u['name'], u['sa'], nil)
-  end
+  for _, u in ipairs(unpublishedAt) do addAtDiscover(u['name'], u['sa'], nil) end
   if #unpublishedAt > 0 then
     -- Ensure that newly tagged/removed groups with the AT keyword send updates
     if script.status('AT') ~= nil then script.disable('AT'); script.enable('AT') end
