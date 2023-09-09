@@ -184,6 +184,8 @@ unpublished = {}       -- The current set of CBus objects to publish discovery t
 unpublishedAt = {}     -- The current set of CBus Airtopia objects to publish discovery topics for
 mqttStatus = 2         -- Initially disconnected 1=connected, 2=disconnected
 mqttConnected = 0      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
+airtopiaCmdTopic = {'power', 'fan', 'swing', 'mode', 'target_temperature'} -- All command topics (used for clean up)
+airtopiaStateTopic = {} -- Current state topics in use (used for clean up)
 
 atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
 atswings = {'Off', 'Horizontal only', 'Vertical only', 'Horizontal and Vertical'} -- Airtopia swing modes
@@ -890,7 +892,7 @@ function addAt(grps, found)
 end
 
 --[[
-Queue up initial discovery and current state CBus objects 
+Queue up initial discovery and current state CBus objects and Airtopia if used
 --]]
 function publishCurrent()
   -- CBus
@@ -1063,29 +1065,13 @@ function cudAt(initial)
   kill = {} for k, _ in pairs(atBoards) do if newBoards[k] == nil then table.insert(kill, k) end end
   for _, k in ipairs(kill) do
     atBoards[k] = nil;
-    topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'
-    client:publish(topic, '', mqttQoS, RETAIN)
-    logger('Removed discovery topic '..topic)
-    topic = mqttDiscoveryTopic..'sensor/'..'cbus_mqtt_'..k..'_power/config'
-    client:publish(topic, '', mqttQoS, RETAIN)
-    logger('Removed discovery topic '..topic)
-    --TODO iterate through all possibilities killing topics. i.e. find a more elegant solution...
-    client:publish('airtopia/'..k..'/state/fanha', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/state/fan', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/state/horiz_swing', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/state/swingha', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/state/vert_swing', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/state/power', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/state/target_temperature', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/state/mode', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/state/modeha', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/state/current_temperature', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/state/power_consumption', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/cmd/power', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/cmd/mode', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/cmd/fan', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/cmd/swing', '', mqttQoS, RETAIN)
-    client:publish('airtopia/'..k..'/cmd/target_temperature', '', mqttQoS, RETAIN)
+    -- Clean up discovery topics
+    topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'; client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic)
+    topic = mqttDiscoveryTopic..'sensor/'..'cbus_mqtt_'..k..'_power/config'; client:publish(topic, '', mqttQoS, RETAIN);  logger('Removed discovery topic '..topic)
+    -- Clean up state and cmd topics under airtopia/device
+    for _, v in ipairs(airtopiaStateTopic) do client:publish('airtopia/'..k..'/state/'..v, '', mqttQoS, RETAIN) end
+    for _, v in ipairs(airtopiaCmdTopic) do client:publish('airtopia/'..k..'/cmd/'..v, '', mqttQoS, RETAIN) end
+    logger('Removed device command and state topics')
   end
 
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
@@ -1560,6 +1546,8 @@ function outstandingMqttMessage()
           end
         end
       end
+    elseif parts[1] == 'airtopia' and parts[3] == 'state' then
+      if indexOf(airtopiaStateTopic, parts[4]) == nil then table.insert(airtopiaStateTopic, parts[4]) end
     end
     
     -- Messages from ENV boards - simpler, only messages inbound
