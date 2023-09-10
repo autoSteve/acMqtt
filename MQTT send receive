@@ -19,7 +19,7 @@ logging = false        -- Enable detailed logging
 logms = false          -- Include timestamp in milliseconds for logs
 
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
-heartbeatConditions = { ['max'] = 60, } -- At most 20 seconds without a heartbeat or else restart
+heartbeatConditions = { ['max'] = 60, } -- At most 60 seconds without a heartbeat or else restart
 publishNoLevel = false -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
 selectExact = true     -- For select, if a CBus level other than in the select levels is set then adjust the CBus level to the closest select level
 blindKey = nil         -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
@@ -75,14 +75,14 @@ bSensor = {}           -- Quick lookup to determine whether an object is a bsens
 binarySensor = {}      -- Quick lookup to determine whether an object is a binary sensor
 lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
 userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
-publishAdj = {}        -- For user parameters, holds scale and decimals to apply
-unpublished = {}       -- The current set of CBus objects to publish discovery topics for
-unpublishedAt = {}     -- The current set of CBus Airtopia objects to publish discovery topics for
-mqttStatus = 2         -- Initially disconnected 1=connected, 2=disconnected
+publishAdj = {}        -- Holds scale and decimals to apply
+unpublished = {}       -- The outstanding set of CBus objects to publish discovery topics for
+unpublishedAt = {}     -- The outstanding set of CBus Airtopia objects to publish discovery topics for
+mqttStatus = 2         -- The status of the MQTT connection. Initially disconnected 1=connected, 2=disconnected
 mqttConnected = 0      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
-airtopiaCmdTopic = {'power', 'fan', 'swing', 'mode', 'target_temperature'} -- All command topics (used for clean up)
-airtopiaStateTopic = {} -- Current state topics in use (used for clean up)
+airtopiaStates = {}    -- Current state topics in use (used for clean up)
 
+airtopiaCmds = {'power', 'fan', 'swing', 'mode', 'target_temperature'} -- All command topics (used for clean up)
 atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
 atswings = {'Off', 'Horizontal only', 'Vertical only', 'Horizontal and Vertical'} -- Airtopia swing modes
 atfans = {'Auto', '1', '2', '3', '4'} -- Airtopia fan speed (THIS IS UNTESTED, will result in 0, 1, 2, 3, 4 being set in the user parameter in the order of the list)
@@ -90,12 +90,12 @@ atfans = {'Auto', '1', '2', '3', '4'} -- Airtopia fan speed (THIS IS UNTESTED, w
 RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
 NORETAIN = false
 
-FORCE = true
+FORCE = true           -- For logger. Use to force a log entry, regardless of the logger= value
 
 heartbeat = os.time()
 started = socket.gettime()
 
-function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
+function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring
 function trim(s) return s:match "^%s*(.-)%s*$" end -- Remove leading and trailing spaces
 function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
 function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
@@ -134,7 +134,7 @@ else -- Remove script from hearbeat registration
 end
 
 --[[
-UDP listener - receive messages from the event scripts 'MQTT' and 'AC'
+UDP listener - receive messages from CBus level change event scripts
 --]]
 
 if server then server:close() end  -- Handle script re-entry
@@ -188,7 +188,7 @@ end
 
 
 --[[
-Publish lighting group and user parameter objects to MQTT 
+Publish lighting and user parameter objects to MQTT 
 --]]
 function publish(net, app, group, level)
   if level == nil then logger('Warning: Nil CBus level for '..net..'/'..app..'/'..group, FORCE); do return end end
@@ -257,7 +257,7 @@ function publishMeasurement(net, app, group, channel, value)
 end
 
 --[[
-Publish AC objects to MQTT 
+Publish Panasonic ESPHome objects to MQTT 
 --]]
 function publishAc(net, app, group, level, select)
   if level == nil then logger('Warning: Nil AC level for '..net..'/'..app..'/'..group, FORCE); do return end end
@@ -297,7 +297,7 @@ function publishAc(net, app, group, level, select)
 end
 
 --[[
-Publish AT objects to MQTT 
+Publish Airtopia MODBUS objects to MQTT 
 --]]
 function publishAt(net, app, group, level)
   if level == nil then logger('Warning: Nil AT level for '..net..'/'..app..'/'..group, FORCE); do return end end
@@ -716,6 +716,7 @@ end
 Add Airtopia objects 
 --]]
 atLog = {}
+atLogGrp = {}
 function addAt(grps, found)
   local atArea = {}
   local atDevs = {}
@@ -759,33 +760,41 @@ function addAt(grps, found)
   end
 
   for _, v in ipairs(scan) do
-    if atLog[v['dev']] == nil and atArea[v['dev']] == nil then
-      logger('Error: No suggested area set for Airtopia device '..v['dev']..'. At least one user parameter needs "sa="', FORCE)
-      atLog[v['dev']] = true -- Logged for the device, so do not log any further related user param issues for the device
-      goto nextAt
-    end
-    if at[v['alias']] == nil and atArea[v['dev']] ~= nil then
-      local sa = atArea[v['dev']]; if sa == nil then sa = '' end
-      local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
-      local parts = string.split(v['alias'], '/')
-      local net = parts[1]; local app = parts[2]; local group = parts[3]
-      if v['func'] ~= '' then
-        if not at[v['alias']] then
-          at[v['alias']] = {}; addition = true
-          at[v['alias']].name = sao..v['dev']..'-'..v['func']; at[v['alias']].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = v['alias'];
-          if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
-          publishAt(net, app, group, GetUserParam(net, group))
-        end
-      elseif sense ~= '' then
-        if not at[v['alias']] then
-          if atBoards[sao..v['dev']] ~= nil then
+    if v['dev'] ~= '' then
+      if atLog[v['dev']] == nil and atArea[v['dev']] == nil then
+        logger('Error: No suggested area set for Airtopia device '..v['dev']..'. At least one user parameter needs "sa="', FORCE)
+        atLog[v['dev']] = true -- Logged for the device, so do not log any further related user param issues for the device
+        goto nextAt
+      end
+      if at[v['alias']] == nil and atArea[v['dev']] ~= nil then
+        local sa = atArea[v['dev']]; if sa == nil then sa = '' end
+        local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
+        local parts = string.split(v['alias'], '/')
+        local net = parts[1]; local app = parts[2]; local group = parts[3]
+        if v['func'] ~= '' then
+          if not at[v['alias']] then
             at[v['alias']] = {}; addition = true
-            at[v['alias']].name = sao..v['dev']..'-'..v['sense']; at[v['alias']].select = 'sense'; at[v['alias']].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = v['alias']
-            atBoards[sao..v['dev']]['unit'] = v['unit']
+            at[v['alias']].name = sao..v['dev']..'-'..v['func']; at[v['alias']].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = v['alias'];
+            if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
             publishAt(net, app, group, GetUserParam(net, group))
+            atLog[v['dev']] = nil
+            atLogGrp[v['alias']] = nil
+          end
+        elseif sense ~= '' then
+          if not at[v['alias']] then
+            if atBoards[sao..v['dev']] ~= nil then
+              at[v['alias']] = {}; addition = true
+              at[v['alias']].name = sao..v['dev']..'-'..v['sense']; at[v['alias']].select = 'sense'; at[v['alias']].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = v['alias']
+              atBoards[sao..v['dev']]['unit'] = v['unit']
+              publishAt(net, app, group, GetUserParam(net, group))
+              atLog[v['dev']] = nil
+              atLogGrp[v['alias']] = nil
+            end
           end
         end
       end
+    else
+      if not atLogGrp[v['alias']] then logger('Error: No device specified for Airtopia group '..v['alias'], FORCE); atLogGrp[v['alias']] = true end
     end
     ::nextAt::
     if at[v['alias']] ~= nil and atArea[v['dev']] ~= nil then
@@ -803,8 +812,8 @@ function publishCurrent()
   mqttDevices = {}
   local grps = GetCBusByKW('MQTT', 'or')
   local n = 0
-  local i, k, v
-  for k, v in pairs(grps) do
+  local i, v
+  for _, v in pairs(grps) do
     n = n + 1
     local alias = table.concat(v.address, '/')
     table.sort(v.keywords)
@@ -820,8 +829,9 @@ function publishCurrent()
   addAt(grps)
   local raw = {}
   local dev
-  for k, v in pairs(grps) do
+  for k, v in ipairs(grps) do
     local tags = v['keywords']
+    dev = ''; local sa = nil
     for _, tag in ipairs(tags) do
       local parts = string.split(tag, '=')
       if parts[1] == 'dev' then
@@ -830,19 +840,28 @@ function publishCurrent()
         sa = parts[2]
       end
     end
-    if sa ~= nil then raw[dev] = sa end
+    if dev ~= '' then
+      if sa ~= nil then raw[dev] = sa end
+    else
+      if not atLogGrp[table.concat(v['address'], '/')] then
+        logger('Error: No device specified for Airtopia group '..table.concat(v['address'], '/'), FORCE)
+        atLogGrp[table.concat(v['address'], '/')] = true
+      end
+    end
   end
   n = 0
   for k, v in pairs(raw) do
     n = n + 1
     unpublishedAt[n] = {name=k, sa=v}
   end
+  if n > 0 then logger('Queued '..n..' objects with keyword AT for publication') end
 end
 
 
 --[[
 Create / update / delete AC devices
 --]]
+acLogGrp = {}
 function cudAc(initial)
   local grps = GetCBusByKW('AC', 'or')
   local found = {}
@@ -856,7 +875,7 @@ function cudAc(initial)
 
     table.insert(found, alias)
 
-    local func = ''; local sel = ''; local sense = ''; local topic = 'sensor'; local tags = v.keywords
+    local dev=''; local func = ''; local sel = ''; local sense = ''; local topic = 'sensor'; local tags = v.keywords
     for _, t in ipairs(tags) do
       tp = string.split(t, '=')
       tp[1] = trim(tp[1])
@@ -870,15 +889,20 @@ function cudAc(initial)
         end
       end
     end
-    if func ~= '' then
-      if not ac[alias] then ac[alias] = {}; addition = true end
-    	ac[alias].name = dev..'-'..func; ac[alias].select = 'func'; acDevices[dev..'-'..func] = alias; acBoards[dev] = true
-    elseif sel ~= '' then
-      if not ac[alias] then ac[alias] = {}; addition = true end
-    	ac[alias].name = dev..'-'..sel; ac[alias].select = 'sel'; acDevices[dev..'-'..sel] = alias; acBoards[dev] = true
-    elseif sense ~= '' then
-      if not ac[alias] then ac[alias] = {}; addition = true end
-    	ac[alias].name = dev..'-'..sel; ac[alias].select = 'sense'; ac[alias].sense = sense; ac[alias].topic = topic; acDevices[dev..'-'..sense] = alias; acBoards[dev] = true
+    if dev ~= '' then
+      if func ~= '' then
+        if not ac[alias] then ac[alias] = {}; addition = true end
+      	ac[alias].name = dev..'-'..func; ac[alias].select = 'func'; acDevices[dev..'-'..func] = alias; acBoards[dev] = true
+      elseif sel ~= '' then
+        if not ac[alias] then ac[alias] = {}; addition = true end
+      	ac[alias].name = dev..'-'..sel; ac[alias].select = 'sel'; acDevices[dev..'-'..sel] = alias; acBoards[dev] = true
+      elseif sense ~= '' then
+        if not ac[alias] then ac[alias] = {}; addition = true end
+      	ac[alias].name = dev..'-'..sel; ac[alias].select = 'sense'; ac[alias].sense = sense; ac[alias].topic = topic; acDevices[dev..'-'..sense] = alias; acBoards[dev] = true
+      end
+      acLogGrp[alias] = nil
+    else
+      if not acLogGrp[alias] then logger('Error: No device specified for Panasonic '..alias, FORCE); acLogGrp[alias] = true end
     end
   end
     
@@ -973,8 +997,8 @@ function cudAt(initial)
     topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'; client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic, FORCE)
     topic = mqttDiscoveryTopic..'sensor/'..'cbus_mqtt_'..k..'_power/config'; client:publish(topic, '', mqttQoS, RETAIN);  logger('Removed discovery topic '..topic, FORCE)
     -- Clean up state and cmd topics under airtopia/device
-    for _, v in ipairs(airtopiaStateTopic) do client:publish('airtopia/'..k..'/state/'..v, '', mqttQoS, RETAIN) end
-    for _, v in ipairs(airtopiaCmdTopic) do client:publish('airtopia/'..k..'/cmd/'..v, '', mqttQoS, RETAIN) end
+    for _, v in ipairs(airtopiaStates) do client:publish('airtopia/'..k..'/state/'..v, '', mqttQoS, RETAIN) end
+    for _, v in ipairs(airtopiaCmds) do client:publish('airtopia/'..k..'/cmd/'..v, '', mqttQoS, RETAIN) end
     logger('Removed device command and state topics', FORCE)
   end
 
@@ -1004,6 +1028,7 @@ end
 --[[
 Create / update / delete ENV (environment) devices
 --]]
+envLogGrp = {}
 function cudEnv(initial)
   local grps = GetCBusByKW('ENV', 'or')
   local found = {}
@@ -1016,7 +1041,7 @@ function cudEnv(initial)
 
     table.insert(found, alias)
 
-    local func = ''; local sel = ''; local tags = v.keywords
+    local dev=''; local func = ''; local sel = ''; local tags = v.keywords
     for _, t in ipairs(tags) do
       tp = string.split(t, '=')
       tp[1] = trim(tp[1])
@@ -1027,12 +1052,17 @@ function cudEnv(initial)
         end
       end
     end
-    if func == '' then
-      if v.name then n = v.name else n = GetCBusGroupTag(net, app, group) end
-      func = n:lower():gsub("%s+", "_")
+    if dev ~= '' then
+      if func == '' then
+        if v.name then n = v.name else n = GetCBusGroupTag(net, app, group) end
+        func = n:lower():gsub("%s+", "_")
+      end
+      if not env[alias] then env[alias] = {}; addition = true end
+      env[alias].name = dev..'-'..func; envDevices[dev..'-'..func] = alias; envBoards[dev] = true
+      envLogGrp[alias] = nil
+    else
+      if not envLogGrp[alias] then logger('Error: No device specified for environment sensor '..alias, FORCE); envLogGrp[alias] = true end
     end
-    if not env[alias] then env[alias] = {}; addition = true end
-    env[alias].name = dev..'-'..func; envDevices[dev..'-'..func] = alias; envBoards[dev] = true
   end
     
   -- Handle deletions
@@ -1451,7 +1481,7 @@ function outstandingMqttMessage()
         end
       end
     elseif parts[1] == 'airtopia' and parts[3] == 'state' then
-      if indexOf(airtopiaStateTopic, parts[4]) == nil then table.insert(airtopiaStateTopic, parts[4]) end
+      if indexOf(airtopiaStates, parts[4]) == nil then table.insert(airtopiaStates, parts[4]) end
     end
     
     -- Messages from ENV boards - simpler, only messages inbound
