@@ -90,13 +90,15 @@ atfans = {'Auto', '1', '2', '3', '4'} -- Airtopia fan speed (THIS IS UNTESTED, w
 RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
 NORETAIN = false
 
+FORCE = true
+
 heartbeat = os.time()
+started = socket.gettime()
 
 function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
 function trim(s) return s:match "^%s*(.-)%s*$" end -- Remove leading and trailing spaces
 function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
 function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
-started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get number of dictionary members
 function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end -- Find the index number of an array
 function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
@@ -108,6 +110,12 @@ function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
   for k, v in pairs(obj) do res[copy(k, s)] = copy(v, s) end
   return res
 end
+function logger(msg, force) -- Log helper
+  if logging or force ~= nil then
+    if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end
+    log(ts..msg)
+  end
+end
 
 --[[
 Register with the Heartbeat script
@@ -117,7 +125,7 @@ if sendHeartbeat > 0 then
   -- Check whether registration is required, and if not registered then do so
   local r, hbeat = isRegistered()
   if not r then
-    if logging then log('Registering '.._SCRIPTNAME..' with Heartbeat') end
+    logger('Registering '.._SCRIPTNAME..' with Heartbeat')
     hbeat[_SCRIPTNAME] = heartbeatConditions
     storage.set('heartbeat', hbeat)
   end
@@ -145,7 +153,7 @@ if mqttUsername then client:login_set(mqttUsername, mqttPassword) end
 
 client.ON_CONNECT = function(success)
   if success then
-    logger('MQTT connected')
+    logger('MQTT connected', FORCE)
     client:publish(mqttCbus..'status', 'online', mqttQoS, RETAIN)
     mqttStatus = 1
     -- Subscribe to relevant topics
@@ -158,7 +166,7 @@ client.ON_CONNECT = function(success)
 end
 
 client.ON_DISCONNECT = function(...)
-  logger('MQTT disconnected')
+  logger('MQTT disconnected', FORCE)
   mqttStatus = 2
 end
 
@@ -183,7 +191,7 @@ end
 Publish lighting group and user parameter objects to MQTT 
 --]]
 function publish(net, app, group, level)
-  if level == nil then logger('Warning: Nil CBus level for '..net..'/'..app..'/'..group); do return end end
+  if level == nil then logger('Warning: Nil CBus level for '..net..'/'..app..'/'..group, FORCE); do return end end
   local alias = net..'/'..app..'/'..group
   local aAlias = tNetAC(net)..'/'..app..'/'..group
   local state = ''
@@ -196,7 +204,7 @@ function publish(net, app, group, level)
     if not binarySensor[aAlias] then
       if bSensor[aAlias] then
         client:publish(mqttReadTopic..alias..'/state', level, mqttQoS, RETAIN)
-        if logging then logger('Publishing state '..mqttReadTopic..alias..' to '..level) end
+        logger('Publishing state '..mqttReadTopic..alias..' to '..level)
       elseif selects[aAlias] then
         local l
         for _, l in ipairs(selects[aAlias].allLvl) do
@@ -207,24 +215,24 @@ function publish(net, app, group, level)
               -- Adjusting the level will result in two MQTT publish events, which could be avoided but is not
             end
             client:publish(mqttReadTopic..alias..'/select', l.sel, mqttQoS, RETAIN)
-            if logging then logger('Publishing select '..mqttReadTopic..alias..' to '..l.sel..'('..l.lvl..')') end
+            logger('Publishing select '..mqttReadTopic..alias..' to '..l.sel..'('..l.lvl..')')
             break
           end
         end
       else
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
         client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
-        if logging then logger('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level) end
+        logger('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level)
       end
     else
       client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
-      if logging then logger('Publishing state '..mqttReadTopic..alias..' to '..state) end
+      logger('Publishing state '..mqttReadTopic..alias..' to '..state)
     end
   else
     local adjust = publishAdj[alias]
     if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', level * adjust.scale)) else v = level end
     client:publish(mqttReadTopic..alias..'/state', v, mqttQoS, RETAIN)
-    if logging then logger('Publishing value '..mqttReadTopic..alias..' to '..v) end
+    logger('Publishing value '..mqttReadTopic..alias..' to '..v)
   end
 end
 
@@ -233,7 +241,7 @@ Publish measurement application objects to MQTT
 --]]
 function publishMeasurement(net, app, group, channel, value)
   local units, v
-  if value == nil then logger('Warning: Nil CBus measurement value for '..net..'/'..app..'/'..group); do return end end
+  if value == nil then logger('Warning: Nil CBus measurement value for '..net..'/'..app..'/'..group, FORCE); do return end end
   local adjust = publishAdj[net..'/'..app..'/'..group..'/'..channel]
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
   _, units = GetCBusMeasurement(net, group, channel)
@@ -245,19 +253,19 @@ function publishMeasurement(net, app, group, channel, value)
     v = v..' '..units
   end
   client:publish(mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/state', v, mqttQoS, RETAIN)
-  -- if logging then logger('Publishing measurement '..mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..' to '..v) end
+  -- logger('Publishing measurement '..mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..' to '..v)
 end
 
 --[[
 Publish AC objects to MQTT 
 --]]
 function publishAc(net, app, group, level, select)
-  if level == nil then logger('Warning: Nil AC level for '..net..'/'..app..'/'..group); do return end end
+  if level == nil then logger('Warning: Nil AC level for '..net..'/'..app..'/'..group, FORCE); do return end end
   local alias = net..'/'..app..'/'..group
   if ac[alias].state ~= level then
     if ignoreMqtt[alias] and (os.time() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
       ignoreMqtt[alias] = nil
-      if logging then logger('Ignoring older MQTT ignore flag for '..alias) end
+      logger('Ignoring older MQTT ignore flag for '..alias)
     end
     if not ignoreMqtt[alias] then
       local parts = string.split(ac[alias].name, '-')
@@ -268,23 +276,23 @@ function publishAc(net, app, group, level, select)
       elseif select == 'sel' then
         topic = board..'/select/'..parts[2]..'/command'
       elseif select == 'sense' then
-        if logging then logger('Warning: Not publishing sensor change for alias='..alias) end
+        logger('Warning: Not publishing sensor change for alias='..alias)
       else
-        logger('Invalid AC command for alias='..alias..', select='..tostring(select))
+        logger('Invalid AC command for alias='..alias..', select='..tostring(select), FORCE)
       end
       if topic ~= '' then client:publish(topic, level, mqttQoS, NORETAIN) end
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
       if acState ~= ac[alias].state then ignoreCbus[alias] = os.time() end
-      if logging then logger('Published AC '..ac[alias].name..' to '..level) end
+      logger('Published AC '..ac[alias].name..' to '..level)
     else
       ignoreMqtt[alias] = nil
-      if logging then logger('Ignoring MQTT publish for '..alias) end
+      logger('Ignoring MQTT publish for '..alias)
     end
     ac[alias].state = level
   else
     ignoreMqtt[alias] = nil
-    if logging then logger('Ignoring MQTT publish for '..alias) end
+    logger('Ignoring MQTT publish for '..alias)
   end
 end
 
@@ -292,12 +300,12 @@ end
 Publish AT objects to MQTT 
 --]]
 function publishAt(net, app, group, level)
-  if level == nil then logger('Warning: Nil AT level for '..net..'/'..app..'/'..group); do return end end
+  if level == nil then logger('Warning: Nil AT level for '..net..'/'..app..'/'..group, FORCE); do return end end
   local alias = net..'/'..app..'/'..group
   if at[alias].state ~= level then
     if ignoreMqtt[alias] and (os.time() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
       ignoreMqtt[alias] = nil
-      if logging then logger('Ignoring older MQTT ignore flag for '..alias) end
+      logger('Ignoring older MQTT ignore flag for '..alias)
     end
     if not ignoreMqtt[alias] then
       local parts = string.split(at[alias].name, '-')
@@ -309,7 +317,7 @@ function publishAt(net, app, group, level)
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
       if atState ~= at[alias].state then ignoreCbus[alias] = os.time() end
-      if logging then logger('Published AT '..at[alias].name..' to '..level) end
+      logger('Published AT '..at[alias].name..' to '..level)
       -- Determine whether a HomeAssistant state topic needs to be also published
       local st = nil
       local prefix = nil
@@ -347,12 +355,12 @@ function publishAt(net, app, group, level)
       end
     else
       ignoreMqtt[alias] = nil
-      if logging then logger('Ignoring MQTT publish for '..alias) end
+      logger('Ignoring MQTT publish for '..alias)
     end
     at[alias].state = level
   else
     ignoreMqtt[alias] = nil
-    if logging then logger('Ignoring MQTT publish for '..alias) end
+    logger('Ignoring MQTT publish for '..alias)
   end
 end
 
@@ -410,9 +418,9 @@ function addDiscover(net, app, group, channel, tags, name)
   if logging then
     if sa == '' then dSa = 'no preferred area' else dSa = sa end
     if dType ~= 'bsensor' then
-    	logger('Publish discovery '..name..' as '..dType..':'..pn..' in area '..dSa)
+    	logger('Publish discovery '..name..' as '..dType..':'..pn..' in area '..dSa, FORCE)
     else
-    	logger('Publish discovery '..name..' as sensor:'..pn..' in area '..dSa)
+    	logger('Publish discovery '..name..' as sensor:'..pn..' in area '..dSa, FORCE)
     end
   end
 
@@ -488,7 +496,7 @@ function addDiscover(net, app, group, channel, tags, name)
 
   elseif dType == 'select' then
     if not lvl then
-      logger('Error: lvl= keyword not specified for select at '..aAlias)
+      logger('Error: lvl= keyword not specified for select at '..aAlias, FORCE)
       do return end
     end
     local level, parts
@@ -503,7 +511,7 @@ function addDiscover(net, app, group, channel, tags, name)
         parts[2] = parts[1]
         parts[1] = GetCBusLevelTag(tNetAC(net), app, group, tonumber(parts[2]))
         if not parts[1] then
-          logger('Error: No level tag for select '..aAlias..', level '..parts[2])
+          logger('Error: No level tag for select '..aAlias..', level '..parts[2], FORCE)
           do return end
         end
         options[#options + 1] = parts[1]
@@ -511,13 +519,13 @@ function addDiscover(net, app, group, channel, tags, name)
       elseif #parts == 1 then -- Level tags only
         parts[2] = GetCBusLevelAddress(tNetAC(net), app, group, parts[1])
         if not parts[2] then
-          logger('Error: Invalid level tag for select '..aAlias..', level '..parts[1])
+          logger('Error: Invalid level tag for select '..aAlias..', level '..parts[1], FORCE)
           do return end
         end
         options[#options + 1] = parts[1]
         selects[aAlias][parts[1]] = tonumber(parts[2])
       else
-        logger('Error: Invalid lvl= format for select '..aAlias)
+        logger('Error: Invalid lvl= format for select '..aAlias, FORCE)
         do return end
       end
       if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = { lvl = tonumber(parts[2]), sel = parts[1] }
@@ -567,10 +575,10 @@ function addDiscover(net, app, group, channel, tags, name)
         if publishNoLevel then
           if lvl then
             tag = 'Level '..i
-            logger('Warning: Trigger '..alias..' has no level tag defined for level '..i..', setting to "'..tag..'"')
+            logger('Warning: Trigger '..alias..' has no level tag defined for level '..i..', setting to "'..tag..'"', FORCE)
           end
         else
-          if lvl then logger('Error: Trigger '..alias..' has no level tag defined for level '..i) end
+          if lvl then logger('Error: Trigger '..alias..' has no level tag defined for level '..i, FORCE) end
         end
       end
       if tag then
@@ -615,7 +623,7 @@ function addDiscover(net, app, group, channel, tags, name)
     lightingButton[aAlias] = true
 
   elseif dType == 'button' then
-    logger('Error: MQTT button keyword used for unsupported application group '..aAlias)
+    logger('Error: MQTT button keyword used for unsupported application group '..aAlias, FORCE)
     do return end
   end
 
@@ -652,7 +660,7 @@ Build and publish an Airtopia discovery topic
 function addAtDiscover(name, sa, unit)
   if logging then
     if sa == '' then dSa = 'no preferred area' else dSa = sa end
-    logger('Publish discovery '..name..' in area '..dSa)
+    logger('Publish discovery '..name..' in area '..dSa, FORCE)
   end
   if unit == nil then unit = 'A' end
 
@@ -752,7 +760,7 @@ function addAt(grps, found)
 
   for _, v in ipairs(scan) do
     if atLog[v['dev']] == nil and atArea[v['dev']] == nil then
-      log('Error: No suggested area set for Airtopia device '..v['dev']..'. At least one user parameter needs "sa="')
+      logger('Error: No suggested area set for Airtopia device '..v['dev']..'. At least one user parameter needs "sa="', FORCE)
       atLog[v['dev']] = true -- Logged for the device, so do not log any further related user param issues for the device
       goto nextAt
     end
@@ -804,7 +812,7 @@ function publishCurrent()
     unpublished[n] = {net=v.address[1], app=v.address[2], group=v.address[3], channel=v.address[4], tags=v.keywords, name=name}
     if not mqttDevices[alias] then mqttDevices[alias] = {}; mqttDevices[alias].tags = table.concat(v.keywords,',') end
   end
-  if logging and n > 0 then logger('Queued '..n..' objects with keyword MQTT for publication') end
+  if n > 0 then logger('Queued '..n..' objects with keyword MQTT for publication') end
 
   -- Airtopia
   atDevices = {}
@@ -883,7 +891,7 @@ function cudAc(initial)
   if addition then
     if not initial then
       -- Ensure that newly tagged/removed groups with the AC keyword send updates.
-      logger('AC object keywords added, restarting event script')
+      logger('AC object keywords added, restarting event script', FORCE)
       script.disable('AC'); script.enable('AC')
     end
     for k, _ in pairs(acBoards) do client:subscribe(k..'/#', 2) end
@@ -962,12 +970,12 @@ function cudAt(initial)
   for _, k in ipairs(kill) do
     atBoards[k] = nil;
     -- Clean up discovery topics
-    topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'; client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic)
-    topic = mqttDiscoveryTopic..'sensor/'..'cbus_mqtt_'..k..'_power/config'; client:publish(topic, '', mqttQoS, RETAIN);  logger('Removed discovery topic '..topic)
+    topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'; client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic, FORCE)
+    topic = mqttDiscoveryTopic..'sensor/'..'cbus_mqtt_'..k..'_power/config'; client:publish(topic, '', mqttQoS, RETAIN);  logger('Removed discovery topic '..topic, FORCE)
     -- Clean up state and cmd topics under airtopia/device
     for _, v in ipairs(airtopiaStateTopic) do client:publish('airtopia/'..k..'/state/'..v, '', mqttQoS, RETAIN) end
     for _, v in ipairs(airtopiaCmdTopic) do client:publish('airtopia/'..k..'/cmd/'..v, '', mqttQoS, RETAIN) end
-    logger('Removed device command and state topics')
+    logger('Removed device command and state topics', FORCE)
   end
 
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
@@ -978,7 +986,7 @@ function cudAt(initial)
         n = n + 1
         unpublishedAt[n] = {name=v['dev'], sa=v['sa'], unit=v['unit']}
       else
-        log('Error publishing Airtopia '..k..'. No suggested area given')
+        logger('Error publishing Airtopia '..k..'. No suggested area given', FORCE)
       end
     end
   end
@@ -986,7 +994,7 @@ function cudAt(initial)
   if addition then
     if not initial then
       -- Ensure that newly tagged/removed groups with the AT keyword send updates.
-      logger('AT object keywords added, restarting event script')
+      logger('AT object keywords added, restarting event script', FORCE)
       script.disable('AT'); script.enable('AT')
     end
     publishAtState()
@@ -1034,7 +1042,7 @@ function cudEnv(initial)
   end
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
   if addition then
-    if not initial then logger('ENV object keyword added') end
+    if not initial then logger('ENV object keyword added', FORCE) end
     for k, _ in pairs(envBoards) do client:subscribe(k..'/#', 2) end
   end
 end
@@ -1091,7 +1099,7 @@ function cudCBusTopics()
       queued[#queued + 1] = alias
     end
   end
-  if n > 0 then logger('Queued '..n..' object'..(n ~= 1 and 's' or '')..' with keyword MQTT for publication: '..table.concat(queued, ', ')) end
+  if n > 0 then logger('Queued '..n..' object'..(n ~= 1 and 's' or '')..' with keyword MQTT for publication: '..table.concat(queued, ', '), FORCE) end
 
   -- Handle deletions
   kill = {}
@@ -1104,7 +1112,7 @@ function cudCBusTopics()
       if parts[2] == '202' then
         for _, trigger in ipairs(v.trigger) do
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
-      	  client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic)
+      	  client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic, FORCE)
           local t = tonumber(string.match(trigger, '_(%w+)$'))
           local act
           local tk, tv
@@ -1117,7 +1125,7 @@ function cudCBusTopics()
         end
       else
         topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
-      	client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic)
+      	client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic, FORCE)
       end
       if parts[2] ~= '202' then
         local count
@@ -1147,7 +1155,7 @@ function cudCBusTopics()
           for _, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; break end end
           if trigger then
             topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
-            client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic '..topic)
+            client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic '..topic, FORCE)
             t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
             if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
             client:publish(t, '', mqttQoS, RETAIN)
@@ -1189,7 +1197,7 @@ function outstandingPublish()
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
     if script.status('MQTT') ~= nil then script.disable('MQTT'); script.enable('MQTT') end
-    logger('Published '..#unpublished..' CBus discovery and current level topic'..(#unpublished ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
+    logger('Published '..#unpublished..' CBus discovery and current level topic'..(#unpublished ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted', FORCE)
     unpublished = {}
   end
 end
@@ -1205,7 +1213,7 @@ function outstandingAtPublish()
   if #unpublishedAt > 0 then
     -- Ensure that newly tagged/removed groups with the AT keyword send updates
     if script.status('AT') ~= nil then script.disable('AT'); script.enable('AT') end
-    logger('Published '..#unpublishedAt..' Airtopia discovery and current level topic'..(#unpublishedAt ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
+    logger('Published '..#unpublishedAt..' Airtopia discovery and current level topic'..(#unpublishedAt ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted', FORCE)
     unpublishedAt = {}
   end
   publishAtState()
@@ -1228,72 +1236,72 @@ function outstandingMqttMessage()
 
       local net = tNetAC(tonumber(parts[3])); local app = tonumber(parts[4]); local group = tonumber(parts[5])
       local alias = net..'/'..app..'/'..group
-      if logging then logger(topic..' to '..payload) end
+      logger(topic..' to '..payload)
 
-      local lastLevel = storage.get('lastlvl', '')
+      local lastLevel = storage.get('lastlvl', {})
 
       if not parts[6] then
-        logger('MQTT error: Invalid message format')
+        logger('MQTT error: Invalid message format: '..topic, FORCE)
 
       elseif parts[6] == 'switch' then
-        if payload == 'ON' then      SetCBusLevel(net, app, group, 255, 0); if logging then logger('Payload is ON for '..alias) end
-        elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then logger('Payload is OFF for '..alias) end
+        if payload == 'ON' then      SetCBusLevel(net, app, group, 255, 0); logger('Payload is ON for '..alias)
+        elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   logger('Payload is OFF for '..alias)
         end
         
       elseif parts[6] == 'select' then
-        SetCBusLevel(net, app, group, selects[alias][payload], 0); if logging then logger('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
+        SetCBusLevel(net, app, group, selects[alias][payload], 0); logger('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias)
 
       elseif contains('press', parts[6]) and payload == 'PRESS' then -- Lighting group press
-        PulseCBusLevel(net, app, group, 255, 0, 1, 0); if logging then logger('Payload is PRESS') end
+        PulseCBusLevel(net, app, group, 255, 0, 1, 0); logger('Payload is PRESS')
 
       elseif parts[7] ~= nil and contains('press', parts[7]) and payload == 'PRESS' then -- Trigger level press
         level = triggers[group][parts[6]]
         if level ~= nil then
-          SetTriggerLevel(group, level); if logging then logger('Payload is PRESS') end
+          SetTriggerLevel(group, level); logger('Payload is PRESS')
         else
-          logger('Warning: MQTT trigger level received that is not published')
+          logger('Warning: MQTT trigger level received that is not published', FORCE)
         end
     
       elseif parts[6] == 'measurement' then SetCBusMeasurement(net, app, group, payload, 0)
 
       elseif parts[6] == 'ramp' then
-        if payload == 'OPEN' then      payload = '255'; if logging then logger("Payload is OPEN, so using RAMP instead") end
-        elseif payload == 'CLOSE' then payload = '0';   if logging then logger("Payload is CLOSE, so using RAMP instead") end
+        if payload == 'OPEN' then      payload = '255'; logger("Payload is OPEN, so using RAMP instead")
+        elseif payload == 'CLOSE' then payload = '0';   logger("Payload is CLOSE, so using RAMP instead")
         elseif payload == 'STOP' then
           -- Once a blind level has been set for CBus it is set regardless of the current blind
           -- position, which is not updated like a ramp, so a stop command is nonsensical
-          if logging then logger("Payload for '..alias..' is STOP, which is incompatible with CBus... ignoring") end
+          logger("Payload for '..alias..' is STOP, which is incompatible with CBus... ignoring")
           do return end
         elseif payload == 'ON' then
           if fan[alias] then
             if lastLevel[alias] then
-              payload = lastLevel[alias]; if logging then logger("Payload is fan ON, so using lastlevel instead") end
+              payload = lastLevel[alias]; logger("Payload is fan ON, so using lastlevel instead")
             else
-              payload = '255'; if logging then logger("Payload is fan ON, so using RAMP instead") end
+              payload = '255'; logger("Payload is fan ON, so using RAMP instead")
             end
           else
-            if logging then logger('Payload for '..alias..' is ON') end
+            logger('Payload for '..alias..' is ON')
             SetCBusLevel(net, app, group, 255, 0)
             do return end
           end
         end
         if payload == 'OFF' then
-          if logging then logger('Payload for '..alias..' is OFF') end
+          logger('Payload for '..alias..' is OFF')
           SetCBusLevel(net, app, group, 0, 0)
         else
           parts = string.split(payload, ',')
           local lev = tonumber(parts[1])
           local num
-          if lev ~= nil then num = math.floor(lev + 0.5) else logger('Warning: non-numeric CBus level for '..alias..', level='..parts[1]); num = nil end
+          if lev ~= nil then num = math.floor(lev + 0.5) else logger('Warning: non-numeric CBus level for '..alias..', level='..parts[1], FORCE); num = nil end
           if num ~= nil and num < 256 then
-            if logging then logger('Payload for '..alias..' is RAMP '..payload) end
+            logger('Payload for '..alias..' is RAMP '..payload)
             local toSet = 0
             local ramp = 0
             if not fan[alias] then 
-              if logging and lastLevel[alias] then logger('Last level '..lastLevel[alias]) end
+              if lastLevel[alias] then logger('Last level '..lastLevel[alias]) end
               if lastLevel[alias] and num == 255 then
                 if blindKey and contains(blindKey, GetCBusGroupTag(net, app, group)) then
-                  toSet = num; if logging then logger("Payload is 'Blind' ramp on, so ignoring lastlevel") end
+                  toSet = num; logger("Payload is 'Blind' ramp on, so ignoring lastlevel")
                 else
                   toSet = lastLevel[alias]
                 end
@@ -1301,7 +1309,7 @@ function outstandingMqttMessage()
                 toSet = num
               end
             else
-              if logging then logger("Payload is 'Fan' ramp, so ignoring lastlevel") end
+              logger("Payload is 'Fan' ramp, so ignoring lastlevel")
               toSet = num
             end
             if parts[2] ~= nil then ramp = tonumber(parts[2]) else ramp = 0 end
@@ -1331,7 +1339,7 @@ function outstandingMqttMessage()
         if (sel == 'func' and parts[5] == 'state') or (sel == 'sel' and parts[4] == 'state') or sel == 'sense' then
           if ignoreCbus[alias] and os.time() - ignoreCbus[alias] > ignoreTimeout then -- Don't worry about older 'ignore' flags
             ignoreCbus[alias] = nil
-            if logging then logger('Ignoring older CBus ignore flag for '..alias) end
+            logger('Ignoring older CBus ignore flag for '..alias)
           end
           if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change, and if it is different to the current value
             local set = false
@@ -1344,10 +1352,10 @@ function outstandingMqttMessage()
             end
             -- Setting CBus here will result in the AC event script requesting publication of the state using publishAc() above.
             -- This is undesired, so ignoreMqtt[alias] is used to ensure that the CBus change received does not publish to MQTT.
-            if set then ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end end
+            if set then ignoreMqtt[alias] = os.time() logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
           else
             ignoreCbus[alias] = nil
-            if logging then logger('Ignoring CBus publish for '..alias) end
+            logger('Ignoring CBus publish for '..alias)
           end
           ac[alias].state = payload
         end
@@ -1386,13 +1394,13 @@ function outstandingMqttMessage()
             if set and pld ~= nil then
               -- Send to CBus, ensuring MQTT ignore is set...
               local alias = atBoards[parts[2]]['alias']
-              ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..pld) end
+              ignoreMqtt[alias] = os.time(); logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..pld)
               SetUserParam(net, pwrgrp, pld)
             end
             -- publish to CBus
             local extant = GetUserParam(net, group)
             if i ~= extant and payload ~= 'off' then -- Set mode, but not if it is 'off'
-              ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
+              ignoreMqtt[alias] = os.time(); logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload)
               SetUserParam(net, group, i)
             end
           end
@@ -1437,7 +1445,7 @@ function outstandingMqttMessage()
           -- publish to CBus
           local extant = GetUserParam(net, group)
           if payoad ~= extant then
-            ignoreMqtt[alias] = os.time() if logging then logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
+            ignoreMqtt[alias] = os.time(); logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload)
             SetUserParam(net, group, payload)
           end
         end
@@ -1489,24 +1497,27 @@ function outstandingCbusMessage()
         local setting = true
         local payload = tonumber(parts[4]) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
         if lighting[parts[2]] then -- Lighting application, so check for ramp
-          if logging then logger('Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group))) end
+          local lastLevel = storage.get('lastlvl', {})
+          logger('Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group)))
           -- A CBus ramp up and down can annoyingly begin with a zero level, then steadily converge to the target level. This initial
           -- zero should not be published to MQTT so it is ignored. If an initial zero is not seen then the ramp will be orphaned (and
           -- ultimately cleaned up/published, albeit a bit late after rampTimeout seconds).
           if not ramp[alias] then
             if GetCBusRampRate(net, app, group) > 0 then
-              ramp[alias] = { ts=os.time(), ramp=GetCBusRampRate(net, app, group), target=GetCBusTargetLevel(net, app, group) }
+              if lastLevel[alias] ~= GetCBusTargetLevel(net, app, group) or not lastLevel[alias] then
+                ramp[alias] = { ts=os.time(), ramp=GetCBusRampRate(net, app, group), target=GetCBusTargetLevel(net, app, group) }
+              end
               if payload == 0 then
                 setting = false
-                if logging then logger('Set ramp for '..alias..' and suppress zero send') end
+                if ramp[alias] then logger('Set ramp for '..alias..' and suppress zero send') end
               else
-                if logging then logger('Set ramp for '..alias) end
+                if ramp[alias] then logger('Set ramp for '..alias) end
               end
             end
           else
             if ramp[alias].target ~= GetCBusTargetLevel(net, app, group) then -- Target level has changed so cancel ramp
               ramp[alias] = nil
-              if logging then logger('Cancel ramp for '..alias) end
+              logger('Cancel ramp for '..alias)
               if payload == 0 and GetCBusRampRate(net, app, group) > 0 then setting = false end -- Ignore initial zero if ramp on
             end
           end
@@ -1522,10 +1533,15 @@ function outstandingCbusMessage()
           -- Groups other than lighting are never ramped, so setting is always true
         end
         if setting then
-          publish(tNetCBus(net), app, group, payload)
-          if ramp[alias] and payload == ramp[alias].target then
-            ramp[alias] = nil
-            if logging then logger('Clear ramp for '..alias) end
+          if ramp[alias] then
+            if payload == ramp[alias].target then
+              ramp[alias] = nil
+              logger('Clear ramp for '..alias)
+              -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
+              publish(tNetCBus(net), app, group, payload)
+            end
+          else
+            publish(tNetCBus(net), app, group, payload)
           end
           if app ~= 202 then -- Not trigger
             sKey = 'pre'..alias
@@ -1564,7 +1580,7 @@ function checkRampOrphans()
       publish(tNetCBus(net), app, group, v.target)
     end
   end
-  for _, k in ipairs(orphan) do ramp[k] = nil; if logging then logger('Removing orphaned ramp for '..k) end end
+  for _, k in ipairs(orphan) do ramp[k] = nil; logger('Removing orphaned ramp for '..k) end
 end
 
 
@@ -1606,14 +1622,14 @@ while true do
       if validateIncoming(cmd) then
         cbusMessages[#cbusMessages + 1] = cmd -- Queue the new message
       else
-        logger('Invalid command received: '..cmd)
+        logger('Invalid command received: '..cmd, FORCE)
       end
       server:settimeout(0); more = true; goto checkAgain -- Immediately check for more buffered inbound messages to queue
     else
       if more then server:settimeout(socketTimeout) end
     end
   end)
-  if not stat then logger('Socket receive error: '..err) end
+  if not stat then logger('Socket receive error: '..err, FALSE) end
 
   -- Process MQTT message buffers synchronously - sends and receives
   client:loop(mqttTimeout)
@@ -1638,12 +1654,12 @@ while true do
       -- Connected...
       -- If duplicate discovery topics are detected then remove them (discoveryDelete is set in broker ON_MESSAGE)
       if len(discoveryDelete) > 0 then
-        logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics')
+        logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics', FORCE)
         for toDelete, _ in pairs(discoveryDelete) do
           local parts = string.split(toDelete, '/')
           local oid = parts[1]
           local dType = parts[2]
-          logger('Removing '..mqttDiscoveryTopic..dType..'/'..oid..'/config')
+          logger('Removing '..mqttDiscoveryTopic..dType..'/'..oid..'/config', FORCE)
           client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
         end
         discoveryDelete = {}
@@ -1666,6 +1682,6 @@ while true do
         heartbeat = os.time(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
       end
     end)
-    if not stat then logger('A fault occurred sending heartbeat. Restarting...'); do return end end
+    if not stat then logger('A fault occurred sending heartbeat. Restarting...', FORCE); do return end end
   end
 end
