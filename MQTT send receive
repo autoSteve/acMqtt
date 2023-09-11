@@ -413,7 +413,7 @@ function addDiscover(net, app, group, channel, tags, name)
     -- Any other unrecognised keywords that may be set are ignored
   end
   
-  if dtype == 'light' and app == 228 then dtype = 'sensor' end -- Measurement app sensor with incorrect/missing type
+  if dtype == 'light' and app == 228 then dtype = 'sensor'; logger('Warning: publishing '..alias..' as a sensor', FORCE) end -- Measurement app sensor with incorrect/missing type
   
   if logging then
     if sa == '' then dSa = 'no preferred area' else dSa = sa end
@@ -606,9 +606,11 @@ function addDiscover(net, app, group, channel, tags, name)
         -- If dType has changed for an existing discovery topic then remove the previous topic
         if discovery[boid] ~= nil and discovery[boid] ~= dType then
           client:publish(mqttDiscoveryTopic..discovery[boid]..'/'..boid..'/config', '', mqttQoS, RETAIN)
+          logger('Removed discovery topic'..mqttDiscoveryTopic..discovery[boid]..'/'..boid..'/config')
         end
         -- Publish to MQTT broker
         local j = json.encode(payload)
+        logger('Publishing '..mqttDiscoveryTopic..dType..'/'..boid..'/config')
         client:publish(mqttDiscoveryTopic..dType..'/'..boid..'/config', j, mqttQoS, RETAIN)
         table.insert(mqttDevices[aAlias].trigger, boid)
       end
@@ -646,11 +648,13 @@ function addDiscover(net, app, group, channel, tags, name)
   -- If dType has changed for an existing discovery topic then remove the previous topic
   if discovery[oid] ~= nil and discovery[oid] ~= dType then
     client:publish(mqttDiscoveryTopic..discovery[oid]..'/'..oid..'/config', '', mqttQoS, RETAIN)
+    logger('Removed discovery topic '..mqttDiscoveryTopic..discovery[oid]..'/'..oid..'/config')
   end
 
   -- Publish to MQTT broker
   discovery[oid] = dType
   local j = json.encode(payload)
+  logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config')
   client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
 end
 
@@ -695,6 +699,7 @@ function addAtDiscover(name, sa, unit)
 
   -- Publish to MQTT broker
   local j = json.encode(payload)
+  logger('Publishing '..mqttDiscoveryTopic..'climate/'..oid..'/config')
   client:publish(mqttDiscoveryTopic..'climate/'..oid..'/config', j, mqttQoS, RETAIN)
 
   -- Add a power consumption sensor discovery topic
@@ -708,6 +713,7 @@ function addAtDiscover(name, sa, unit)
     unit_of_meas = unit,
   }
   local j = json.encode(payload)
+  logger('Publishing'..mqttDiscoveryTopic..'sensor/'..oid..'_power'..'/config')
   client:publish(mqttDiscoveryTopic..'sensor/'..oid..'_power'..'/config', j, mqttQoS, RETAIN)
 end
 
@@ -1670,7 +1676,7 @@ while true do
     if #cbusMessages > 0 then outstandingCbusMessage() end -- Send outstanding messages to MQTT
     if #unpublished > 0 then outstandingPublish() end      -- Publish outstanding CBus discovery topics
     if #unpublishedAt > 0 then outstandingAtPublish() end  -- Publish outstanding Airtopia discovery topics
-    if len(ramp) > 0 then checkRampOrphans() end           -- Some scenarios create ramp orphans
+    if len(ramp) > 0 then checkRampOrphans() end           -- Some scenarios can create ramp orphans
     if checkForChanges then                                -- Periodically create/update/delete device items that change
       for _, c in ipairs(cud) do if os.time() - c.t >=checkChanges then c.t = os.time(); c.func() end end
     end
@@ -1678,19 +1684,19 @@ while true do
     -- MQTT is disconnected, so attempt a connection every five seconds
     mqttConnected = os.time()
     client:connect(mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
-    -- Allow some settling time for subscriptions with retain flag
+    -- Allow some settling time by servicing the client, acquiring subscriptions with retain flag
     time = socket.gettime() while socket.gettime() - time < 2 do client:loop(0) end
     if mqttStatus == 1 then
       -- Connected...
-      -- If duplicate discovery topics are detected then remove them (discoveryDelete is set in broker ON_MESSAGE)
+      -- If duplicate discovery topics are detected then remove them (discoveryDelete is set in broker ON_MESSAGE call-back)
       if len(discoveryDelete) > 0 then
         logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics', FORCE)
         for toDelete, _ in pairs(discoveryDelete) do
           local parts = string.split(toDelete, '/')
           local oid = parts[1]
           local dType = parts[2]
-          logger('Removing '..mqttDiscoveryTopic..dType..'/'..oid..'/config', FORCE)
           client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
+          logger('Removed discovery topic '..mqttDiscoveryTopic..dType..'/'..oid..'/config', FORCE)
         end
         discoveryDelete = {}
       end
