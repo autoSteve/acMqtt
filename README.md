@@ -43,12 +43,13 @@ One of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bsenso
 - img=    Image
 - pn=     Preferred name (defaults to CBus tag)
 - class=  Device class to use in Home Assistant (User param/sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
-- dec=    Decimal places (User param only)
-- unit=   Unit of measurement (User param only)
-- scale=  Multiplier / divider (User param only)
+- dec=    Decimal places (User param/sensor only)
+- unit=   Unit of measurement (User param/sensor only)
+- scale=  Multiplier / divider (User param/sensor only)
 - lvl=    List of applicable levels, separated by "-' (Trigger button and select only)
 - on=     Alias shown in HA for a 'bsensor' ON value (bsensor only)
 - off=    Alias shown in HA for a 'bsensor' OFF value (bsensor only)
+- Plus the tag includeunits if measurement application sensor MQTT values should have the unit of measurement included (for the measurement app the unit is read from CBus, not the unit= tag). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number.
 
 Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
@@ -133,10 +134,10 @@ For Airtopia devices, add the keyword 'AT' to user parameters, plus...
 -  sa=    Suggested area (to at least one of the device user parameters)
 
 And one or more of:
--  func=  Function (power, mode, vert_swing, horiz_swing, target_temperature, fan, which results in airtopia/{dev}/state/{func}/#, commands issued to airtopia/{dev}/cmd/{func}/#)
+-  func=  Function (power, mode, vert_swing, horiz_swing, target_temperature, fan)
 
 ... or
--  sense= A read only sensor like current_temperature, power_consumption, which results in airtopia/{dev}/state/{sense}/#)
+-  sense= A read only sensor like current_temperature, power_consumption
 
 ### Environment Monitors (MQTT send receive)
 Environment monitors can pass sensor data to CBus (using ESPHome devices, see example .yaml).
