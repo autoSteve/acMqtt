@@ -76,7 +76,7 @@ binarySensor = {}      -- Quick lookup to determine whether an object is a binar
 lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
 userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 publishAdj = {}        -- Holds scale and decimals to apply
-suppressUnits = {}     -- Holds table of booleans to suppress appending unit to MQTT
+includeUnits = {}      -- Holds table of booleans to add sensor unit (%, $, °C, etc.) to MQTT value
 unpublished = {}       -- The outstanding set of CBus objects to publish discovery topics for
 unpublishedAt = {}     -- The outstanding set of CBus Airtopia objects to publish discovery topics for
 mqttStatus = 2         -- The status of the MQTT connection. Initially disconnected 1=connected, 2=disconnected
@@ -246,7 +246,7 @@ function publishMeasurement(net, app, group, channel, value)
   if value == nil then logger('Warning: Nil CBus measurement value for '..net..'/'..app..'/'..group, FORCE); do return end end
   local adjust = publishAdj[alias]
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
-  if not suppressUnits[alias] then
+  if includeUnits[alias] then
     _, units = GetCBusMeasurement(net, group, channel)
     if units == '$' then
       v = units..tostring(v)
@@ -388,7 +388,7 @@ function addDiscover(net, app, group, channel, tags, name)
   local off = 'Off'     -- bsensor 'off' string
   local levels = {}     -- Assume lvl= keyword is blank
   local dType = 'light' -- Use light as default HA type if not specified
-  local noUnit = False
+  local includeUnit = False
   local lvl = false
   
   -- Build an alias to refer to each group
@@ -397,9 +397,11 @@ function addDiscover(net, app, group, channel, tags, name)
   -- Extract MQTT topic settings
   for _, t in ipairs(tags) do
     tp = string.split(t, '=')
-    tp[1] = trim(tp[1])
-    if tp[2] or tp[1] == 'nounit' then
-      if tp[2] then tp[2] = trim(tp[2]) end
+    tp[1] = trim(tp[1]):lower()
+    if tp[1] == 'includeunit' then includeUnit = true
+    end
+    if tp[2] then
+      tp[2] = trim(tp[2])
       if tp[1] == 'sa' then sa = tp[2]
       elseif tp[1] == 'pn' then pn = tp[2]
       elseif tp[1] == 'img' then img = tp[2]
@@ -407,7 +409,6 @@ function addDiscover(net, app, group, channel, tags, name)
       elseif tp[1] == 'class' then class = tp[2]
       elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
       elseif tp[1] == 'scale' then scale = tonumber(tp[2])
-      elseif tp[1] == 'nounit' then noUnit = true
       elseif tp[1] == 'on' then on = tp[2]
       elseif tp[1] == 'off' then off = tp[2]
       elseif tp[1] == 'lvl' then levels = string.split(tp[2], '-'); lvl = true
@@ -419,7 +420,7 @@ function addDiscover(net, app, group, channel, tags, name)
   end
   
   if dtype == 'light' and app == 228 then dtype = 'sensor'; logger('Warning: publishing '..alias..' as a sensor', FORCE) end -- Measurement app sensor with incorrect/missing type
-  if noUnit then suppressUnits[alias] = true else suppressUnits[alias] = nil end
+  if includeUnit then includeUnits[alias] = true log(includeUnits) else includeUnits[alias] = nil end
   if logging then
     if sa == '' then dSa = 'no preferred area' else dSa = sa end
     if dType ~= 'bsensor' then
@@ -1184,7 +1185,7 @@ function cudCBusTopics()
           if mqttJunk then client:publish(topic..'/level', 'junk', mqttQoS, RETAIN) end
           client:publish(topic..'/level', '', mqttQoS, RETAIN)
         end
-        suppressUnits[alias] = nil
+        includeUnits[alias] = nil
       end
     else
       -- Handle trigger level removal
