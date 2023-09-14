@@ -594,19 +594,21 @@ function addDiscover(net, app, group, channel, tags, name)
         triggers[group][action] = tonumber(i)
         if pn == name then prefix = '' else prefix = pn..' ' end
         local entity = prefix..tag
-        local startIdx, endIdx
-        repeat
-          startIdx, endIdx = entity:find(sa, 1, true)
-          if startIdx and startIdx == 1 then
-            entity = entity:sub(endIdx + 1):match'^%s*(.*)'
-          end
-        until not startIdx or startIdx > 1
+        if sa ~= '' then
+          local startIdx, endIdx
+          repeat
+            startIdx, endIdx = entity:find(sa, 1, true)
+            if startIdx and startIdx == 1 then
+              entity = entity:sub(endIdx + 1):match'^%s*(.*)'
+            end
+          until not startIdx or startIdx > 1
+        end
         payload = {
           name = '',
           obj_id = boid,
           uniq_id = boid,
           cmd_t = mqttWriteTopic..alias..'/'..action..'/press',
-          dev = { name=entity, ids=sa..' '..entity, sa=sa, mf='Schneider Electric', mdl='CBus' },
+          dev = { name=entity, ids=trim(sa..' '..entity), sa=sa, mf='Schneider Electric', mdl='CBus' },
         }
         if img ~= '' then payload.ic = img end
         -- If dType has changed for an existing discovery topic then remove the previous topic
