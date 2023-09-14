@@ -26,7 +26,7 @@ LUA scripts for the automation controller:
 
 If you don't care for integrating Philips Hue or Airtopia, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there and will just be unused.
 
-**Note**: A change to the discovery behaviour has been made to accommodate a non-breaking change in HA 2023.8, which will become breaking in 2024.2. CBus devices are now created *per suggested area*, with multiple entities per device. This is a departure from the old behaviour where a device was created per entity, and allows entity naming to conform to the HA naming standard. Existing devices will not be cleaned up (so manual cleanup might be required), but entities will be moved to the newly created devices. Entity IDs are unchanged.
+**Note**: A change to the discovery behaviour has been made to accommodate a non-breaking change in HA 2023.8, which will become breaking in 2024.2. CBus devices are now created using a blank entity name to end up with a sole entity for each device, in line with the HA naming standards.
 
 ~~Note that some of my scripts require automation controller firmware 1.10.0+. Also note that 1.10.0 and 1.11.0 contain a bug where event-based scripts that are set to not execute during ramping actually do, and this has significance for Hue ramping. See issue #10. So if you're on v1.6.0 then these scripts are un-tested.~~ **Note**: A work-around script is provided for HUE final to address a firmware bug. See issue #10.
 
