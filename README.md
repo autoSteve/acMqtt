@@ -31,7 +31,7 @@ If you don't care for integrating Philips Hue or Airtopia, then don't deploy tho
 ~~Note that some of my scripts require automation controller firmware 1.10.0+. Also note that 1.10.0 and 1.11.0 contain a bug where event-based scripts that are set to not execute during ramping actually do, and this has significance for Hue ramping. See issue #10. So if you're on v1.6.0 then these scripts are un-tested.~~ **Note**: A work-around script is provided for HUE final to address a firmware bug. See issue #10.
 
 ## Keywords used for Automation Controller objects
-Newly added keywords can be regularly detected by both the 'MQTT send receive' and 'HUE send receive' scripts. This is configurable by setting an option that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is sixty seconds, and that is also a configurable variable. Note that (for now) if using Airtopia the 'MQTT send receive' must have the checkForChanges variable set to true.
+Newly added keywords can be regularly detected by both the 'MQTT send receive' and 'HUE send receive' scripts. This is configurable by setting an option that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is thirty seconds, and that is also a configurable variable.
 
 ### CBus (MQTT send receive)
 Lighting, measurement, user parameter and trigger control applications are implemented.
@@ -63,6 +63,8 @@ If it is desirable to allow CBus levels other than the select levels to be set t
 For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
 
 CBus fan controller objects can use either 'fan' or 'fan_pct' keywords. The former will use a preset mode of low/medium/high, while the latter discovers as a raw percentage fan in Home Assistant.
+
+The image keyword img= will default to several different "likely" values based on name or preferred name keywords. If the script gets it wrong, then add a img= keyword, or contact me by raising an issue for cases where it's stupidly wrong.
 
 Keyword examples:
 
