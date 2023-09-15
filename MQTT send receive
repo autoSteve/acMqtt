@@ -97,7 +97,7 @@ heartbeat = os.time()
 started = socket.gettime()
 
 function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring
-function trim(s) return s:match "^%s*(.-)%s*$" end -- Remove leading and trailing spaces
+function trim(s) if s ~= nil then return s:match "^%s*(.-)%s*$" else return nil end end -- Remove leading and trailing spaces
 function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
 function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get number of dictionary members
@@ -419,6 +419,19 @@ function addDiscover(net, app, group, channel, tags, name)
     -- Any other unrecognised keywords that may be set are ignored
   end
   
+  -- Default images for a lighting group
+  if img == '' and lighting[tostring(app)] then
+    local pnl = pn:lower()
+    if contains('heat', pnl) then img = 'mdi:radiator'
+    elseif contains('blind', pnl) then img = 'mdi:blinds'
+    elseif contains('under floor', pnl) then if contains('enable', pnl) then img = 'mdi:radiator-disabled' else img = 'mdi:radiator' end
+    elseif contains('towel rail', pnl) then if contains('enable', pnl) then img = 'mdi:radiator-disabled' else img = 'mdi:radiator' end
+    elseif contains('fan', pnl) then if contains('sweep', pnl) then img = 'mdi:ceiling-fan' else img = 'mdi:fan' end
+    elseif contains('gate', pnl) then if contains('open', pnl) then img = 'mdi:gate-open' else img = 'mdi:gate' end
+    else img = 'mdi:lightbulb'
+    end
+  end
+
   if dtype == 'light' and app == 228 then dtype = 'sensor'; logger('Warning: publishing '..alias..' as a sensor', FORCE) end -- Measurement app sensor with incorrect/missing type
   if includeUnit then includeUnits[alias] = true log(includeUnits) else includeUnits[alias] = nil end
   if logging then
