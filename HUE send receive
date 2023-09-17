@@ -49,13 +49,13 @@ resource = '/clip/v2/resource'
 connectivity = '/clip/v2/resource/zigbee_connectivity'
 clientKeyStorage = 'huesendreceive'
 
-socketTimeout = 0.2    -- Lower = higher CPU, higher = less responsiveness - both timeouts often occur each main loop
+socketTimeout = 0.1    -- Lower = higher CPU, higher = less responsiveness - both timeouts often occur each main loop
 bridgeTimeout = 0.1    -- Lower = higher CPU, higher = less responsiveness
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
 ignoreTimeout = 2      -- Timeout for stale ignore messages in seconds (two seconds is a long time...)
 minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brightness level, with the lamp then turned off 
 rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
-pendingTimeout = 45    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream is quite delayed)
+pendingTimeout = 30    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream updates are quite delayed from lights)
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 heartbeatConditions = { ['max'] = 90, ['storageExists'] = 'hueactive' } -- At most 90 seconds without a heartbeat or else restart, but only if hueactive exists
 
@@ -77,7 +77,10 @@ ramp = {}              -- Keeps track of CBus ramping
 pendingEndRamp = {}    -- Keeps track of the end of Hue transition (always occurs after the CBus ramp conclusion is reported)
 nonTargetUpdate = {}   -- Watch for non-ramp target Hue updates 
 
-started = socket.gettime(); function logger(msg) if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end -- Log helper
+FORCE = true
+
+started = socket.gettime();
+function logger(msg, force) if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get number of dictionary members
 
 heartbeat = os.time()
@@ -108,7 +111,7 @@ if server then server:close() end -- Handle script re-entry
 server = require('socket').udp()
 server:settimeout(socketTimeout)
 if not server:setsockname('0.0.0.0', huePort) then -- Listen on huePort/all interfaces for Hue object changes
-  logger('Error: Could not listen on port '..huePort)
+  logger('Error: Could not listen on port '..huePort, FORCE)
   storage.set('hueactive', true) -- Ensure that Heartbeat can re-start this script should an error occur
   socket.sleep(60)
   do return end
@@ -136,7 +139,7 @@ function rest(method, cmd, body)
   }
   if respcode ~= 200 then
     local j = json.decode(respbody[1])
-    logger('Error: Received response '..respcode..' requesting '..method..' '..cmd..' '..j.errors[1].description)
+    logger('Error: Received response '..respcode..' requesting '..method..' '..cmd..' '..j.errors[1].description, FORCE)
   end
   return table.concat(respbody)
 end
@@ -148,11 +151,11 @@ Retrieve or create the client key
 
 clientKey = storage.get(clientKeyStorage)
 if clientKey == nil then
-  logger('Press the Hue bridge link button')
+  logger('Press the Hue bridge link button', FORCE)
   repeat
     response = json.decode(rest('POST', '/api', '{"devicetype":"cbus#ac", "generateclientkey": true}'))[1]
     if response.error and response.error.description:find('not pressed') then
-      logger('Waiting for link button...')
+      logger('Waiting for link button...', FORCE)
       socket.sleep(5)
     end
   until response.success
@@ -169,7 +172,7 @@ Load lighting devices from the bridge (REST call or in response to the event str
 function getResources(msg)
   local discovered = nil
   if not msg then
-    if logging then logger('Get light devices') end
+    logger('Get light devices')
     msg = json.decode(rest('GET', resource..'/light'))
   end
   for _, d in ipairs(msg.data) do
@@ -196,9 +199,13 @@ function getResources(msg)
   if discovered ~= nil then
     local ds = ''
     for _, d in pairs(discovered) do
-      ds = ds..'\n'..d.name..', id: '..d.id
+      if logging then
+        ds = ds..'\n'..d.name..', id: '..d.id
+      else
+        ds = ds..'\n'..d.name
+      end
     end
-    logger('Discovered devices:'..ds)
+    logger('Discovered devices:'..ds, FORCE)
   end
 end
 
@@ -215,18 +222,18 @@ if res then
   sock = ssl.wrap(sock, protocol)
   res, err = sock:dohandshake()
   if res then
-    logger('Connected to Philips Hue bridge')
+    logger('Connected to Philips Hue bridge', FORCE)
     sock:settimeout(bridgeTimeout)
     getResources()
     sock:send('GET '..eventStream..' HTTP/1.1\nHost: '..bridge..'\nAccept: text/event-stream\nhue-application-key: '..clientKey..'\n\n')
   else
-    logger('Handshake failed, restarting in 60 seconds: '..tostring(err))
+    logger('Handshake failed, restarting in 60 seconds: '..tostring(err), FORCE)
     sock:close()
     socket.sleep(60)
     do return end
   end
 else
-  logger('Connect failed, restarting in 60 seconds: '..tostring(err))
+  logger('Connect failed, restarting in 60 seconds: '..tostring(err), FORCE)
   sock:close()
   socket.sleep(60)
   do return end
@@ -265,12 +272,12 @@ function cudHue(initial)
         local hueLevel = hueDeviceStatus[hueV1Ids[pn]].level; hueLevel = (hueLevel == 254 and 255) or hueLevel
         if not ramp[alias] then -- Do not mess with the CBusLevel during ramping
           if level ~= hueLevel and hueDeviceStatus[hueV1Ids[pn]].on then
-            if logging then logger('Adjusting '..alias..' to match Hue, on=true, level='..level..', hueLevel='..hueLevel) end
+            logger('Adjusting '..alias..' to match Hue, on=true, level='..level..', hueLevel='..hueLevel)
             SetCBusLevel(net, app, group, hueLevel, 0)
             level = hueLevel
           end
           if level > 0 and not hueDeviceStatus[hueV1Ids[pn]].on then
-            if logging then logger('Adjusting '..alias..' to match Hue, on=false, level='..level..', hueLevel='..hueLevel) end
+            logger('Adjusting '..alias..' to match Hue, on=false, level='..level..', hueLevel='..hueLevel)
             SetCBusLevel(net, app, group, 0, 0)
             level = 0
           end
@@ -313,7 +320,7 @@ function saveLastLevel()
 
   if #changed then
     storage.set('lastlvlhue', lastLevel)
-    if logging then logger('Saved last levels. Object(s) changed: '..table.concat(changed, ', ')) end
+    logger('Saved last levels. Object(s) changed: '..table.concat(changed, ', '))
   end
 end
 
@@ -325,7 +332,7 @@ function checkNewLastLevel(alias, target)
   if target ~= 0 then
     if target ~= lastLevel[alias] then
       lastLevel[alias] = target
-      if logging then logger('Set lastLevel to '..target..' for '..alias) end
+      logger('Set lastLevel to '..target..' for '..alias)
       saveLastLevel()
     end
   end
@@ -344,7 +351,7 @@ function publishHue(alias, level, rampRate, prev)
   if hue[alias].dimmable then
     hueState = level
     payload.bri = (level == 255 and 254) or level -- Max Hue level is 254
-    if rampRate then payload.transitiontime = math.floor(rampRate*10 + 0.5); nonTargetUpdate[alias] = false end -- Set transition with a minimum time of 4s (the Hue default)
+    if rampRate then payload.transitiontime = math.floor(rampRate*10 + 0.5); nonTargetUpdate[alias] = false end -- Set transition time
   else
     hueState = state
   end
@@ -352,14 +359,14 @@ function publishHue(alias, level, rampRate, prev)
   if not ignoreBridge[alias] then
     -- Publishing to the bridge here will result in outstandingBridgeMessage() below setting the CBus state for the group.
     -- This is undesired, so ignoreCbus[alias] is used to ensure that the bridge change received does not set CBus.
-    if hueState ~= prev then ignoreCbus[alias] = socket.gettime(); if logging then logger('Setting ignoreCBus for '..alias) end end
+    if hueState ~= prev then ignoreCbus[alias] = socket.gettime(); logger('Setting ignoreCBus for '..alias) end
     local toPut = json.encode(payload)
     local resource = '/api/'..clientKey..hueV1Ids[hue[alias].name]..'/state'
     rest('PUT', resource, toPut)
-    if logging then logger('Published Hue state and level '..hue[alias].name..' to '..toPut) end
+    logger('Published Hue state and level '..hue[alias].name..' to '..toPut)
   else
     ignoreBridge[alias] = nil
-    if logging then logger('Ignoring bridge publish for '..alias) end
+    logger('Ignoring bridge publish for '..alias)
   end
 end
 
@@ -369,7 +376,7 @@ Publish the next queued messages from CBus to bridge
 --]]
 
 function outstandingCbusMessage()
-  if logging and logms then logger('Entering outstandingCbusMessage()') end
+  if logms then logger('Entering outstandingCbusMessage()') end
   local cmd
   for _, cmd in ipairs(cbusMessages) do
     local parts, payload
@@ -394,21 +401,23 @@ function outstandingCbusMessage()
         if ramp[alias].target == 255 and hueDeviceStatus[hueV1Ids[hue[alias].name]].level == 254 then expectingMore = false end
       end
       if expectingMore then
-        if logging then logger('Clear ramp for '..alias..' (setting pending end ramp to wait for lamp at target level)') end
+        logger('Clear ramp for '..alias..' (setting pending end ramp to wait for lamp status at target level)')
+        -- Hue bulbs can take quite a while after the transition is complete to report their status.
+        -- This script can wait for that final status message by setting pendingEndRamp, which will suppress setting lastLevel or any updates beyond the expected transition time.
         pendingEndRamp[alias] = {ts = socket.gettime(), rampts = ramp[alias].ts, target = ramp[alias].target, transitionTime = ramp[alias].transitionTime}
       else
-        if logging then logger('Clear ramp for '..alias..' (lamp at target level)') end -- Transition complete, so no more Hue updates will arrive
+        logger('Clear ramp for '..alias..' (lamp at target level)') -- Transition complete, so no more Hue updates will arrive
       end
       ramp[alias] = nil
       local p = payload
       if tonumber(payload) then p = string.format('%.3f', payload) end
-      storage.set(sKey, p) if logging then logger('Previous for '..alias..' has been saved in outstandingCbus target level as '..p) end -- Save 'previous' for use in the HUE event-based script
+      storage.set(sKey, p) logger('Previous for '..alias..' has been saved in outstandingCbus target level as '..p) -- Save 'previous' for use in the HUE event-based script
       goto next
     end
     
     local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3])
     local setRamp = false
-    if payload == nil then logger('Warning: Nil level for '..alias); goto next end
+    if payload == nil then logger('Warning: Nil level for '..alias, FORCE); goto next end
 
     local prev = tonumber(storage.get(sKey, 0))
     local targetRamp = GetCBusRampRate(net, app, group)
@@ -421,8 +430,9 @@ function outstandingCbusMessage()
 
     if not hueDeviceStatus[hueV1Ids[hue[alias].name]].reachable then
       SetCBusLevel(net, app, group, prev, 0)
-      logger('Warning: No connectivity for '..hue[alias].name..' reverting '..alias..' to previous value')
-      ignoreBridge[alias] = socket.gettime() if logging then logger('Setting ignoreBridge for '..alias) end
+      logger('Warning: No connectivity for '..hue[alias].name..' reverting '..alias..' to previous value', FORCE)
+      ignoreBridge[alias] = socket.gettime()
+      logger('Setting ignoreBridge for '..alias)
       goto next
     end
     
@@ -433,14 +443,14 @@ function outstandingCbusMessage()
         checkNewLastLevel(alias, targetLevel)
         setRamp = true
         if targetRamp > 0 then
-          local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp + 10 -- Calculate transition time from ramp rate, plus margin to ensure the transition finishes after the CBus ramp
+          local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp + 1 -- Calculate transition time from ramp rate, plus margin to ensure the transition finishes after the CBus ramp
           ramp[alias] = {
             ts = socket.gettime(),
             ramp = targetRamp,
             target = targetLevel,
             transitionTime = transitionTime
           }
-          if logging then logger('Set ramp for '..alias) end
+          logger('Set ramp for '..alias)
         end
       end
     else
@@ -448,17 +458,17 @@ function outstandingCbusMessage()
         checkNewLastLevel(alias, targetLevel)
         setRamp = true
         if targetRamp > 0 then
-          local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp + 10 -- Calculate transition time from ramp rate, plus margin to ensure the transition finishes after the CBus ramp
+          local transitionTime = math.abs(targetLevel - prev) / 256 * targetRamp + 1 -- Calculate transition time from ramp rate, plus margin to ensure the transition finishes after the CBus ramp
           ramp[alias] = {
             ts = socket.gettime(),
             ramp = targetRamp,
             target = targetLevel,
             transitionTime = transitionTime
           }
-          if logging then logger('Re-set ramp for '..alias) end
+          logger('Re-set ramp for '..alias)
         else
           ramp[alias] = nil
-          if logging then logger('Cancel ramp for '..alias) end
+          logger('Cancel ramp for '..alias)
         end
       end
       if payload == ramp[alias].target then setting = false end -- Final level has not yet arrived, so suppress set
@@ -469,12 +479,12 @@ function outstandingCbusMessage()
       end
       local p = payload
       if tonumber(payload) then p = string.format('%.3f', payload) end
-      storage.set(sKey, p) if logging then logger('Previous for '..alias..' has been saved in outstandingCbus setting as '..p) end -- Save 'previous' for use in the HUE event-based script
+      storage.set(sKey, p) logger('Previous for '..alias..' has been saved in outstandingCbus setting as '..p) -- Save 'previous' for use in the HUE event-based script
     end
     ::next::
   end
   cbusMessages = {}
-  if logging and logms then logger('Exiting outstandingCbusMessage()') end
+  if logms then logger('Exiting outstandingCbusMessage()') end
 end
 
 
@@ -507,18 +517,18 @@ function outstandingBridgeMessage()
         -- Dimmable
         if pendingEndRamp[alias] then
           local pendingDone = false
-          if pendingEndRamp[alias].target == 0 and not hueDeviceStatus[id].on and hueDeviceStatus[id].brightness == minHueBri then pendingDone = true end
+          if pendingEndRamp[alias].target == 0 and not hueDeviceStatus[id].on and (hueDeviceStatus[id].brightness == minHueBri or hueDeviceStatus[id].brightness == 0) then pendingDone = true end
           if pendingEndRamp[alias].target > 0 and hueDeviceStatus[id].on then
-            if level == pendingEndRamp[alias].target then pendingDone = true end
+            if pendingEndRamp[alias].target == level then pendingDone = true end
             if pendingEndRamp[alias].target == 255 and level == 254 then pendingDone = true end
           end
           if pendingDone then
-            if logging then logger('Cleared pending end ramp for '..alias) end
+            logger('Cleared pending end ramp for '..alias)
             pendingEndRamp[alias] = nil
             -- Purge any queued CBus messages for alias that may have arrived simultaneously
             local purged = false
             local i; for i=#cbusMessages,1,-1 do if cbusMessages[i].find(alias) then table.remove(cbusMessages, i); purged = true end end
-            if purged and logging then logger('Removed queued messages for '..alias) end
+            if purged then logger('Removed queued messages for '..alias) end
           else
             goto exit
           end
@@ -532,28 +542,28 @@ function outstandingBridgeMessage()
                 level = lastLevel[alias]
               end
             end
-            if logging then logger('Setting '..alias..' to '..level..tostring((forceBridge and ' (last level)') or '')) end
+            logger('Setting '..alias..' to '..level..tostring((forceBridge and ' (last level)') or ''))
             if not forceBridge then p = string.format('%.3f', level) end
             SetCBusLevel(net, app, group, level, 0)
             checkNewLastLevel(alias)
           end
         else
-          if logging then logger('Not setting '..alias..' - ramp in progress') end
+          logger('Not setting '..alias..' - ramp in progress')
         end
       else
         -- Switchable
         local state = nil; pcall(function () state = GetCBusState(net, app, group) end)
         lvl = (state and 255) or 0
         if state ~= hueDeviceStatus[id].on then
-          if logging then logger('Setting '..alias..' to '..tostring(hueDeviceStatus[id].on)) end
+          logger('Setting '..alias..' to '..tostring(hueDeviceStatus[id].on))
           SetCBusState(net, app, group, hueDeviceStatus[id].on)
           p = string.format('%.3f', (hueDeviceStatus[id].on and 255) or 0)
         end
       end
-      if p ~= nil then storage.set(sKey, p) if logging then logger('Previous for '..alias..' has been saved in outstandingBridge as '..p) end end -- Save 'previous' for use in the HUE event-based script
+      if p ~= nil then storage.set(sKey, p) logger('Previous for '..alias..' has been saved in outstandingBridge as '..p) end -- Save 'previous' for use in the HUE event-based script
     else
       ignoreCbus[alias] = nil
-      if logging then logger('Ignoring CBus publish for '..alias) end
+      logger('Ignoring CBus publish for '..alias)
     end
     ::next::
   end
@@ -568,7 +578,7 @@ Remove any orphaned ramp flags
 function checkRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do if socket.gettime() > v.ts + v.ramp + rampTimeout then table.insert(orphan, k) end end
-  for _, k in ipairs(orphan) do ramp[k] = nil; if logging then logger('Removing orphaned ramp for '..k) end end
+  for _, k in ipairs(orphan) do ramp[k] = nil; logger('Warning: Removing orphaned ramp for '..k, FORCE) end
 end
 
 --[[
@@ -577,7 +587,7 @@ Remove any orphaned pending end ramp flags
 function checkEndRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(pendingEndRamp) do if socket.gettime() - v.ts > pendingTimeout then table.insert(orphan, k) end end
-  for _, k in ipairs(orphan) do pendingEndRamp[k] = nil; if logging then logger('Removing orphaned pending end ramp for '..k) end end
+  for _, k in ipairs(orphan) do pendingEndRamp[k] = nil; logger('Warning: Removing orphaned pending end ramp for '..k, FORCE) end
 end
 
 --[[
@@ -586,10 +596,10 @@ Remove any orphaned ignore flags
 function checkIgnoreOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ignoreBridge) do if socket.gettime() - v > ignoreTimeout then table.insert(orphan, k) end end
-  for _, k in ipairs(orphan) do ignoreBridge[k] = nil; if logging then logger('Removing orphaned ignore bridge flag for '..k) end end
+  for _, k in ipairs(orphan) do ignoreBridge[k] = nil; logger('Warning: Removing orphaned ignore bridge flag for '..k, FORCE) end
   orphan = {}
   for k, v in pairs(ignoreCbus) do if socket.gettime() - v > ignoreTimeout then table.insert(orphan, k) end end
-  for _, k in ipairs(orphan) do ignoreCbus[k] = nil; if logging then logger('Removing orphaned ignore CBus flag for '..k) end end
+  for _, k in ipairs(orphan) do ignoreCbus[k] = nil; logger('Warning: Removing orphaned ignore CBus flag for '..k, FORCE) end
 end
 
 
@@ -599,12 +609,15 @@ Bridge update message
 
 function updateMessage(msg)
   if msg.type == 'update' then
+    bridgeMessage = {}
+    local d
     for _, d in ipairs(msg.data) do
       if d.type == 'light' then
         local update = false
         local nonTarget = false
         local id = d.id_v1
-        local on = nil; if d.on then on = d.on.on; update = true end
+        if bridgeMessage[id] == nil then bridgeMessage[id] = {id = id, on = nil, bri = nil, lvl = nil, nonTarget = nonTarget} end
+        local on = nil; if d.on ~= nil then on = d.on.on; update = true end
         local bri = nil; local lvl = nil;
         if d.dimming then
           update = true
@@ -617,18 +630,19 @@ function updateMessage(msg)
           if lvl ~= target and not nonTargetUpdate[alias] then nonTargetUpdate[alias] = true; nonTarget = true end
         end
         if hueDeviceStatus[id] then
-          if logging then logger('Hue event '..id..', on='..tostring(on)..', bri='..tostring(bri)..', lvl='..tostring(lvl)..tostring((nonTarget and ' (non-target update)') or '')) end
           if on ~= nil then hueDeviceStatus[id].on = on end
           if bri ~= nil then hueDeviceStatus[id].brightness = bri; hueDeviceStatus[id].level = lvl end
           if d.metadata ~= nil and d.metadata.name ~= hueDeviceStatus[id].name then -- Device has been renamed
             local oldName = hueDeviceStatus[id].name
-            logger('Device '..oldName..' renamed to '..d.metadata.name)
+            logger('Device '..oldName..' renamed to '..d.metadata.name, FORCE)
             hueDeviceStatus[id].name = d.metadata.name
             hueIds[d.metadata.name] = hueIds[oldName]; hueIds[oldName] = nil
             hueV1Ids[d.metadata.name] = hueV1Ids[oldName]; hueV1Ids[oldName] = nil
           end
           if update then
-            bridgeMessages[#bridgeMessages + 1] = {id = id, on = on, lvl = lvl } -- Queue update
+            if on ~= nil then bridgeMessage[id].on = on end
+            if lvl ~= nil then bridgeMessage[id].bri = bri; bridgeMessage[id].lvl = lvl end
+            bridgeMessage[id].nonTarget = nonTarget
           end
         end
       elseif d.type == 'zigbee_connectivity' then
@@ -638,16 +652,21 @@ function updateMessage(msg)
           if status ~= nil  then if status == 'connected' then hueDeviceStatus[id].reachable = true else hueDeviceStatus[id].reachable = false end end
         end
         if status then
-          logger(hueDeviceStatus[id].name..' is '..tostring((hueDeviceStatus[id].reachable and 'reachable') or 'NOT reachable'))
+          logger(hueDeviceStatus[id].name..' is '..tostring((hueDeviceStatus[id].reachable and 'reachable') or 'NOT reachable'), FORCE)
         end
       end
+    end
+    local u
+    for _, u in pairs(bridgeMessage) do
+      logger('Hue event '..u.id..', on='..tostring(u.on)..', bri='..tostring(u.bri)..', lvl='..tostring(u.lvl)..tostring((u.nonTarget and ' (non-target update)') or ''))
+      bridgeMessages[#bridgeMessages + 1] = u
     end
   elseif msg.type == 'delete' then
     for _, d in ipairs(msg.data) do
       if d.type == 'light' then
         local id = d.id_v1
         if hueDeviceStatus[id] then
-          logger('Device '..hueDeviceStatus[id].name..' deleted')
+          logger('Device '..hueDeviceStatus[id].name..' deleted', FORCE)
           hueIds[hueDeviceStatus[id].name] = nil
           hueV1Ids[hueDeviceStatus[id].name] = nil
           hueDeviceStatus[id] = nil
@@ -708,14 +727,14 @@ while true do
           for _, msg in ipairs(j) do updateMessage(msg) end
         end
       elseif line:find(': hi') then
-        logger('Receiving event stream')
+        logger('Receiving event stream', FORCE)
         hueConnected = true
         storage.set('hueactive', true)
       end
     end
   else
     if err ~= 'wantread' then
-      logger('Hue receive failed, restarting in 60 seconds: ' .. tostring(err))
+      logger('Hue receive failed, restarting in 60 seconds: ' .. tostring(err), FORCE)
       sock:close()
       socket.sleep(60)
       do return end
@@ -729,7 +748,7 @@ while true do
     for k, _ in pairs(msg) do if k == 'data' then lastReceived = socket.gettime() end end
   end
   if socket.gettime() - lastReceived > 90 then
-    logger('Failed to get bridge details, restarting')
+    logger('Failed to get bridge details, restarting', FORCE)
     sock:close()
     do return end
   end
@@ -743,12 +762,12 @@ while true do
       if validateIncoming(cmd) then
         cbusMessages[#cbusMessages + 1] = cmd -- Queue the new message
       else
-        logger('Invalid command received: '..cmd)
+        logger('Invalid command received: '..cmd, FORCE)
       end
       more = true; goto checkAgain -- Immediately check for more buffered inbound messages to queue
     end
   end)
-  if not stat then logger('Socket receive error: '..err) end
+  if not stat then logger('Socket receive error: '..err, FORCE) end
 
   if #bridgeMessages > 0 then outstandingBridgeMessage() end -- Send outstanding messages to CBus
   if #cbusMessages > 0 then outstandingCbusMessage() end     -- Send outstanding messages to bridge
@@ -772,6 +791,6 @@ while true do
         heartbeat = os.time(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
       end
     end)
-    if not stat then logger('A fault occurred sending heartbeat. Restarting...'); do return end end
+    if not stat then logger('A fault occurred sending heartbeat. Restarting...', FORCE); do return end end
   end
 end
