@@ -376,7 +376,14 @@ Build and publish a CBus MQTT discovery topic
 function addDiscover(net, app, group, channel, tags, name)
   local allow = {'light', 'fan', 'fan_pct', 'cover', 'select', 'sensor', 'switch', 'binary_sensor', 'bsensor', 'button'}
   local function allowed(val) local v; for _, v in ipairs(allow) do if v == val then return true end end return false end
-  if not name then if channel == nil then do return end else name = 'measurement' end end -- Need a name from tag lookup for everything but measurement app
+  if not name then -- Need a name from tag lookup for everything but measurement app
+    if channel == nil then
+      logger('Warning: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a namne is required so ignoring', FORCE)
+      do return end
+    else
+      name = 'measurement'
+    end
+  end
   local pn = name
   -- All other keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
   local sa = ''         -- Suggested area
@@ -516,7 +523,7 @@ function addDiscover(net, app, group, channel, tags, name)
 
   elseif dType == 'select' then
     if not lvl then
-      logger('Error: lvl= keyword not specified for select at '..aAlias, FORCE)
+      logger('Error: lvl= keyword not specified for select at '..aAlias..', which is required so ignoring', FORCE)
       do return end
     end
     local level, parts
@@ -531,7 +538,7 @@ function addDiscover(net, app, group, channel, tags, name)
         parts[2] = parts[1]
         parts[1] = GetCBusLevelTag(tNetAC(net), app, group, tonumber(parts[2]))
         if not parts[1] then
-          logger('Error: No level tag for select '..aAlias..', level '..parts[2], FORCE)
+          logger('Error: No level tag for select '..aAlias..', level '..parts[2]..' which is required so ignoring', FORCE)
           do return end
         end
         options[#options + 1] = parts[1]
@@ -539,13 +546,13 @@ function addDiscover(net, app, group, channel, tags, name)
       elseif #parts == 1 then -- Level tags only
         parts[2] = GetCBusLevelAddress(tNetAC(net), app, group, parts[1])
         if not parts[2] then
-          logger('Error: Invalid level tag for select '..aAlias..', level '..parts[1], FORCE)
+          logger('Error: Invalid level tag for select '..aAlias..', level '..parts[1]..', so not adding and ignoring', FORCE)
           do return end
         end
         options[#options + 1] = parts[1]
         selects[aAlias][parts[1]] = tonumber(parts[2])
       else
-        logger('Error: Invalid lvl= format for select '..aAlias, FORCE)
+        logger('Error: Invalid lvl= format for select '..aAlias..', so not adding and ignoring', FORCE)
         do return end
       end
       if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = { lvl = tonumber(parts[2]), sel = parts[1] }
@@ -647,7 +654,7 @@ function addDiscover(net, app, group, channel, tags, name)
     lightingButton[aAlias] = true
 
   elseif dType == 'button' then
-    logger('Error: MQTT button keyword used for unsupported application group '..aAlias, FORCE)
+    logger('Error: MQTT button keyword used for unsupported application group '..aAlias..', so ignoring', FORCE)
     do return end
   end
 
@@ -1333,7 +1340,7 @@ function outstandingMqttMessage()
           -- Once a blind level has been set for CBus it is set regardless of the current blind
           -- position, which is not updated like a ramp, so a stop command is nonsensical
           logger("Payload for '..alias..' is STOP, which is incompatible with CBus... ignoring")
-          do return end
+          goto next
         elseif payload == 'ON' then
           if fan[alias] then
             if lastLevel[alias] then
@@ -1344,13 +1351,13 @@ function outstandingMqttMessage()
           else
             logger('Payload for '..alias..' is ON')
             SetCBusLevel(net, app, group, 255, 0)
-            do return end
+            goto next
           end
         end
         if payload == 'OFF' then
           logger('Payload for '..alias..' is OFF')
           SetCBusLevel(net, app, group, 0, 0)
-        else
+        else -- Ramp
           parts = string.split(payload, ',')
           local lev = tonumber(parts[1])
           local num
@@ -1583,7 +1590,7 @@ function outstandingCbusMessage()
               if payload == 0 and GetCBusRampRate(net, app, group) > 0 then setting = false end -- Ignore initial zero if ramp on
             end
           end
-        else
+        else -- Possibly a string payload for user parameter
           if payload == nil then
             payload = parts[4]
             local pt = 5 -- Accommodate an unlimited number of slashes in a string payload
@@ -1591,7 +1598,7 @@ function outstandingCbusMessage()
               payload = payload..'/'..parts[pt]
               pt = pt + 1
             end
-          end -- Possibly a string payload for user parameter
+          end
           -- Groups other than lighting are never ramped, so setting is always true
         end
         if setting then
