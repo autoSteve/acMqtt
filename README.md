@@ -40,7 +40,11 @@ Lighting, measurement, user parameter and trigger control applications are imple
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-One of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
+A type of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bsensor or button (default if not specified is 'light')
+- Light, cover, select, sensor, switch, binary_sensor and button are self-explanatory, being the Home Assistant equivalents
+- A bsensor is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. Motion detected/Motion not detected
+
+And in addition to the type...
 - sa=     Suggested area
 - img=    Image (sensible automated defaults are provided, see below)
 - pn=     Preferred name (defaults to CBus group name)
