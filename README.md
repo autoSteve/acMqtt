@@ -42,6 +42,7 @@ Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
 A type of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bsensor or button (default if not specified is 'light')
 - Light, cover, select, sensor, switch, binary_sensor and button are self-explanatory, being the Home Assistant equivalents
+- For fan/fan-pct the Home Assistant object changes, as described below, with one a preset, and the other variable percentage
 - A bsensor is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. Motion detected/Motion not detected
 
 And in addition to the type...
