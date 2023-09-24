@@ -1645,6 +1645,22 @@ function checkRampOrphans()
   for _, k in ipairs(orphan) do ramp[k] = nil; logger('Removing orphaned ramp for '..k) end
 end
 
+--[[
+Duplicate discovery delete
+--]]
+function dupDelete()
+  -- If duplicate discovery topics are detected then remove them (discoveryDelete is set in broker ON_MESSAGE call-back)
+  logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics', FORCE)
+  for toDelete, _ in pairs(discoveryDelete) do
+    local parts = string.split(toDelete, '/')
+    local oid = parts[1]
+    local dType = parts[2]
+    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
+    logger('Removed discovery topic '..mqttDiscoveryTopic..dType..'/'..oid..'/config', FORCE)
+  end
+  discoveryDelete = {}
+end
+
 
 --[[
 Main loop
@@ -1724,6 +1740,10 @@ while true do
       stat, err = pcall(checkRampOrphans)
       if not stat then logger('Error checking ramp orphans: '..err, FORCE) end -- Log and continue
     end
+    if len(discoveryDelete) > 0 then
+      stat, err = pcall(dupDelete)
+      if not stat then logger('Error processing delete discovery duplicates: '..err, FORCE) end -- Log and continue
+    end
     if checkForChanges then
       -- Periodically create/update/delete device items that change
       stat, err = pcall(function () for _, c in ipairs(cud) do if socket.gettime() - c.t >=checkChanges then c.t = socket.gettime(); c.func() end end end)
@@ -1742,29 +1762,10 @@ while true do
         do return end
       end
     end
-    if mqttStatus == 1 then
-      stat, err = pcall(function ()
-        -- Connected...
-        -- If duplicate discovery topics are detected then remove them (discoveryDelete is set in broker ON_MESSAGE call-back)
-        if len(discoveryDelete) > 0 then
-          logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics', FORCE)
-          for toDelete, _ in pairs(discoveryDelete) do
-            local parts = string.split(toDelete, '/')
-            local oid = parts[1]
-            local dType = parts[2]
-            client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
-            logger('Removed discovery topic '..mqttDiscoveryTopic..dType..'/'..oid..'/config', FORCE)
-          end
-          discoveryDelete = {}
-        end
-      end)
-      if not stat then logger('Error processing discovery delete duplicates: '..err, FORCE) end -- Log and continue
-      -- Full publish CBus topics
-      stat, err = pcall(publishCurrent)
-      if not stat then logger('Error publishing current values: '..err, FORCE) end -- Log and continue
-    else
-      -- sleep(8) -- If not connected, wait a further eight seconds before retry
-    end
+    -- Connected...
+    -- Full publish CBus topics
+    stat, err = pcall(publishCurrent)
+    if not stat then logger('Error publishing current values: '..err, FORCE) end -- Log and continue
   end
 
   --[[
