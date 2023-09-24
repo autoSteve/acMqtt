@@ -93,9 +93,10 @@ NORETAIN = false
 
 FORCE = true           -- For logger. Use to force a log entry, regardless of the logger= value
 
-heartbeat = os.time()
+heartbeat = socket.gettime()
 started = socket.gettime()
 
+function sleep(sec) socket.select(nil, nil, sec) end
 function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring
 function trim(s) if s ~= nil then return s:match "^%s*(.-)%s*$" else return nil end end -- Remove leading and trailing spaces
 function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
@@ -121,12 +122,12 @@ end
 --[[
 Register with the Heartbeat script
 --]]
-function isRegistered() hbeat = storage.get('heartbeat', {}) for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
+function isRegistered() local hbeat = storage.get('heartbeat', {}); local k; for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
 if sendHeartbeat > 0 then
   -- Check whether registration is required, and if not registered then do so
   local r, hbeat = isRegistered()
   if not r then
-    logger('Registering '.._SCRIPTNAME..' with Heartbeat')
+    logger('Registering '.._SCRIPTNAME..' with Heartbeat', FORCE)
     hbeat[_SCRIPTNAME] = heartbeatConditions
     storage.set('heartbeat', hbeat)
   end
@@ -267,7 +268,7 @@ function publishAc(net, app, group, level, select)
   if level == nil then logger('Warning: Nil AC level for '..net..'/'..app..'/'..group, FORCE); do return end end
   local alias = net..'/'..app..'/'..group
   if ac[alias].state ~= level then
-    if ignoreMqtt[alias] and (os.time() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
+    if ignoreMqtt[alias] and (socket.gettime() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
       ignoreMqtt[alias] = nil
       logger('Ignoring older MQTT ignore flag for '..alias)
     end
@@ -287,7 +288,7 @@ function publishAc(net, app, group, level, select)
       if topic ~= '' then client:publish(topic, level, mqttQoS, NORETAIN) end
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
-      if acState ~= ac[alias].state then ignoreCbus[alias] = os.time() end
+      if acState ~= ac[alias].state then ignoreCbus[alias] = socket.gettime() end
       logger('Published AC '..ac[alias].name..' to '..level)
     else
       ignoreMqtt[alias] = nil
@@ -307,7 +308,7 @@ function publishAt(net, app, group, level)
   if level == nil then logger('Warning: Nil AT level for '..net..'/'..app..'/'..group, FORCE); do return end end
   local alias = net..'/'..app..'/'..group
   if at[alias].state ~= level then
-    if ignoreMqtt[alias] and (os.time() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
+    if ignoreMqtt[alias] and (socket.gettime() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
       ignoreMqtt[alias] = nil
       logger('Ignoring older MQTT ignore flag for '..alias)
     end
@@ -320,7 +321,7 @@ function publishAt(net, app, group, level)
       client:publish(topic, level, mqttQoS, RETAIN)
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
-      if atState ~= at[alias].state then ignoreCbus[alias] = os.time() end
+      if atState ~= at[alias].state then ignoreCbus[alias] = socket.gettime() end
       logger('Published AT '..at[alias].name..' to '..level)
       -- Determine whether a HomeAssistant state topic needs to be also published
       local st = nil
@@ -1398,7 +1399,7 @@ function outstandingMqttMessage()
         alias = acDevices[device]
         local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
         if (sel == 'func' and parts[5] == 'state') or (sel == 'sel' and parts[4] == 'state') or sel == 'sense' then
-          if ignoreCbus[alias] and os.time() - ignoreCbus[alias] > ignoreTimeout then -- Don't worry about older 'ignore' flags
+          if ignoreCbus[alias] and socket.gettime() - ignoreCbus[alias] > ignoreTimeout then -- Don't worry about older 'ignore' flags
             ignoreCbus[alias] = nil
             logger('Ignoring older CBus ignore flag for '..alias)
           end
@@ -1413,7 +1414,7 @@ function outstandingMqttMessage()
             end
             -- Setting CBus here will result in the AC event script requesting publication of the state using publishAc() above.
             -- This is undesired, so ignoreMqtt[alias] is used to ensure that the CBus change received does not publish to MQTT.
-            if set then ignoreMqtt[alias] = os.time() logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
+            if set then ignoreMqtt[alias] = socket.gettime() logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
           else
             ignoreCbus[alias] = nil
             logger('Ignoring CBus publish for '..alias)
@@ -1455,13 +1456,13 @@ function outstandingMqttMessage()
             if set and pld ~= nil then
               -- Send to CBus, ensuring MQTT ignore is set...
               local alias = atBoards[parts[2]]['alias']
-              ignoreMqtt[alias] = os.time(); logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..pld)
+              ignoreMqtt[alias] = socket.gettime(); logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..pld)
               SetUserParam(net, pwrgrp, pld)
             end
             -- publish to CBus
             local extant = GetUserParam(net, group)
             if i ~= extant and payload ~= 'off' then -- Set mode, but not if it is 'off'
-              ignoreMqtt[alias] = os.time(); logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload)
+              ignoreMqtt[alias] = socket.gettime(); logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload)
               SetUserParam(net, group, i)
             end
           end
@@ -1506,7 +1507,7 @@ function outstandingMqttMessage()
           -- publish to CBus
           local extant = GetUserParam(net, group)
           if payoad ~= extant then
-            ignoreMqtt[alias] = os.time(); logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload)
+            ignoreMqtt[alias] = socket.gettime(); logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload)
             SetUserParam(net, group, payload)
           end
         end
@@ -1566,7 +1567,7 @@ function outstandingCbusMessage()
           if not ramp[alias] then
             if GetCBusRampRate(net, app, group) > 0 then
               if lastLevel[alias] ~= GetCBusTargetLevel(net, app, group) or not lastLevel[alias] then
-                ramp[alias] = { ts=os.time(), ramp=GetCBusRampRate(net, app, group), target=GetCBusTargetLevel(net, app, group) }
+                ramp[alias] = { ts=socket.gettime(), ramp=GetCBusRampRate(net, app, group), target=GetCBusTargetLevel(net, app, group) }
               end
               if payload == 0 then
                 setting = false
@@ -1630,7 +1631,7 @@ Remove any orphaned ramp flags
 function checkRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do
-    if os.time() > v.ts + v.ramp + rampTimeout then
+    if socket.gettime() > v.ts + v.ramp + rampTimeout then
       -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur, but does occasionally)
       -- Remove the orphan, and publish the final target, which will be zero
       -- Occurs when a ramp to off does not begin with a zero level during the ramp, or if a ramp to zero starts
@@ -1656,7 +1657,7 @@ cud = {
   { func = cudEnv, init = true },
   { func = cudAt, init = false, script = 'AT' },
 }
-for i, c in ipairs(cud) do c.t = os.time() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function
+for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function
 
 -- Initial load of devices excluding CBus, suppressing MQTT re-subscribe
 for _, c in ipairs(cud) do if c.init then c.func(true); if c.script and script.status(c.script) ~= nil then script.disable(c.script); script.enable(c.script) end end end
@@ -1674,8 +1675,9 @@ end
 
 while true do
   -- Check for new messages from CBus. The entire socket buffer is collected each iteration for efficiency.
+  local stat, err
   local more = false
-  local stat, err = pcall(function ()
+  stat, err = pcall(function ()
     ::checkAgain::
     local cmd = nil
 	  cmd = server:receive()
@@ -1690,43 +1692,78 @@ while true do
       if more then server:settimeout(socketTimeout) end
     end
   end)
-  if not stat then logger('Socket receive error: '..err, FALSE) end
+  if not stat then logger('Socket receive error: '..err, FORCE) end
 
   -- Process MQTT message buffers synchronously - sends and receives
   client:loop(mqttTimeout)
 
   if mqttStatus == 1 then
     -- When connected to the broker
-    if #mqttMessages > 0 then outstandingMqttMessage() end -- Send outstanding messages to CBus
-    if #cbusMessages > 0 then outstandingCbusMessage() end -- Send outstanding messages to MQTT
-    if #unpublished > 0 then outstandingPublish() end      -- Publish outstanding CBus discovery topics
-    if #unpublishedAt > 0 then outstandingAtPublish() end  -- Publish outstanding Airtopia discovery topics
-    if len(ramp) > 0 then checkRampOrphans() end           -- Some scenarios can create ramp orphans
-    if checkForChanges then                                -- Periodically create/update/delete device items that change
-      for _, c in ipairs(cud) do if os.time() - c.t >=checkChanges then c.t = os.time(); c.func() end end
+    if #mqttMessages > 0 then
+      -- Send outstanding messages to CBus
+      stat, err = pcall(outstandingMqttMessage)
+      if not stat then logger('Error processing outstanding MQTT messages: '..err, FORCE); mqttMessages = {} end -- Log error and clear the queue
     end
-  elseif mqttStatus == 2 and os.time() - mqttConnected >= 5 then
-    -- MQTT is disconnected, so attempt a connection every five seconds
-    mqttConnected = os.time()
-    client:connect(mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
-    -- Allow some settling time by servicing the client, acquiring subscriptions with retain flag
-    time = socket.gettime() while socket.gettime() - time < 2 do client:loop(0) end
-    if mqttStatus == 1 then
-      -- Connected...
-      -- If duplicate discovery topics are detected then remove them (discoveryDelete is set in broker ON_MESSAGE call-back)
-      if len(discoveryDelete) > 0 then
-        logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics', FORCE)
-        for toDelete, _ in pairs(discoveryDelete) do
-          local parts = string.split(toDelete, '/')
-          local oid = parts[1]
-          local dType = parts[2]
-          client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
-          logger('Removed discovery topic '..mqttDiscoveryTopic..dType..'/'..oid..'/config', FORCE)
-        end
-        discoveryDelete = {}
+    if #cbusMessages > 0 then
+      -- Send outstanding messages to MQTT
+      stat, err = pcall(outstandingCbusMessage)
+      if not stat then logger('Error processing outstanding CBus messages: '..err, FORCE); cbusMessages = {} end -- Log error and clear the queue, continue
+    end
+    if #unpublished > 0 then
+      -- Publish outstanding CBus discovery topics
+      stat, err = pcall(outstandingPublish)
+      if not stat then logger('Error publishing outstanding CBus discovery topics: '..err, FORCE); unpublished = {} end -- Log error and clear the queue, continue
+    end
+    if #unpublishedAt > 0 then
+      -- Publish outstanding Airtopia discovery topics
+      stat, err = pcall(outstandingAtPublish)
+      if not stat then logger('Error publishing outstanding Airtopia discovery topics: '..err, FORCE); unpublishedAt = {} end -- Log error and clear the queue, continue
+    end
+    if len(ramp) > 0 then
+      -- Some scenarios can create ramp orphans
+      stat, err = pcall(checkRampOrphans)
+      if not stat then logger('Error checking ramp orphans: '..err, FORCE) end -- Log and continue
+    end
+    if checkForChanges then
+      -- Periodically create/update/delete device items that change
+      stat, err = pcall(function () for _, c in ipairs(cud) do if socket.gettime() - c.t >=checkChanges then c.t = socket.gettime(); c.func() end end end)
+      if not stat then logger('Error checking create/update/delete: '..err, FORCE) end -- Log and continue
+    end
+  elseif mqttStatus == 2 then
+    -- MQTT is disconnected, so attempt a connection, waiting five seconds. If fail to connect then exit and await script re-entry
+    local timeout = 5
+    mqttConnected = socket.gettime()
+    stat, err = pcall(function (b, p, k) client:connect(b, p, k) end, mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
+    if not stat then logger('Error connecting to broker: '..err, FORCE) do return end end -- Log and abort
+    while mqttStatus ~= 1 do
+      client:loop(0) -- Service the client
+      if socket.gettime() - mqttConnected > timeout then
+        logger('Failed to connect to the MQTT broker within '..timeout..' seconds', FORCE)
+        do return end
       end
+    end
+    if mqttStatus == 1 then
+      stat, err = pcall(function ()
+        -- Connected...
+        -- If duplicate discovery topics are detected then remove them (discoveryDelete is set in broker ON_MESSAGE call-back)
+        if len(discoveryDelete) > 0 then
+          logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics', FORCE)
+          for toDelete, _ in pairs(discoveryDelete) do
+            local parts = string.split(toDelete, '/')
+            local oid = parts[1]
+            local dType = parts[2]
+            client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
+            logger('Removed discovery topic '..mqttDiscoveryTopic..dType..'/'..oid..'/config', FORCE)
+          end
+          discoveryDelete = {}
+        end
+      end)
+      if not stat then logger('Error processing discovery delete duplicates: '..err, FORCE) end -- Log and continue
       -- Full publish CBus topics
-      publishCurrent()
+      stat, err = pcall(publishCurrent)
+      if not stat then logger('Error publishing current values: '..err, FORCE) end -- Log and continue
+    else
+      -- sleep(8) -- If not connected, wait a further eight seconds before retry
     end
   end
 
@@ -1739,8 +1776,8 @@ while true do
   
   if sendHeartbeat > 0 then
     local stat, err = pcall(function ()
-      if os.time() - heartbeat >= sendHeartbeat then
-        heartbeat = os.time(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
+      if socket.gettime() - heartbeat >= sendHeartbeat then
+        heartbeat = socket.gettime(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
       end
     end)
     if not stat then logger('A fault occurred sending heartbeat. Restarting...', FORCE); do return end end
