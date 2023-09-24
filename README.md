@@ -31,7 +31,9 @@ If you don't care for integrating Philips Hue or Airtopia, then don't deploy tho
 ~~Note that some of my scripts require automation controller firmware 1.10.0+. Also note that 1.10.0 and 1.11.0 contain a bug where event-based scripts that are set to not execute during ramping actually do, and this has significance for Hue ramping. See issue #10. So if you're on v1.6.0 then these scripts are un-tested.~~ **Note**: A work-around script is provided for HUE final to address a firmware bug. See issue #10.
 
 ## Keywords used for Automation Controller objects
-Newly added keywords can be regularly detected by both the 'MQTT send receive' and 'HUE send receive' scripts. This is configurable by setting an option that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is thirty seconds, and that is also a configurable variable.
+Automation controller object keywords are used to tell the scripts which objects to use, publish, and how they should be used. This varies based on circumstance, as described below.
+
+Newly added keywords can be regularly detected by both the 'MQTT send receive' and 'HUE send receive' scripts. This is configurable by setting an option that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is thirty seconds, and that is also a configurable variable. Checking for changes adds a low workload to the automation controller, so is recommended.
 
 ### CBus (MQTT send receive)
 Lighting, measurement, user parameter and trigger control applications are implemented.
@@ -49,7 +51,7 @@ One of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bsenso
 - lvl=    List of applicable levels, separated by "-' (Trigger button and select only)
 - on=     Preferred value shown in HA for a 'bsensor' ON value (bsensor only)
 - off=    Preferred value shown in HA for a 'bsensor' OFF value (bsensor only)
-- Plus the tag includeunits for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, not the unit= tag). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without includeunits is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
+- Plus the keyword includeunits for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, not the unit= keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without includeunits is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
 
 Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
