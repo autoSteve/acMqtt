@@ -39,17 +39,17 @@ Lighting, measurement, user parameter and trigger control applications are imple
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
 One of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bsensor or button, plus...  (default if not specified is 'light')
-- sa=     Suggested area (*requied* to ensure correct device naming in HA)
-- img=    Image
-- pn=     Preferred name (defaults to CBus tag)
+- sa=     Suggested area
+- img=    Image (sensible automated defaults are provided, see below)
+- pn=     Preferred name (defaults to CBus group name)
 - class=  Device class to use in Home Assistant (User param/sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
 - dec=    Decimal places (User param/sensor only)
 - unit=   Unit of measurement (User param/sensor only)
 - scale=  Multiplier / divider (User param/sensor only)
 - lvl=    List of applicable levels, separated by "-' (Trigger button and select only)
-- on=     Alias shown in HA for a 'bsensor' ON value (bsensor only)
-- off=    Alias shown in HA for a 'bsensor' OFF value (bsensor only)
-- Plus the tag includeunits if measurement application sensor MQTT values should have the unit of measurement included (for the measurement app the unit is read from CBus, not the unit= tag). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number.
+- on=     Preferred value shown in HA for a 'bsensor' ON value (bsensor only)
+- off=    Preferred value shown in HA for a 'bsensor' OFF value (bsensor only)
+- Plus the tag includeunits for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, not the unit= tag). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without includeunits is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
 
 Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
@@ -58,7 +58,7 @@ Using lvl= for select is mandatory. This defines the selection name and its corr
 - The level numbers: lvl=0-255, which will use the level tag
 - The level tags: lvl=Option 1-Option 2, which will look up the level number
 
-If it is desirable to allow CBus levels other than the select levels to be set then alter the selectExact variable in the 'MQTT send receive' script, otherwise that script will force the level to be set to the nearest select level.
+And futher for select only, if it is desirable to allow CBus levels other than the specific select levels to be set then alter the selectExact variable in the 'MQTT send receive' script, otherwise that script will force the level to be set to the nearest select level.
 
 For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
 
