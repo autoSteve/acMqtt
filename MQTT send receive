@@ -19,13 +19,13 @@ logging = false        -- Enable detailed logging
 logms = false          -- Include timestamp in milliseconds for logs
 
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
-heartbeatConditions = { ['max'] = 60, } -- At most 60 seconds without a heartbeat or else restart
+heartbeatConditions = { ['max'] = 60, } -- At most 60 seconds without a heartbeat or else get restarted
 publishNoLevel = false -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
 selectExact = true     -- For select, if a CBus level other than in the select levels is set then adjust the CBus level to the closest select level
 blindKey = nil         -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
 mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
 mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
-mqttJunk = true        -- Whether to publish junk before a blank publish message when removing topics (probably not necessary, but cleans up MQTT Explorer view)
+mqttJunk = true        -- Whether to publish junk before a blank publish message when removing topics (not necessary, but cleans up MQTT Explorer view)
 
 --[[
 Timing variables. Adjust to taste if you know what you're doing. These provide a good compromise, but your deployment may vary.
@@ -37,7 +37,7 @@ ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two
 
 --[[
 Topic prefixes for read/write/publish. The mqttDiscovery topic is recommended to be set to 'homeassistant/'
-for use with HA, which is the default there. The MQTT CBus topics can be whatever you want, as discovery/subscribe
+for use with HA, which is the default here. The MQTT CBus topics can be called whatever you want, as discovery/subscribe
 adjusts. All topic prefixes must end in '/'.
 --]]
 mqttCbus = 'cbus/'
@@ -91,7 +91,7 @@ atfans = {'Auto', '1', '2', '3', '4'} -- Airtopia fan speed (THIS IS UNTESTED, w
 RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
 NORETAIN = false
 
-FORCE = true           -- For logger. Use to force a log entry, regardless of the logger= value
+FORCE = true           -- For logger. Use to force a log entry, regardless of the logging= value
 
 heartbeat = socket.gettime()
 started = socket.gettime()
@@ -102,7 +102,7 @@ function trim(s) if s ~= nil then return s:match "^%s*(.-)%s*$" else return nil 
 function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
 function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get number of dictionary members
-function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end -- Find the index number of an array
+function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end -- Find the index number of an array member
 function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
   if type(obj) ~= 'table' then return obj end
   if seen and seen[obj] then return seen[obj] end
@@ -150,7 +150,7 @@ Mosquitto client and call-backs
 
 mqtt = require('mosquitto')
 client = mqtt.new(mqttClientId)
-client:will_set(mqttCbus..'status', 'offline', mqttQoS, RETAIN)
+client:will_set(mqttCbus..'status', 'offline', mqttQoS, RETAIN) -- Last will and testament is to set status offline
 if mqttUsername then client:login_set(mqttUsername, mqttPassword) end
 
 client.ON_CONNECT = function(success)
@@ -204,10 +204,10 @@ function publish(net, app, group, level)
   end
   if not userParameter[alias] then
     if not binarySensor[aAlias] then
-      if bSensor[aAlias] then
+      if bSensor[aAlias] then -- It's a bSensor
         client:publish(mqttReadTopic..alias..'/state', level, mqttQoS, RETAIN)
         logger('Publishing state '..mqttReadTopic..alias..' to '..level)
-      elseif selects[aAlias] then
+      elseif selects[aAlias] then -- It's a select
         local l
         for _, l in ipairs(selects[aAlias].allLvl) do
           if tonumber(level) <= l.lvl then
@@ -221,16 +221,16 @@ function publish(net, app, group, level)
             break
           end
         end
-      else
+      else -- It's a bog standard group
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
         client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
         logger('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level)
       end
-    else
+    else -- It's a binary sensor
       client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
       logger('Publishing state '..mqttReadTopic..alias..' to '..state)
     end
-  else
+  else -- It's a user parameter
     local adjust = publishAdj[alias]
     if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', level * adjust.scale)) else v = level end
     client:publish(mqttReadTopic..alias..'/state', v, mqttQoS, RETAIN)
@@ -1757,7 +1757,7 @@ while true do
       if not stat then logger('Error checking create/update/delete: '..err, FORCE) end -- Log and continue
     end
   elseif mqttStatus == 2 then
-    -- MQTT is disconnected, so attempt a connection, waiting five seconds. If fail to connect then exit and await script re-entry
+    -- MQTT is disconnected, so attempt a connection, waiting up to five seconds. If fail to connect then exit and await script re-entry
     local timeout = 5
     mqttConnected = socket.gettime()
     stat, err = pcall(function (b, p, k) client:connect(b, p, k) end, mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
