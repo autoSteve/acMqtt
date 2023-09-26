@@ -52,7 +52,7 @@ clientKeyStorage = 'huesendreceive'
 socketTimeout = 0.1    -- Lower = higher CPU, higher = less responsiveness - both timeouts often occur each main loop
 bridgeTimeout = 0.1    -- Lower = higher CPU, higher = less responsiveness
 checkChanges = 30      -- Interval in seconds to check for changes to object keywords
-ignoreTimeout = 2      -- Timeout for stale ignore messages in seconds (two seconds is a long time...)
+ignoreTimeout = 8      -- Timeout for stale ignore messages in seconds (eight seconds is a long time, but it happens...)
 minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brightness level, with the lamp then turned off 
 rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
 pendingTimeout = 30    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream updates are quite delayed from lights)
@@ -429,10 +429,14 @@ function outstandingCbusMessage()
     end
 
     if not hueDeviceStatus[hueV1Ids[hue[alias].name]].reachable then
-      SetCBusLevel(net, app, group, prev, 0)
-      logger('Warning: No connectivity for '..hue[alias].name..' reverting '..alias..' to previous value', FORCE)
-      ignoreBridge[alias] = socket.gettime()
-      logger('Setting ignoreBridge for '..alias)
+      if payload ~= prev then
+        SetCBusLevel(net, app, group, prev, 0)
+        logger('Warning: No connectivity for '..hue[alias].name..' reverting '..alias..' to previous value', FORCE)
+        ignoreBridge[alias] = socket.gettime()
+        logger('Setting ignoreBridge for '..alias)
+      else
+        logger('Warning: No connectivity for '..hue[alias].name, FORCE)
+      end
       goto next
     end
     
@@ -526,9 +530,11 @@ function outstandingBridgeMessage()
             logger('Cleared pending end ramp for '..alias)
             pendingEndRamp[alias] = nil
             -- Purge any queued CBus messages for alias that may have arrived simultaneously
+            --[[
             local purged = false
             local i; for i=#cbusMessages,1,-1 do if cbusMessages[i].find(alias) then table.remove(cbusMessages, i); purged = true end end
             if purged then logger('Removed queued messages for '..alias) end
+            --]]
           else
             goto exit
           end
