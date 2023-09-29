@@ -17,18 +17,19 @@ The pieces of the puzzle include:
 LUA scripts for the automation controller:
 - *MQTT send receive*: resident, zero sleep
 - *MQTT*: event-based, execute during ramping, trigger on keyword 'MQTT'
-- *AC*: event-based, execute during ramping, trigger on keyword 'AC'
-- *AT*: event-based, execute during ramping, trigger on keyword 'AT'
-- *HUE send receive*: resident, zero sleep
-- *HUE*: event-based, execute during ramping, trigger on keyword 'HUE'
-- *HUE final*: event-based, DO NOT execute during ramping, trigger on keyword 'HUE'
-- *Heartbeat*: resident, zero sleep (optional ... monitors for failure of 'MQTT send receive' and 'HUE send receive' and re-starts them on failure)
+- *AC*: (for Panasonic air) event-based, execute during ramping, trigger on keyword 'AC'
+- *AT*: (for Airtopa) event-based, execute during ramping, trigger on keyword 'AT'
+- *HUE send receive*: (for Philips Hue) resident, zero sleep
+- *HUE*: (for Philips Hue) event-based, execute during ramping, trigger on keyword 'HUE'
+- *HUE final*: (for Philips Hue) event-based, DO NOT execute during ramping, trigger on keyword 'HUE'
+- *HUE final work-around*: (for Philips Hue) event-based, execute during ramping? whatever. See below. Trigger on keyword 'HUE'
+- *Heartbeat*: (optional) resident, zero sleep ... monitors for failure of 'MQTT send receive' and 'HUE send receive' and re-starts them on failure
 
-If you don't care for integrating Philips Hue or Airtopia, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there and will just be unused.
+If you don't care for integrating Philips Hue, Panasonic or Airtopia, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there in 'MQTT send receive' and will just be unused.
 
 **Note**: A change to the discovery behaviour has been made to accommodate a non-breaking change in HA 2023.8, which will become breaking in 2024.2. CBus devices are now created using a blank entity name to end up with a sole entity for each device, in line with the HA naming standards.
 
-~~Note that some of my scripts require automation controller firmware 1.10.0+. Also note that 1.10.0 and 1.11.0 contain a bug where event-based scripts that are set to not execute during ramping actually do, and this has significance for Hue ramping. See issue #10. So if you're on v1.6.0 then these scripts are un-tested.~~ **Note**: A work-around script is provided for HUE final to address a firmware bug. See issue #10.
+~~Note that some of my scripts require automation controller firmware 1.10.0+. Also note that 1.10.0 and 1.11.0 contain a bug where event-based scripts that are set to not execute during ramping actually do, and this has significance for Hue ramping. See issue #10. So if you're on v1.6.0 then these scripts are un-tested.~~ **Note**: A work-around script is provided for HUE final to address a firmware bug in v1.10.0+. See issue #10. As of writing this bug is still not fixed, years after being reported by me. Event-based scripts execute during ramping regardless of the setting.
 
 ## Keywords used for Automation Controller objects
 Automation controller object keywords are used to tell the scripts which objects to use, publish, and how they should be used. This varies based on circumstance, as described below.
