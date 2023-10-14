@@ -57,7 +57,7 @@ minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brightness 
 rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
 pendingTimeout = 30    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream updates are quite delayed from lights)
 sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
-heartbeatConditions = { ['max'] = 90, ['storageExists'] = 'hueactive' } -- At most 90 seconds without a heartbeat or else restart, but only if hueactive exists
+heartbeatConditions = { ['max'] = 60, ['storageExists'] = 'hueactive' } -- At most 60 seconds without a heartbeat or else restart, but only if hueactive exists
 
 huePort = 5435         -- Listening port to receive messages from 'HUE' and 'HUE final' scripts
 port = 443             -- Listening port of the Hue bridge
@@ -82,6 +82,17 @@ FORCE = true
 started = socket.gettime();
 function logger(msg, force) if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get number of dictionary members
+function equals(o1, o2, ignore_mt)
+  if ignoreMt == nil then ignoreMt = true end
+  if o1 == o2 then return true end
+  local o1Type = type(o1) local o2Type = type(o2)
+  if o1Type ~= o2Type then return false end if o1Type ~= 'table' then return false end
+  if not ignoreMt then local mt1 = getmetatable(o1) if mt1 and mt1.__eq then return o1 == o2 end end
+  local keySet = {}
+  for key1, value1 in pairs(o1) do local value2 = o2[key1] if value2 == nil or equals(value1, value2, ignore_mt) == false then return false end keySet[key1] = true end
+  for key2, _ in pairs(o2) do if not keySet[key2] then return false end end
+  return true
+end
 
 heartbeat = os.time()
 
@@ -89,16 +100,19 @@ heartbeat = os.time()
 --[[
 Register with the Heartbeat script
 --]]
-function isRegistered() hbeat = storage.get('heartbeat', {}) for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
+
+function isRegistered() local hbeat = storage.get('heartbeat', {}); local k; for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
 if sendHeartbeat > 0 then
-  -- Check whether registration is required, and if not registered then do so
+  -- Check whether registration is required, and if not registered (or conditions changed) then register
   local r, hbeat = isRegistered()
-  if not r then
-    if logging then log('Registering '.._SCRIPTNAME..' with Heartbeat') end
+  if not r or (r and not equals(hbeat[_SCRIPTNAME], heartbeatConditions)) then
+    local k, v
+    vals = '' for k, v in pairs(heartbeatConditions) do vals = vals..k..'='..v..' ' end
+    logger('Registering '.._SCRIPTNAME..' with Heartbeat of '..vals, FORCE)
     hbeat[_SCRIPTNAME] = heartbeatConditions
     storage.set('heartbeat', hbeat)
   end
-else
+else -- Remove script from hearbeat registration
   local r, hbeat = isRegistered() if r then hbeat[_SCRIPTNAME] = nil storage.set('heartbeat', hbeat) end
 end
 

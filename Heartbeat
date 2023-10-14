@@ -11,23 +11,42 @@ An example use case is when the 'HUE'send receive' script has not yet gained a H
 This script does not need to start before the scripts being monitored.
 --]]
 
-logging = false
+logging = false        -- Enable detailed logging
+logms = false          -- Include timestamp in milliseconds for logs
+checkForChanges = 3    -- Interval to check for heartbeat registration changes
 
 --[[
 *** Use code like the following to register with this Heartbeat script...
 
 heartbeatConditions = { ['max'] = 90, ['storageExists'] = 'hueactive' } -- At most 90 seconds without a heartbeat or else restart, but only if hueactive exists
+logging = false -- Enable detailed logging
+FORCE = true -- For logger. Use to force a log entry, regardless of the logging= value
 
-function isRegistered() hbeat = storage.get('heartbeat', {}) for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
+function logger(msg, force) if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
+function equals(o1, o2, ignore_mt)
+  if ignoreMt == nil then ignoreMt = true end
+  if o1 == o2 then return true end
+  local o1Type = type(o1) local o2Type = type(o2)
+  if o1Type ~= o2Type then return false end if o1Type ~= 'table' then return false end
+  if not ignoreMt then local mt1 = getmetatable(o1) if mt1 and mt1.__eq then return o1 == o2 end end
+  local keySet = {}
+  for key1, value1 in pairs(o1) do local value2 = o2[key1] if value2 == nil or equals(value1, value2, ignore_mt) == false then return false end keySet[key1] = true end
+  for key2, _ in pairs(o2) do if not keySet[key2] then return false end end
+  return true
+end
+
+function isRegistered() local hbeat = storage.get('heartbeat', {}); local k; for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
 if sendHeartbeat > 0 then
-  -- Check whether registration is required, and if not registered then do so
+  -- Check whether registration is required, and if not registered (or conditions changed) then register
   local r, hbeat = isRegistered()
-  if not r then
-    if logging then log('Registering '.._SCRIPTNAME..' with Heartbeat') end
+  if not r or (r and not equals(hbeat[_SCRIPTNAME], heartbeatConditions)) then
+    local k, v
+    vals = '' for k, v in pairs(heartbeatConditions) do vals = vals..k..'='..v..' ' end
+    logger('Registering '.._SCRIPTNAME..' with Heartbeat of '..vals, FORCE)
     hbeat[_SCRIPTNAME] = heartbeatConditions
     storage.set('heartbeat', hbeat)
   end
-else
+else -- Remove script from hearbeat registration
   local r, hbeat = isRegistered() if r then hbeat[_SCRIPTNAME] = nil storage.set('heartbeat', hbeat) end
 end
 
@@ -47,30 +66,78 @@ end
 
 --]]
 
+FORCE = true -- For logger. Use to force a log entry, regardless of the logging= value
+
+function logger(msg, force) -- Log helper
+  if logging or force ~= nil then
+    if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end
+    log(ts..msg)
+  end
+end
+
 scripts = {}
+
+function checkChanges()
+  hbeat = storage.get('heartbeat', {})
+  for k, v in pairs(hbeat) do
+    if scripts[k] == nil then
+      scripts[k] = v
+      v.heartbeat = os.time()
+      logger('Added heartbeat monitor for '..k, FORCE)
+    else
+      for s, val in pairs(v) do
+        if scripts[k][s] == nil then
+          scripts[k][s] = val
+          logger('Added '..s..' for heartbeat '..k..' value '..val, FORCE)
+        elseif scripts[k][s] ~= val then
+          scripts[k][s] = val
+          logger('Changed '..s..' for heartbeat '..k..' to '..val, FORCE)
+        end
+      end
+      remove = {}
+      for s, val in pairs(scripts[k]) do
+        if hbeat[k][s] == nil and s ~= 'heartbeat' then
+          table.insert(remove, s)
+          logger('Removed '..s..' for heartbeat '..k, FORCE)
+        end
+      end
+      for _, s in ipairs(remove) do scripts[k][s] = nil end
+    end
+  end
+  ::again::
+  for k, v in pairs(scripts) do
+    if hbeat[k] == nil then
+      scripts[k] = nil
+      logger('Removed heartbeat monitor for '..k, FORCE)
+      goto again
+    end
+  end
+end
 
 if server then server:close() end  -- Handle script re-entry
 server = require('socket').udp()
 server:settimeout(1)
 if not server:setsockname('127.0.0.1', 5433) then
-  logger('Error: Could not listen on port 5433')
+  logger('Error: Could not listen on port 5433', FORCE)
   socket.sleep(60)
   do return end
 end
 
 function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
 
-log('Heartbeat initialised')
+logger('Heartbeat initialised', FORCE)
 
 
 --[[
 Monitor heartbeats
 --]]
+check = socket.gettime()
 
 while true do
-  local timeCheck, cmd, s
+  local cmd, s
+  local timeCheck = socket.gettime()
   
-  timeCheck = socket.gettime()
+  if timeCheck > check then check = socket.gettime() + checkForChanges; checkChanges() end -- Check for heartbeat changes periodically
 
   cmd = server:receive()
   if cmd and type(cmd) == 'string' then
@@ -82,7 +149,7 @@ while true do
         s = scripts[parts[1]]
         if s then
           s.heartbeat = tonumber(parts[2])
-          if logging then log('Heartbeat from '..parts[1]..' at '..s.heartbeat) end
+          logger('Heartbeat from '..parts[1]..' at '..s.heartbeat)
         end
       end
     end
@@ -101,23 +168,10 @@ while true do
       secondsSince = os.time() - v.heartbeat
 
       if secondsSince >= v.max and (not v.storageExists or storageE) then -- No heartbeat received for specified period, so re-start the script
-        log('Missed '..k..' script heartbeat (last received '..secondsSince..' seconds ago) - Re-starting script')
+        logger('Missed '..k..' script heartbeat (last received '..secondsSince..' seconds ago) - Re-starting script', FORCE)
         script.disable(k); script.enable(k)
         v.heartbeat = os.time()
       end
     end
-  end
-
-  -- Check for heartbeat changes
-  hbeat = storage.get('heartbeat', {})
-  for k, v in pairs(hbeat) do
-    if scripts[k] == nil then
-      scripts[k] = v
-      v.heartbeat = os.time()
-    end
-  end
-  ::again::
-  for k, v in pairs(scripts) do
-    if hbeat[k] == nil then scripts[k] = nil goto again end
   end
 end
