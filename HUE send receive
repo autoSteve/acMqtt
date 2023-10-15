@@ -1,5 +1,10 @@
-bridge = '192.168.10.15' -- Obviously change to suit environment
-checkForChanges = true -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
+local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['ssl'] = true, } function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
+setmetatable(_G, { __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n..'"') end rawset(t, n, v) end, }) -- Runtime global variable checking to catch name typos
+
+--[[ CHANGE TO SUIT ENVIRONMENT --]]
+declare('bridge', '192.168.10.15')
+declare('checkForChanges', true)       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
+declare('checkChanges', 30)            -- Interval in seconds to check for changes to object keywords
 
 --[[
 Gateway between an Automation Controller and Philips Hue bridge
@@ -39,68 +44,69 @@ a little crazy, especially when triggering a CBus scene from HomeAssistant but i
 --]]
 
 
-logging = false        -- Enable detailed logging (impacts performance)
-logms = false          -- Include timestamp in milliseconds for logs
+declare('logging', false)        -- Enable detailed logging
+declare('logms', false)          -- Include timestamp in milliseconds for logs
 
 storage.set('hueactive', nil)
 
-eventStream = '/eventstream/clip/v2'
-resource = '/clip/v2/resource'
-connectivity = '/clip/v2/resource/zigbee_connectivity'
-clientKeyStorage = 'huesendreceive'
+declare('eventStream', '/eventstream/clip/v2')
+declare('resource', '/clip/v2/resource')
+declare('connectivity', '/clip/v2/resource/zigbee_connectivity')
+declare('clientKeyStorage', 'huesendreceive')
 
-socketTimeout = 0.1    -- Lower = higher CPU, higher = less responsiveness - both timeouts often occur each main loop
-bridgeTimeout = 0.1    -- Lower = higher CPU, higher = less responsiveness
-checkChanges = 30      -- Interval in seconds to check for changes to object keywords
-ignoreTimeout = 8      -- Timeout for stale ignore messages in seconds (eight seconds is a long time, but it happens...)
-minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brightness level, with the lamp then turned off 
-rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
-pendingTimeout = 30    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream updates are quite delayed from lights)
-sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
-heartbeatConditions = { ['max'] = 60, ['storageExists'] = 'hueactive' } -- At most 60 seconds without a heartbeat or else restart, but only if hueactive exists
+declare('socketTimeout', 0.1)    -- Lower = higher CPU, higher = less responsiveness - both timeouts often occur each main loop
+declare('bridgeTimeout', 0.1)    -- Lower = higher CPU, higher = less responsiveness
+declare('ignoreTimeout', 8)      -- Timeout for stale ignore messages in seconds (eight seconds is a long time, but it happens...)
+declare('minHueBri', 0.39)       -- Transitioning a Hue light arrives at a low brightness level, with the lamp then turned off 
+declare('rampTimeout', 3)        -- Time beyond ramp to declare an orphan in seconds
+declare('pendingTimeout', 30)    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream updates are quite delayed from lights)
+declare('sendHeartbeat', 5)      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
+declare('heartbeatConditions', { ['max'] = 60, ['storageExists'] = 'hueactive' } ) -- At most 60 seconds without a heartbeat or else restart, but only if hueactive exists
 
-huePort = 5435         -- Listening port to receive messages from 'HUE' and 'HUE final' scripts
-port = 443             -- Listening port of the Hue bridge
-protocol = 'tlsv12'    -- TLS 1.2 is used for bridge eventstream
+declare('huePort', 5435)         -- Listening port to receive messages from 'HUE' and 'HUE final' scripts
+declare('port', 443)             -- Listening port of the Hue bridge
+declare('protocol', 'tlsv12')    -- TLS 1.2 is used for bridge eventstream
 
-hue = {}               -- Hue device details (name, state, dimmable, etc) 
-hueDevices = {}        -- Quick lookup to determine whether an object is a Hue device
-hueDeviceStatus = {}   -- Hue device status
-hueConnected = false   -- Event stream is being received
-hueIds = {}            -- Lookup Hue object ID using metadata name
-hueV1Ids = {}          -- Lookup Hue object V1 ID using metadata name
-cbusMessages = {}      -- Incoming message queue
-bridgeMessages = {}    -- Incoming message queue
-ignoreCbus = {}        -- To prevent message loops
-ignoreBridge = {}      -- To prevent message loops
-ramp = {}              -- Keeps track of CBus ramping
-pendingEndRamp = {}    -- Keeps track of the end of Hue transition (always occurs after the CBus ramp conclusion is reported)
-nonTargetUpdate = {}   -- Watch for non-ramp target Hue updates 
+declare('hue', {})               -- Hue device details (name, state, dimmable, etc) 
+declare('hueDevices', {})        -- Quick lookup to determine whether an object is a Hue device
+declare('hueDeviceStatus', {})   -- Hue device status
+declare('hueConnected', false)   -- Event stream is being received
+declare('hueIds', {})            -- Lookup Hue object ID using metadata name
+declare('hueV1Ids', {})          -- Lookup Hue object V1 ID using metadata name
+declare('cbusMessages', {})      -- Incoming message queue
+declare('bridgeMessages', {})    -- Incoming message queue
+declare('ignoreCbus', {})        -- To prevent message loops
+declare('ignoreBridge', {})      -- To prevent message loops
+declare('ramp', {})              -- Keeps track of CBus ramping
+declare('pendingEndRamp', {})    -- Keeps track of the end of Hue transition (always occurs after the CBus ramp conclusion is reported)
+declare('nonTargetUpdate', {})   -- Watch for non-ramp target Hue updates 
 
-FORCE = true
+declare('FORCE', true)
 
-started = socket.gettime();
-function logger(msg, force) if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
+declare('started', socket.gettime())
+
+declare('logger') declare('len') declare('equals')
+function logger(msg, force) local ts if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
 function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return(i) end -- Get number of dictionary members
-function equals(o1, o2, ignore_mt)
+function equals(o1, o2, ignoreMt)
   if ignoreMt == nil then ignoreMt = true end
   if o1 == o2 then return true end
   local o1Type = type(o1) local o2Type = type(o2)
   if o1Type ~= o2Type then return false end if o1Type ~= 'table' then return false end
   if not ignoreMt then local mt1 = getmetatable(o1) if mt1 and mt1.__eq then return o1 == o2 end end
   local keySet = {}
-  for key1, value1 in pairs(o1) do local value2 = o2[key1] if value2 == nil or equals(value1, value2, ignore_mt) == false then return false end keySet[key1] = true end
+  for key1, value1 in pairs(o1) do local value2 = o2[key1] if value2 == nil or equals(value1, value2, ignoreMt) == false then return false end keySet[key1] = true end
   for key2, _ in pairs(o2) do if not keySet[key2] then return false end end
   return true
 end
 
-heartbeat = os.time()
+declare('heartbeat', os.time())
 
 
 --[[
 Register with the Heartbeat script
 --]]
-
+declare('isRegistered')
 function isRegistered() local hbeat = storage.get('heartbeat', {}); local k; for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
 if sendHeartbeat > 0 then
   -- Check whether registration is required, and if not registered (or conditions changed) then register
@@ -121,6 +127,7 @@ end
 UDP listener - receive messages from the event script 'HUE'
 --]]
 
+if rawget(_G, 'server') == nil then declare('server') end
 if server then server:close() end -- Handle script re-entry
 server = require('socket').udp()
 server:settimeout(socketTimeout)
@@ -136,9 +143,10 @@ end
 Representational state transfer (REST) 
 --]]
 
-local http = require('socket.http')
-local ltn12 = require('ltn12')
+declare('http', require('socket.http'))
+declare('ltn12', require('ltn12'))
 
+declare('rest')
 function rest(method, cmd, body)
   if not body then body = '' end
   local respbody = {}
@@ -163,7 +171,7 @@ end
 Retrieve or create the client key 
 --]]
 
-clientKey = storage.get(clientKeyStorage)
+declare('clientKey', storage.get(clientKeyStorage))
 if clientKey == nil then
   logger('Press the Hue bridge link button', FORCE)
   repeat
@@ -183,6 +191,7 @@ end
 Load lighting devices from the bridge (REST call or in response to the event stream)
 --]]
 
+declare('getResources')
 function getResources(msg)
   local discovered = nil
   if not msg then
@@ -216,10 +225,11 @@ function getResources(msg)
       if logging then
         ds = ds..'\n'..d.name..', id: '..d.id
       else
-        ds = ds..'\n'..d.name
+        ds = ds..d.name..', '
       end
     end
-    logger('Discovered devices:'..ds, FORCE)
+    if not logging then ds = ds:sub(1, -3) end
+    logger('Discovered devices: '..ds, FORCE)
   end
 end
 
@@ -229,9 +239,9 @@ Connect to the bridge and initiate event stream
 --]]
 
 require('ssl')
-sock = require('socket').tcp()
+declare('sock', require('socket').tcp())
 
-res, err = sock:connect(bridge, port)
+local res, err = sock:connect(bridge, port)
 if res then
   sock = ssl.wrap(sock, protocol)
   res, err = sock:dohandshake()
@@ -257,6 +267,7 @@ end
 --[[
 Create / update / delete Hue devices
 --]]
+declare('cudHue')
 function cudHue(initial)
   local grps = GetCBusByKW('HUE', 'or')
   local found = {}
@@ -273,7 +284,7 @@ function cudHue(initial)
 
     local tags = v['keywords']
     for _, t in ipairs(tags) do
-      tp = string.split(t, '=')
+      local tp = string.split(t, '=')
       tp[1] = trim(tp[1])
       if tp[2] then tp[2] = trim(tp[2]) if tp[1] == 'pn' then pn = tp[2] end end
     end
@@ -318,8 +329,9 @@ end
 Last level storage
 --]]
 
-lastLevel = storage.get('lastlvlhue', {})
+declare('lastLevel', storage.get('lastlvlhue', {}))
 
+declare('saveLastLevel')
 function saveLastLevel()
   -- Get old levels to see if anything changed
   local oldLastLevel = storage.get('lastlvlhue', {})
@@ -338,6 +350,7 @@ function saveLastLevel()
   end
 end
 
+declare('checkNewLastLevel')
 function checkNewLastLevel(alias, target)
   if target == nil then
     local parts = string.split(alias, '/')
@@ -356,6 +369,7 @@ end
 --[[
 Publish Philips Hue objects to bridge
 --]]
+declare('publishHue')
 function publishHue(alias, level, rampRate, prev)
   local state = (level ~= 0) and true or false
   local hueState
@@ -389,6 +403,7 @@ end
 Publish the next queued messages from CBus to bridge
 --]]
 
+declare('outstandingCbusMessage')
 function outstandingCbusMessage()
   if logms then logger('Entering outstandingCbusMessage()') end
   local cmd
@@ -509,6 +524,7 @@ end
 --[[
 Publish the next queued messages from bridge to CBus
 --]]
+declare('outstandingBridgeMessage')
 function outstandingBridgeMessage()
   local level, msg
   for _, msg in ipairs(bridgeMessages) do
@@ -595,6 +611,7 @@ end
 --[[
 Remove any orphaned ramp flags
 --]]
+declare('checkRampOrphans')
 function checkRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do if socket.gettime() > v.ts + v.ramp + rampTimeout then table.insert(orphan, k) end end
@@ -604,6 +621,7 @@ end
 --[[
 Remove any orphaned pending end ramp flags
 --]]
+declare('checkEndRampOrphans')
 function checkEndRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(pendingEndRamp) do if socket.gettime() - v.ts > pendingTimeout then table.insert(orphan, k) end end
@@ -613,6 +631,7 @@ end
 --[[
 Remove any orphaned ignore flags
 --]]
+declare('checkIgnoreOrphans')
 function checkIgnoreOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ignoreBridge) do if socket.gettime() - v > ignoreTimeout then table.insert(orphan, k) end end
@@ -626,10 +645,10 @@ end
 --[[
 Bridge update message
 --]]
-
+declare('updateMessage')
 function updateMessage(msg)
   if msg.type == 'update' then
-    bridgeMessage = {}
+    local bridgeMessage = {}
     local d
     for _, d in ipairs(msg.data) do
       if d.type == 'light' then
@@ -703,13 +722,15 @@ end
 Main loop
 --]]
 
-cud = {
+declare('cud', {
   { func = cudHue, t = socket.gettime() - checkChanges, init = true, script = 'HUE' } -- Create/update/delete script(s)
-}
+})
 
 -- Initial load of devices
+local c
 for _, c in ipairs(cud) do if c.init then c.func(true); if c.script and script.status(c.script) ~= nil then script.disable(c.script); script.enable(c.script) end end end
 
+declare('validateIncoming')
 function validateIncoming(cmd) -- Reject any weird socket messages received
   local f = string.split(cmd, '>')
   local i = string.split(cmd, '<')
@@ -731,7 +752,7 @@ function validateIncoming(cmd) -- Reject any weird socket messages received
 end
 
 
-lastReceived = socket.gettime()
+declare('lastReceived', socket.gettime())
 
 while true do
   -- Read the bridge event stream
@@ -740,6 +761,7 @@ while true do
   if not err then
     if line then
       if line:find('data:') and not line:find('geofence_client') then
+        local j
         local payload = line:split(': ')[2]
         local stat, err = pcall(function () j = json.decode(payload) end)
         if stat then

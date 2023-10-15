@@ -11,9 +11,12 @@ An example use case is when the 'HUE'send receive' script has not yet gained a H
 This script does not need to start before the scripts being monitored.
 --]]
 
-logging = false        -- Enable detailed logging
-logms = false          -- Include timestamp in milliseconds for logs
-checkForChanges = 3    -- Interval to check for heartbeat registration changes
+local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['ssl'] = true, } function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
+setmetatable(_G, { __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n) end rawset(t, n, v) end, }) -- Runtime global variable checking to catch name typos
+
+declare('logging', false)        -- Enable detailed logging
+declare('logms', false)          -- Include timestamp in milliseconds for logs
+declare('checkForChanges', 3)    -- Interval to check for heartbeat registration changes
 
 --[[
 *** Use code like the following to register with this Heartbeat script...
@@ -22,7 +25,8 @@ heartbeatConditions = { ['max'] = 90, ['storageExists'] = 'hueactive' } -- At mo
 logging = false -- Enable detailed logging
 FORCE = true -- For logger. Use to force a log entry, regardless of the logging= value
 
-function logger(msg, force) if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
+started = socket.gettime()
+function logger(msg, force) local ts if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
 function equals(o1, o2, ignore_mt)
   if ignoreMt == nil then ignoreMt = true end
   if o1 == o2 then return true end
@@ -30,7 +34,7 @@ function equals(o1, o2, ignore_mt)
   if o1Type ~= o2Type then return false end if o1Type ~= 'table' then return false end
   if not ignoreMt then local mt1 = getmetatable(o1) if mt1 and mt1.__eq then return o1 == o2 end end
   local keySet = {}
-  for key1, value1 in pairs(o1) do local value2 = o2[key1] if value2 == nil or equals(value1, value2, ignore_mt) == false then return false end keySet[key1] = true end
+  for key1, value1 in pairs(o1) do local value2 = o2[key1] if value2 == nil or equals(value1, value2, ignoreMt) == false then return false end keySet[key1] = true end
   for key2, _ in pairs(o2) do if not keySet[key2] then return false end end
   return true
 end
@@ -66,19 +70,20 @@ end
 
 --]]
 
-FORCE = true -- For logger. Use to force a log entry, regardless of the logging= value
+declare('FORCE', true) -- For logger. Use to force a log entry, regardless of the logging= value
 
-function logger(msg, force) -- Log helper
-  if logging or force ~= nil then
-    if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end
-    log(ts..msg)
-  end
-end
+declare('started', socket.gettime())
+declare('logger') declare('contains')
+function logger(msg, force) local ts if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
+function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
 
-scripts = {}
+declare('scripts', {})
 
+declare('checkChanges')
 function checkChanges()
-  hbeat = storage.get('heartbeat', {})
+  local hbeat = storage.get('heartbeat', {})
+  local k, v, s, val
+  
   for k, v in pairs(hbeat) do
     if scripts[k] == nil then
       scripts[k] = v
@@ -94,7 +99,7 @@ function checkChanges()
           logger('Changed '..s..' for heartbeat '..k..' to '..val, FORCE)
         end
       end
-      remove = {}
+      local remove = {}
       for s, val in pairs(scripts[k]) do
         if hbeat[k][s] == nil and s ~= 'heartbeat' then
           table.insert(remove, s)
@@ -114,6 +119,7 @@ function checkChanges()
   end
 end
 
+if rawget(_G, 'server') == nil then declare('server') end
 if server then server:close() end  -- Handle script re-entry
 server = require('socket').udp()
 server:settimeout(1)
@@ -123,15 +129,13 @@ if not server:setsockname('127.0.0.1', 5433) then
   do return end
 end
 
-function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
-
 logger('Heartbeat initialised', FORCE)
 
 
 --[[
 Monitor heartbeats
 --]]
-check = socket.gettime()
+declare('check', socket.gettime())
 
 while true do
   local cmd, s
@@ -165,7 +169,7 @@ while true do
         if not storageE then v.heartbeat = os.time() end
       end
 
-      secondsSince = os.time() - v.heartbeat
+      local secondsSince = os.time() - v.heartbeat
 
       if secondsSince >= v.max and (not v.storageExists or storageE) then -- No heartbeat received for specified period, so re-start the script
         logger('Missed '..k..' script heartbeat (last received '..secondsSince..' seconds ago) - Re-starting script', FORCE)
