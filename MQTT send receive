@@ -1,5 +1,5 @@
+-- Runtime global variable declaraion function to catch name typos
 local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true} function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
-setmetatable(_G, { __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n..'"') end rawset(t, n, v) end, }) -- Runtime global variable checking to catch name typos
 
 --[[ CHANGE TO SUIT ENVIRONMENT --]]
 declare('mqttBroker', '192.168.10.21')
@@ -15,7 +15,15 @@ Resident, zero sleep interval, name: 'MQTT send receive'
 Manage CBus, Panasonic and Airtopia AC and environment events for MQTT, and publish discovery topics. Used with Home Assistant.
 
 Documentation available at https://github.com/autoSteve/acMqtt
+--]]
 
+local exclude = {['server'] = true, ['ngx'] = true, }
+setmetatable(_G, { -- Metatable to check globals
+  __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n..'"') end rawset(t, n, v) end,
+  __index = function (_, n) if not exclude[n] and not declaredNames[n] then log('Warning: Read undeclared global variable "'..n..'"') end return nil end,
+})
+
+--[[
 General configuration variables follow. Change as required, but probably no need to.
 --]]
 declare('logging', false)        -- Enable detailed logging
@@ -399,27 +407,36 @@ Build and publish a CBus MQTT discovery topic
 --]]
 declare('addDiscover')
 function addDiscover(net, app, group, channel, tags, name)
-  local allow = {'light', 'fan', 'fan_pct', 'cover', 'select', 'sensor', 'switch', 'binary_sensor', 'bsensor', 'button'}
-  local function allowed(val) local v; for _, v in ipairs(allow) do if v == val then return true end end return false end
+  local imgDefault = { -- Simple image name, or a set of 'also contains' keywords (which must include an #else entry)
+    ['heat']        = 'mdi:radiator',
+    ['blind']       = 'mdi:blinds',
+    ['under floor'] = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
+    ['towel rail']  = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
+    ['fan']         = {['sweep'] = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
+    ['gate']        = {['open'] = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
+  }
+  local allow = {['light']=true, ['fan']=true, ['fan_pct']=true, ['cover']=true, ['select']=true, ['sensor']=true, ['switch']=true, ['binary_sensor']=true, ['bsensor']=true, ['button']=true, }
   if not name then -- Need a name from tag lookup for everything but measurement app
     if channel == nil then
-      logger('Warning: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a namne is required so ignoring', FORCE)
+      logger('Warning: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required so ignoring', FORCE)
       do return end
     else
       name = 'measurement'
     end
   end
-  local pn = name
-  -- All other keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
-  local sa = ''         -- Suggested area
-  local img = ''        -- Image
-  local units = ''      -- Units
-  local class = ''      -- HA class
-  local scale = 1       -- Scale (multiplier or divider)
-  local decimals = 2    -- Decimal places
-  local on = 'On'       -- bsensor 'on' string
-  local off = 'Off'     -- bsensor 'off' string
-  local levels = {}     -- Assume lvl= keyword is blank
+  -- All keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
+  local _L = {
+    ['pn'] = name,      -- Preferred name
+    ['sa'] = '',        -- Suggested area
+    ['img'] = '',       -- Image
+    ['unit'] = '',      -- Units
+    ['class'] = '',     -- HomeAssistant class
+    ['dec'] = 2,        -- Decimal places
+    ['scale'] = 1,      -- Scale (multiplier or divider)
+    ['on'] = 'On',      -- bsensor 'on' string
+    ['off'] = 'Off',    -- bsensor 'off' string
+    ['lvl'] = {},       -- Levels
+  }
   local dType = 'light' -- Use light as default HA type if not specified
   local includeUnit = false
   local lvl = false
@@ -431,49 +448,45 @@ function addDiscover(net, app, group, channel, tags, name)
   -- Extract MQTT topic settings
   for _, t in ipairs(tags) do
     local tp = string.split(t, '=')
-    tp[1] = trim(tp[1]):lower()
-    if tp[1] == 'includeunit' then includeUnit = true
-    end
+    local k = trim(tp[1]):lower()
+    if k == 'includeunit' then includeUnit = true end
     if tp[2] then
-      tp[2] = trim(tp[2])
-      if tp[1] == 'sa' then sa = tp[2]
-      elseif tp[1] == 'pn' then pn = tp[2]
-      elseif tp[1] == 'img' then img = tp[2]
-      elseif tp[1] == 'unit' then units = tp[2]
-      elseif tp[1] == 'class' then class = tp[2]
-      elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
-      elseif tp[1] == 'scale' then scale = tonumber(tp[2])
-      elseif tp[1] == 'on' then on = tp[2]
-      elseif tp[1] == 'off' then off = tp[2]
-      elseif tp[1] == 'lvl' then levels = string.split(tp[2], '-'); lvl = true
+      local v = trim(tp[2])
+      if _L[k] then
+        if type(_L[k]) == 'number' then _L[k] = tonumber(v)
+        elseif k == 'lvl' then _L[k] = string.split(v, '-') local lv for _, lv in ipairs(_L[k]) do lv = trim(lv) end
+        else _L[k] = v end
       end
     else
-      if allowed(tp[1]) then dType = tp[1] end
+      if allow[k] then dType = k end
     end
     -- Any other unrecognised keywords that may be set are ignored
   end
   
   -- Default images for a lighting group
-  if img == '' and lighting[tostring(app)] then
-    local pnl = pn:lower()
-    if contains('heat', pnl) then img = 'mdi:radiator'
-    elseif contains('blind', pnl) then img = 'mdi:blinds'
-    elseif contains('under floor', pnl) then if contains('enable', pnl) then img = 'mdi:radiator-disabled' else img = 'mdi:radiator' end
-    elseif contains('towel rail', pnl) then if contains('enable', pnl) then img = 'mdi:radiator-disabled' else img = 'mdi:radiator' end
-    elseif contains('fan', pnl) then if contains('sweep', pnl) then img = 'mdi:ceiling-fan' else img = 'mdi:fan' end
-    elseif contains('gate', pnl) then if contains('open', pnl) then img = 'mdi:gate-open' else img = 'mdi:gate' end
-    else img = 'mdi:lightbulb'
+  if _L.img == '' and lighting[tostring(app)] then
+    local pnl = _L.pn:lower()
+    for k, v in pairs(imgDefault) do
+      if contains(k, pnl) then
+        if type(v) == 'string' then _L.img = v
+        else
+          local ik, iv, theElse
+          for ik, iv in pairs(v) do if ik ~= '#else' then if contains(ik, pnl) then _L.img = iv end else theElse = v['#else'] end end
+          if _L.img == '' then _L.img = theElse end
+        end
+      end
     end
+    if _L.img == '' then _L.img = 'mdi:lightbulb' end
   end
 
   if dType == 'light' and app == 228 then dType = 'sensor'; logger('Warning: publishing '..alias..' as a sensor', FORCE) end -- Measurement app sensor with incorrect/missing type
   if includeUnit then includeUnits[alias] = true log(includeUnits) else includeUnits[alias] = nil end
   if logging then
-    if sa == '' then dSa = 'no preferred area' else dSa = sa end
+    if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
     if dType ~= 'bsensor' then
-    	logger('Publish discovery '..name..' as '..dType..':'..pn..' in area '..dSa, FORCE)
+    	logger('Publish discovery '..name..' as '..dType..':'.._L.pn..' in area '..dSa, FORCE)
     else
-    	logger('Publish discovery '..name..' as sensor:'..pn..' in area '..dSa, FORCE)
+    	logger('Publish discovery '..name..' as sensor:'.._L.pn..' in area '..dSa, FORCE)
     end
   end
 
@@ -548,14 +561,14 @@ function addDiscover(net, app, group, channel, tags, name)
     cover[alias] = true
 
   elseif dType == 'select' then
-    if not lvl then
+    if #_L.lvl == 0 then
       logger('Error: lvl= keyword not specified for select at '..aAlias..', which is required so ignoring', FORCE)
       do return end
     end
-    local level, parts
+    local level
     local options = {}
     selects[aAlias] = {}
-    for _, level in ipairs(levels) do
+    for _, level in ipairs(_L.lvl) do
       local parts = string.split(level, '/')
       if #parts == 2 then -- A select option and level
         options[#options + 1] = parts[1]
@@ -597,10 +610,10 @@ function addDiscover(net, app, group, channel, tags, name)
     else
       payload = { stat_t = mqttReadTopic..alias..'/state', }
     end
-    if class ~= '' then payload.dev_cla = class end
+    if _L.class ~= '' then payload.dev_cla = class end
     if app == 250 then userParameter[alias] = true end
-    if decimals ~= 2 or scale ~= 1 then publishAdj[alias] = { dec = decimals, scale = scale } end -- Scale, decimals and units only for sensors
-    if units ~= '' then payload.unit_of_meas = units end
+    if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
+    if _L.unit ~= '' then payload.unit_of_meas = _L.unit end
 
   elseif dType == 'bsensor' then
     dType = 'sensor'
@@ -621,8 +634,8 @@ function addDiscover(net, app, group, channel, tags, name)
   elseif dType == 'button' and app == 202 then
     local i
     mqttDevices[aAlias].trigger = {}
-    if #levels == 0 then for i = 0,255 do levels[#levels + 1] = i end end -- If no "lvl=" specified then scan all levels
-    for _, i in ipairs(levels) do 
+    if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels
+    for _, i in ipairs(_L.lvl) do 
       tag = GetCBusLevelTag(tNetAC(net), 202, group, tonumber(i))
       if not tag then
         if publishNoLevel then
@@ -639,12 +652,12 @@ function addDiscover(net, app, group, channel, tags, name)
         action = tag:gsub("%s+", "_"):lower()
         if triggers[group] == nil then triggers[group] = {} end
         triggers[group][action] = tonumber(i)
-        if pn == name then prefix = '' else prefix = pn..' ' end
+        if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
         local entity = prefix..tag
-        if sa ~= '' then
+        if _L.sa ~= '' then
           local startIdx, endIdx
           repeat
-            startIdx, endIdx = entity:find(sa, 1, true)
+            startIdx, endIdx = entity:find(_L.sa, 1, true)
             if startIdx and startIdx == 1 then
               entity = entity:sub(endIdx + 1):match'^%s*(.*)'
             end
@@ -655,9 +668,9 @@ function addDiscover(net, app, group, channel, tags, name)
           obj_id = boid,
           uniq_id = boid,
           cmd_t = mqttWriteTopic..alias..'/'..action..'/press',
-          dev = { name=entity, ids=trim(sa..' '..entity), sa=sa, mf='Schneider Electric', mdl='CBus' },
+          dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' },
         }
-        if img ~= '' then payload.ic = img end
+        if _L.img ~= '' then payload.ic = _L.img end
         -- If dType has changed for an existing discovery topic then remove the previous topic
         if discovery[boid] ~= nil and discovery[boid] ~= dType then
           client:publish(mqttDiscoveryTopic..discovery[boid]..'/'..boid..'/config', '', mqttQoS, RETAIN)
@@ -685,11 +698,11 @@ function addDiscover(net, app, group, channel, tags, name)
   end
 
   -- Add payload common to all
-  local entity = pn
-  if sa ~= '' then
+  local entity = _L.pn
+  if _L.sa ~= '' then
     local startIdx, endIdx
     repeat
-      startIdx, endIdx = entity:find(sa, 1, true)
+      startIdx, endIdx = entity:find(_L.sa, 1, true)
       if startIdx and startIdx == 1 then
         entity = entity:sub(endIdx + 1):match'^%s*(.*)'
       end
@@ -700,8 +713,8 @@ function addDiscover(net, app, group, channel, tags, name)
   payload.obj_id = oid
   payload.uniq_id = oid
   payload.avty_t = mqttCbus..'status'
-  payload.dev = { name=entity, ids=trim(sa..' '..entity), sa=sa, mf='Schneider Electric', mdl='CBus' }
-  if img ~= '' then payload.ic = img end
+  payload.dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
+  if _L.img ~= '' then payload.ic = _L.img end
 
   -- If dType has changed for an existing discovery topic then remove the previous topic
   if discovery[oid] ~= nil and discovery[oid] ~= dType then
@@ -1363,7 +1376,7 @@ function outstandingMqttMessage()
         PulseCBusLevel(net, app, group, 255, 0, 1, 0); logger('Payload is PRESS')
 
       elseif parts[7] ~= nil and contains('press', parts[7]) and payload == 'PRESS' then -- Trigger level press
-        level = triggers[group][parts[6]]
+        local level = triggers[group][parts[6]]
         if level ~= nil then
           SetTriggerLevel(group, level); logger('Payload is PRESS')
         else
