@@ -104,6 +104,12 @@ Keyword examples:
 - MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
 - MQTT, button, sa=Outside, img=mdi:gate-open,    *(a lighting group button to open a gate)*
 
+For the bsensor example of a carport motion sensor, set up a CBus group address on the PIR unit to trigger on movement with a short timer like 5s in a block entry and then add the MQTT keywords to that group.
+
+For some PIR sensors, like the 5753PEIRL the light level may be broadcast periodically to a group address. Getting this into HomeAssistant is then trivial with keywords like these:
+
+- MQTT, sensor, sa=Carport, pn=Carport Light Level, unit=%, dec=0, scale=0.390625,
+
 ### Philips Hue (HUE send receive)
 For Philips Hue devices, bi-directional sync with CBus occurs. I run Home Assistant talking directly to the Hue hub, and also the Automation Controller script via REST API. Add the keyword 'HUE' to CBus objects, plus...
 - pn= Preferred name (needs to match exactly the name of the Hue device.)
