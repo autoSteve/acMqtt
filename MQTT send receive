@@ -92,16 +92,23 @@ declare('unpublished', {})       -- The outstanding set of CBus objects to publi
 declare('unpublishedAt', {})     -- The outstanding set of CBus Airtopia objects to publish discovery topics for
 declare('mqttStatus', 2)         -- The status of the MQTT connection. Initially disconnected 1=connected, 2=disconnected
 declare('mqttConnected', 0)      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
-declare('airtopiaStates', {})    -- Current state topics in use (used for clean up)
+declare('imgDefault', {          -- Defaults for images - Simple image name, or a set of 'also contains' keywords (which must include an #else entry)
+  ['heat']        = 'mdi:radiator',
+  ['blind']       = 'mdi:blinds',
+  ['under floor'] = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
+  ['towel rail']  = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
+  ['fan']         = {['sweep'] = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
+  ['gate']        = {['open'] = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
+})
 
 declare('airtopiaCmds', {'power', 'fan', 'swing', 'mode', 'target_temperature'}) -- All command topics (used for clean up)
 declare('atmodes', {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'}) -- Airtopia modes
 declare('atswings', {'Off', 'Horizontal only', 'Vertical only', 'Horizontal and Vertical'}) -- Airtopia swing modes
 declare('atfans', {'Auto', '1', '2', '3', '4'}) -- Airtopia fan speed (THIS IS UNTESTED, will result in 0, 1, 2, 3, 4 being set in the user parameter in the order of the list)
+declare('airtopiaStates', {})    -- Current state topics in use (used for clean up)
 
 declare('RETAIN', true)          -- Boolean aliases for MQTT retain and no-retain settings
 declare('NORETAIN', false)
-
 declare('FORCE', true)           -- For logger. Use to force a log entry, regardless of the logging= value
 
 declare('heartbeat', socket.gettime())
@@ -124,7 +131,7 @@ function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
   for k, v in pairs(obj) do res[copy(k, s)] = copy(v, s) end
   return res
 end
-function equals(o1, o2, ignoreMt)
+function equals(o1, o2, ignoreMt) -- Compare two variables (simple, tables, anything)
   if ignoreMt == nil then ignoreMt = true end
   if o1 == o2 then return true end
   local o1Type = type(o1) local o2Type = type(o2)
@@ -154,7 +161,7 @@ if sendHeartbeat > 0 then
   if not r or (r and not equals(hbeat[_SCRIPTNAME], heartbeatConditions)) then
     local k, v, vals
     vals = '' for k, v in pairs(heartbeatConditions) do vals = vals..k..'='..v..' ' end
-    logger('Registering '.._SCRIPTNAME..' with Heartbeat of '..vals, FORCE)
+    logger('Registering '.._SCRIPTNAME..' with heartbeat of '..vals, FORCE)
     hbeat[_SCRIPTNAME] = heartbeatConditions
     storage.set('heartbeat', hbeat)
   end
@@ -241,6 +248,7 @@ function publish(net, app, group, level)
           if tonumber(level) <= l.lvl then
             if selectExact and tonumber(level) ~= l.lvl then
               -- Current CBus level does not match the select, so optionally adjust the CBus level
+              logger('Warning: Forcing level to set for select '..alias..' to nearest level '..l.lvl..' ('..tonumber(level)..' requested, but selectExact=true)', FORCE)
               SetCBusLevel(tNetAC(net), app, group, l.lvl, 0)
               -- Adjusting the level will result in two MQTT publish events, which could be avoided but is not
             end
@@ -407,15 +415,6 @@ Build and publish a CBus MQTT discovery topic
 --]]
 declare('addDiscover')
 function addDiscover(net, app, group, channel, tags, name)
-  local imgDefault = { -- Simple image name, or a set of 'also contains' keywords (which must include an #else entry)
-    ['heat']        = 'mdi:radiator',
-    ['blind']       = 'mdi:blinds',
-    ['under floor'] = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
-    ['towel rail']  = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
-    ['fan']         = {['sweep'] = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
-    ['gate']        = {['open'] = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
-  }
-  local allow = {['light']=true, ['fan']=true, ['fan_pct']=true, ['cover']=true, ['select']=true, ['sensor']=true, ['switch']=true, ['binary_sensor']=true, ['bsensor']=true, ['button']=true, }
   if not name then -- Need a name from tag lookup for everything but measurement app
     if channel == nil then
       logger('Warning: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required so ignoring', FORCE)
@@ -437,13 +436,84 @@ function addDiscover(net, app, group, channel, tags, name)
     ['off'] = 'Off',    -- bsensor 'off' string
     ['lvl'] = {},       -- Levels
   }
-  local dType = 'light' -- Use light as default HA type if not specified
+  local dType = 'light' -- Use light as default HomeAssistant type if not specified
   local includeUnit = false
   local lvl = false
   local action, boid, dSa, payload, prefix, tag
   
   -- Build an alias to refer to each group
-  local alias = tNetAC(net)..'/'..app..'/'..group;  if channel ~= nil then alias = alias..'/'..channel end
+  local aAlias = tNetAC(net)..'/'..app..'/'..group;  if channel ~= nil then aAlias = aAlias..'/'..channel end -- Automation controller numbered networks
+  local alias = net..'/'..app..'/'..group -- CBus numbered networks
+
+  local allow = {
+    ['light'] = {['getPayload'] = function()
+      return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', bri_stat_t = mqttReadTopic..alias..'/level', bri_cmd_t = mqttWriteTopic..alias..'/ramp', pl_off = 'OFF', on_cmd_type = 'brightness',}
+      end },
+    ['switch'] = {['getPayload'] = function()
+      return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF',}
+      end },
+    ['cover'] = {['getPayload'] = function()
+      cover[alias] = true
+      return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
+      end },
+    ['fan'] = {['getPayload'] = function() return {
+      stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pl_on = 'ON', pl_off = 'OFF', pr_modes = {'low', 'medium', 'high'},
+      pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
+      pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value == 0 %} OFF {% elif value == 86 %} low {% elif value == 170 %} medium {% elif value == 255 %} high {% endif %}'
+    } end },
+    ['fan_pct'] = {['getPayload'] = function()
+      dType = 'fan' fan[aAlias] = true
+      return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF', pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_stat_t = mqttReadTopic..alias..'/level', opt = true,}
+      end },
+    ['sensor'] = {['getPayload'] = function()
+      local payload
+      if channel ~= nil then payload = { stat_t = mqttReadTopic..alias..'_'..channel..'/state', } alias = alias..'/'..channel else payload = { stat_t = mqttReadTopic..alias..'/state', } end
+      if _L.class ~= '' then payload.dev_cla = class end
+      if app == 250 then userParameter[alias] = true end
+      if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
+      if _L.unit ~= '' then payload.unit_of_meas = _L.unit end
+      return payload
+      end },
+    ['binary_sensor'] = {['getPayload'] = function()
+      binarySensor[aAlias] = true
+      return {stat_t = mqttReadTopic..alias..'/state', pl_on = 'ON', pl_off = 'OFF',}
+      end },
+    ['bsensor'] = {['getPayload'] = function()
+      bSensor[aAlias] = true dType = 'sensor'
+      return {stat_t = mqttReadTopic..alias..'/state', val_tpl = '{% if value | float == 0 %} '..off..' {% else %} '..on..' {% endif %}',}
+      end },
+    ['button'] = {['getPayload'] = function()
+      if lighting[tostring(app)] then lightingButton[aAlias] = true return {cmd_t = mqttWriteTopic..alias..'/press',} else return nil end
+      end },
+    ['select'] = {['getPayload'] = function()
+      if #_L.lvl == 0 then logger('Error: lvl= keyword not specified for select at '..aAlias..', which is required so ignoring', FORCE) return nil end
+      local level
+      local options = {}
+      selects[aAlias] = {}
+      for _, level in ipairs(_L.lvl) do
+        local parts = string.split(level, '/')
+        if #parts == 2 then -- A select option and level
+          options[#options + 1] = parts[1]
+          selects[aAlias][parts[1]] = tonumber(parts[2])
+        elseif #parts == 1 and tonumber(parts[1]) then -- Level numbers only
+          parts[2] = parts[1]
+          parts[1] = GetCBusLevelTag(tNetAC(net), app, group, tonumber(parts[2]))
+          if not parts[1] then logger('Error: No level tag for select '..aAlias..', level '..parts[2]..' which is required so ignoring', FORCE) return nil end
+          options[#options + 1] = parts[1]
+          selects[aAlias][parts[1]] = tonumber(parts[2])
+        elseif #parts == 1 then -- Level tags only
+          parts[2] = GetCBusLevelAddress(tNetAC(net), app, group, parts[1])
+          if not parts[2] then logger('Error: Invalid level tag for select '..aAlias..', level '..parts[1]..', so not adding and ignoring', FORCE) return nil end
+          options[#options + 1] = parts[1]
+          selects[aAlias][parts[1]] = tonumber(parts[2])
+        else logger('Error: Invalid lvl= format for select '..aAlias..', so not adding and ignoring', FORCE) return nil
+        end
+        if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = { lvl = tonumber(parts[2]), sel = parts[1] }
+      end
+      table.sort(selects[aAlias].allLvl, function (left, right) return left.lvl < right.lvl end)
+      return {stat_t = mqttReadTopic..alias..'/select', cmd_t = mqttWriteTopic..alias..'/select', options = options,}
+      end },
+  }
 
   -- Extract MQTT topic settings
   for _, t in ipairs(tags) do
@@ -460,7 +530,7 @@ function addDiscover(net, app, group, channel, tags, name)
     else
       if allow[k] then dType = k end
     end
-    -- Any other unrecognised keywords that may be set are ignored
+    -- Any other unrecognised keywords that may be set are ignored, as they likely have an unrelated use
   end
   
   -- Default images for a lighting group
@@ -479,254 +549,115 @@ function addDiscover(net, app, group, channel, tags, name)
     if _L.img == '' then _L.img = 'mdi:lightbulb' end
   end
 
-  if dType == 'light' and app == 228 then dType = 'sensor'; logger('Warning: publishing '..alias..' as a sensor', FORCE) end -- Measurement app sensor with incorrect/missing type
-  if includeUnit then includeUnits[alias] = true log(includeUnits) else includeUnits[alias] = nil end
-  if logging then
-    if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
-    if dType ~= 'bsensor' then
-    	logger('Publish discovery '..name..' as '..dType..':'.._L.pn..' in area '..dSa, FORCE)
-    else
-    	logger('Publish discovery '..name..' as sensor:'.._L.pn..' in area '..dSa, FORCE)
-    end
-  end
+  if dType == 'light' and app == 228 then dType = 'sensor'; logger('Warning: publishing '..aAlias..' as a sensor', FORCE) end -- Measurement app sensor with incorrect/missing type
+  if includeUnit then includeUnits[aAlias] = true logger('Including units for '..aAlias) else includeUnits[aAlias] = nil end
 
   -- Build an OID (measurement application gets a channel as well), also add to mqttDevices
   local oid = 'cbus_mqtt_'..net..'_'.. app..'_'..group; if channel ~= nil then oid = oid..'_'..channel end;
-  mqttDevices[alias].oid = oid
-  if dType ~= 'bsensor' then
-    mqttDevices[alias].type = dType
+  mqttDevices[aAlias].oid = oid
+
+  -- Handle the typical single device payload build
+  payload = allow[dType].getPayload()
+
+  if payload ~= nil then
+    mqttDevices[aAlias].type = dType -- If payload recieved than set the mqttDevices type, then move on to publish
   else
-    mqttDevices[alias].type = 'sensor'
-  end
-  local aAlias = alias -- Automation controller numbered networks
-  local alias = net..'/'..app..'/'..group -- Will adjust for CBus numbered networks
+    -- Or if a nil payload so far then build the trigger app buttons if applicable on all specific levels and publish as separate devices, and then return
+    if dType == 'button' and app == 202 then
+      local i
+      mqttDevices[aAlias].trigger = {}
+      if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels
+      for _, i in ipairs(_L.lvl) do 
+        tag = GetCBusLevelTag(tNetAC(net), 202, group, tonumber(i))
+        if not tag then
+          if publishNoLevel then
+            if lvl then
+              tag = 'Level '..i logger('Warning: Trigger '..alias..' has no level tag defined for level '..i..', setting to "'..tag..'"', FORCE)
+            end
+          else
+            if lvl then logger('Error: Trigger '..alias..' has no level tag defined for level '..i, FORCE) end
+          end
+        end
+        if tag then
+          boid = oid..'_'..i
+          action = tag:gsub("%s+", "_"):lower()
+          if triggers[group] == nil then triggers[group] = {} end
+          triggers[group][action] = tonumber(i)
+          if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
+          local entity = prefix..tag
+          if _L.sa ~= '' then
+            local startIdx, endIdx
+            repeat
+              startIdx, endIdx = entity:find(_L.sa, 1, true)
+              if startIdx and startIdx == 1 then
+                entity = entity:sub(endIdx + 1):match'^%s*(.*)'
+              end
+            until not startIdx or startIdx > 1
+          end
+          payload = {
+            name = '',
+            obj_id = boid,
+            uniq_id = boid,
+            cmd_t = mqttWriteTopic..alias..'/'..action..'/press',
+            dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' },
+          }
+          if _L.img ~= '' then payload.ic = _L.img end
+          -- If dType has changed for an existing discovery topic then remove the previous topic
+          if discovery[boid] ~= nil and discovery[boid] ~= dType then
+            client:publish(mqttDiscoveryTopic..discovery[boid]..'/'..boid..'/config', '', mqttQoS, RETAIN)
+            logger('Removed discovery topic'..mqttDiscoveryTopic..discovery[boid]..'/'..boid..'/config')
+          end
+          -- Publish to MQTT broker
+          local j = json.encode(payload)
+          if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
+          logger('Publishing '..mqttDiscoveryTopic..dType..'/'..boid..'/config as '.._L.pn..' in area '..dSa)
+          client:publish(mqttDiscoveryTopic..dType..'/'..boid..'/config', j, mqttQoS, RETAIN)
+          table.insert(mqttDevices[aAlias].trigger, boid)
+        end
+      end
+      do return end
 
-  -- Build the type-specific payload to publish
-  if dType == 'light' then
-    payload = {
-      stat_t = mqttReadTopic..alias..'/state',
-      cmd_t = mqttWriteTopic..alias..'/switch',
-      bri_stat_t = mqttReadTopic..alias..'/level',
-      bri_cmd_t = mqttWriteTopic..alias..'/ramp',
-      pl_off = 'OFF',
-      on_cmd_type = 'brightness',
-    }
-
-  elseif dType == 'switch' then
-    payload = {
-      stat_t = mqttReadTopic..alias..'/state',
-      cmd_t = mqttWriteTopic..alias..'/switch',
-      pl_on = 'ON',
-      pl_off = 'OFF',
-    }
-
-  elseif dType == 'fan' then
-    payload = {
-      stat_t = mqttReadTopic..alias..'/state',
-      cmd_t = mqttWriteTopic..alias..'/ramp',
-      pl_on = 'ON',
-      pl_off = 'OFF',
-      pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp',
-      pr_mode_cmd_tpl = '{% if value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
-      pr_mode_stat_t = mqttReadTopic..alias..'/level',
-      pr_mode_val_tpl = '{% if value == 0 %} OFF {% elif value == 86 %} low {% elif value == 170 %} medium {% elif value == 255 %} high {% endif %}',
-      pr_modes = {'low', 'medium', 'high'}
-    }
-    fan[aAlias] = true
-
-  elseif dType == 'fan_pct' then
-    payload = {
-      stat_t = mqttReadTopic..alias..'/state',
-      cmd_t = mqttWriteTopic..alias..'/switch',
-      pl_on = 'ON',
-      pl_off = 'OFF',
-      pct_cmd_t = mqttWriteTopic..alias..'/ramp',
-      pct_stat_t = mqttReadTopic..alias..'/level',
-      opt = true,
-    }
-    dType = 'fan'
-    fan[aAlias] = true
-
-  elseif dType == 'cover' then
-    payload = {
-      stat_t = mqttReadTopic..alias..'/state',
-      cmd_t = mqttWriteTopic..alias..'/ramp',
-      pos_open = 255,
-      pos_clsd = 0,
-      pl_open = 'OPEN',
-      pl_cls = 'CLOSE',
-      pos_t = mqttReadTopic..alias..'/level',
-      set_pos_t = mqttWriteTopic..alias..'/ramp',
-    }
-    cover[alias] = true
-
-  elseif dType == 'select' then
-    if #_L.lvl == 0 then
-      logger('Error: lvl= keyword not specified for select at '..aAlias..', which is required so ignoring', FORCE)
+    elseif dType == 'button' then
+      logger('Warning: MQTT button keyword used for unsupported application group '..aAlias..', so ignoring', FORCE)
       do return end
     end
-    local level
-    local options = {}
-    selects[aAlias] = {}
-    for _, level in ipairs(_L.lvl) do
-      local parts = string.split(level, '/')
-      if #parts == 2 then -- A select option and level
-        options[#options + 1] = parts[1]
-        selects[aAlias][parts[1]] = tonumber(parts[2])
-      elseif #parts == 1 and tonumber(parts[1]) then -- Level numbers only
-        parts[2] = parts[1]
-        parts[1] = GetCBusLevelTag(tNetAC(net), app, group, tonumber(parts[2]))
-        if not parts[1] then
-          logger('Error: No level tag for select '..aAlias..', level '..parts[2]..' which is required so ignoring', FORCE)
-          do return end
-        end
-        options[#options + 1] = parts[1]
-        selects[aAlias][parts[1]] = tonumber(parts[2])
-      elseif #parts == 1 then -- Level tags only
-        parts[2] = GetCBusLevelAddress(tNetAC(net), app, group, parts[1])
-        if not parts[2] then
-          logger('Error: Invalid level tag for select '..aAlias..', level '..parts[1]..', so not adding and ignoring', FORCE)
-          do return end
-        end
-        options[#options + 1] = parts[1]
-        selects[aAlias][parts[1]] = tonumber(parts[2])
-      else
-        logger('Error: Invalid lvl= format for select '..aAlias..', so not adding and ignoring', FORCE)
-        do return end
-      end
-      if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = { lvl = tonumber(parts[2]), sel = parts[1] }
-    end
-    table.sort(selects[aAlias].allLvl, function (left, right) return left.lvl < right.lvl end)
-    payload = {
-      stat_t = mqttReadTopic..alias..'/select',
-      cmd_t = mqttWriteTopic..alias..'/select',
-      options = options,
-    }
-
-  elseif dType == 'sensor' then
-    if channel ~= nil then
-      payload = { stat_t = mqttReadTopic..alias..'_'..channel..'/state', }
-      alias = alias..'/'..channel
-    else
-      payload = { stat_t = mqttReadTopic..alias..'/state', }
-    end
-    if _L.class ~= '' then payload.dev_cla = class end
-    if app == 250 then userParameter[alias] = true end
-    if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
-    if _L.unit ~= '' then payload.unit_of_meas = _L.unit end
-
-  elseif dType == 'bsensor' then
-    dType = 'sensor'
-    payload = {
-      stat_t = mqttReadTopic..alias..'/state',
-      val_tpl = '{% if value | float == 0 %} '..off..' {% else %} '..on..' {% endif %}',
-    }
-    bSensor[aAlias] = true
-
-  elseif dType == 'binary_sensor' then
-    payload = {
-      stat_t = mqttReadTopic..alias..'/state',
-      pl_on = 'ON',
-      pl_off = 'OFF',
-    }
-    binarySensor[aAlias] = true
-
-  elseif dType == 'button' and app == 202 then
-    local i
-    mqttDevices[aAlias].trigger = {}
-    if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels
-    for _, i in ipairs(_L.lvl) do 
-      tag = GetCBusLevelTag(tNetAC(net), 202, group, tonumber(i))
-      if not tag then
-        if publishNoLevel then
-          if lvl then
-            tag = 'Level '..i
-            logger('Warning: Trigger '..alias..' has no level tag defined for level '..i..', setting to "'..tag..'"', FORCE)
-          end
-        else
-          if lvl then logger('Error: Trigger '..alias..' has no level tag defined for level '..i, FORCE) end
-        end
-      end
-      if tag then
-        boid = oid..'_'..i
-        action = tag:gsub("%s+", "_"):lower()
-        if triggers[group] == nil then triggers[group] = {} end
-        triggers[group][action] = tonumber(i)
-        if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
-        local entity = prefix..tag
-        if _L.sa ~= '' then
-          local startIdx, endIdx
-          repeat
-            startIdx, endIdx = entity:find(_L.sa, 1, true)
-            if startIdx and startIdx == 1 then
-              entity = entity:sub(endIdx + 1):match'^%s*(.*)'
-            end
-          until not startIdx or startIdx > 1
-        end
-        payload = {
-          name = '',
-          obj_id = boid,
-          uniq_id = boid,
-          cmd_t = mqttWriteTopic..alias..'/'..action..'/press',
-          dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' },
-        }
-        if _L.img ~= '' then payload.ic = _L.img end
-        -- If dType has changed for an existing discovery topic then remove the previous topic
-        if discovery[boid] ~= nil and discovery[boid] ~= dType then
-          client:publish(mqttDiscoveryTopic..discovery[boid]..'/'..boid..'/config', '', mqttQoS, RETAIN)
-          logger('Removed discovery topic'..mqttDiscoveryTopic..discovery[boid]..'/'..boid..'/config')
-        end
-        -- Publish to MQTT broker
-        local j = json.encode(payload)
-        logger('Publishing '..mqttDiscoveryTopic..dType..'/'..boid..'/config')
-        client:publish(mqttDiscoveryTopic..dType..'/'..boid..'/config', j, mqttQoS, RETAIN)
-        table.insert(mqttDevices[aAlias].trigger, boid)
-      end
-    end
-    do return end
-
-  elseif dType == 'button' and lighting[tostring(app)] then
-    -- Lighting group button
-    payload = {
-      cmd_t = mqttWriteTopic..alias..'/press',
-    }
-    lightingButton[aAlias] = true
-
-  elseif dType == 'button' then
-    logger('Error: MQTT button keyword used for unsupported application group '..aAlias..', so ignoring', FORCE)
-    do return end
   end
 
-  -- Add payload common to all
-  local entity = _L.pn
-  if _L.sa ~= '' then
-    local startIdx, endIdx
-    repeat
-      startIdx, endIdx = entity:find(_L.sa, 1, true)
-      if startIdx and startIdx == 1 then
-        entity = entity:sub(endIdx + 1):match'^%s*(.*)'
-      end
-    until not startIdx or startIdx > 1
+  if payload ~= nil then
+    -- Add payload common to all
+    local entity = _L.pn
+    if _L.sa ~= '' then
+      local startIdx, endIdx
+      repeat
+        startIdx, endIdx = entity:find(_L.sa, 1, true)
+        if startIdx and startIdx == 1 then
+          entity = entity:sub(endIdx + 1):match'^%s*(.*)'
+        end
+      until not startIdx or startIdx > 1
+    end 
+
+    payload.name = ''
+    payload.obj_id = oid
+    payload.uniq_id = oid
+    payload.avty_t = mqttCbus..'status'
+    payload.dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
+    if _L.img ~= '' then payload.ic = _L.img end
+
+    -- If dType has changed for an existing discovery topic then remove the previous topic
+    if discovery[oid] ~= nil and discovery[oid] ~= dType then
+      client:publish(mqttDiscoveryTopic..discovery[oid]..'/'..oid..'/config', '', mqttQoS, RETAIN)
+      logger('Removed discovery topic '..mqttDiscoveryTopic..discovery[oid]..'/'..oid..'/config')
+    end
+
+    -- Publish to MQTT broker
+    discovery[oid] = dType
+    local j = json.encode(payload)
+    if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
+    logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa)
+    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
+  else
+    logger('Warning: a publish payload for '..name..' could not be built, so nothing published')
   end
-
-  payload.name = ''
-  payload.obj_id = oid
-  payload.uniq_id = oid
-  payload.avty_t = mqttCbus..'status'
-  payload.dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
-  if _L.img ~= '' then payload.ic = _L.img end
-
-  -- If dType has changed for an existing discovery topic then remove the previous topic
-  if discovery[oid] ~= nil and discovery[oid] ~= dType then
-    client:publish(mqttDiscoveryTopic..discovery[oid]..'/'..oid..'/config', '', mqttQoS, RETAIN)
-    logger('Removed discovery topic '..mqttDiscoveryTopic..discovery[oid]..'/'..oid..'/config')
-  end
-
-  -- Publish to MQTT broker
-  discovery[oid] = dType
-  local j = json.encode(payload)
-  logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config')
-  client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
 end
 
 --[[
