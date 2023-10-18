@@ -161,7 +161,8 @@ while true do
   end
 
   local k, v, storageE
-  
+  local remove = {}
+
   for k, v in pairs(scripts) do
     if script.status(k) ~= nil then
       if v.storageExists ~= nil then
@@ -176,6 +177,16 @@ while true do
         script.disable(k); script.enable(k)
         v.heartbeat = os.time()
       end
+    else
+      -- Script does not exist, so queue removal of the heartbeat
+      table.insert(remove, k)
     end
+  end
+  for _, k in ipairs(remove) do
+    logger('Removed hearteat monitor for non-existent script '..k, FORCE)
+    local hbeat = storage.get('heartbeat', {})
+    scripts[k] = nil
+    hbeat[k] = nil
+    storage.set('heartbeat', hbeat)
   end
 end
