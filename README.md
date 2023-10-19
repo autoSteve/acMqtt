@@ -31,6 +31,12 @@ If you don't care for integrating Philips Hue, Panasonic or Airtopia, then don't
 
 ~~Note that some of my scripts require automation controller firmware 1.10.0+. Also note that 1.10.0 and 1.11.0 contain a bug where event-based scripts that are set to not execute during ramping actually do, and this has significance for Hue ramping. See issue #10. So if you're on v1.6.0 then these scripts are un-tested.~~ **Note**: A work-around script is provided for HUE final to address a firmware bug in v1.10.0+. See issue #10. As of writing this bug is still not fixed, years after being reported by me. Event-based scripts execute during ramping regardless of the setting.
 
+## About errors
+
+If you get errors in the log (error or event log), then feel free to raise an issue and I'll try to help.
+
+Warnings are also thrown for obvious code defects that are encountered. If you get something like 'Warning: Read undeclared global variable "acState"' then *definitely* raise an issue.
+
 ## Keywords used for Automation Controller objects
 Automation controller object keywords are used to tell the scripts which objects to use, publish, and how they should be used. This varies based on circumstance, as described below.
 
