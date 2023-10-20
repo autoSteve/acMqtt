@@ -78,21 +78,17 @@ For trigger control buttons the preferred name is used as an optional prefix to 
 
 CBus fan controller objects can use either 'fan' or 'fan_pct' keywords. The former will use a preset mode of low/medium/high, while the latter discovers as a raw percentage fan in Home Assistant.
 
-The image keyword img= will default to several different "likely" values based on name or preferred name keywords. If the script gets it wrong, then add a img= keyword, or contact me by raising an issue for cases where it's stupidly wrong. Here's the current logic...
+The image keyword img= will default to several different "likely" values based on name or preferred name keywords. If the script gets it wrong, then add an img= keyword, or contact me by raising an issue for cases where it's stupidly wrong or where other defaults would be handy. Default is mdi:lightbulb for lighting groups. Here's the current set...
 
 ```
-  -- Default images for a lighting group
-  if img == '' and lighting[tostring(app)] then
-    local pnl = pn:lower()
-    if contains('heat', pnl) then img = 'mdi:radiator'
-    elseif contains('blind', pnl) then img = 'mdi:blinds'
-    elseif contains('under floor', pnl) then if contains('enable', pnl) then img = 'mdi:radiator-disabled' else img = 'mdi:radiator' end
-    elseif contains('towel rail', pnl) then if contains('enable', pnl) then img = 'mdi:radiator-disabled' else img = 'mdi:radiator' end
-    elseif contains('fan', pnl) then if contains('sweep', pnl) then img = 'mdi:ceiling-fan' else img = 'mdi:fan' end
-    elseif contains('gate', pnl) then if contains('open', pnl) then img = 'mdi:gate-open' else img = 'mdi:gate' end
-    else img = 'mdi:lightbulb'
-    end
-  end
+declare('imgDefault', { -- Defaults for images - Simple image name, or a set of 'also contains' keywords (which must include an #else entry)
+  ['heat']        = 'mdi:radiator',
+  ['blind']       = 'mdi:blinds',
+  ['under floor'] = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
+  ['towel rail']  = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
+  ['fan']         = {['sweep'] = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
+  ['gate']        = {['open'] = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
+})
 ```
 
 Keyword examples:
