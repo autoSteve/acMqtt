@@ -11,23 +11,29 @@ An example use case is when the 'HUE'send receive' script has not yet gained a H
 This script does not need to start before the scripts being monitored.
 --]]
 
-local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['ssl'] = true, } function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
-setmetatable(_G, { __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n) end rawset(t, n, v) end, }) -- Runtime global variable checking to catch name typos
+-- Runtime global variable checking. Globals must be explicitly declared, which will catch variable name typos.
+local declaredNames = {['vprint'] = true, ['vprinthex'] = true}
+local function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
+local exclude = {['ngx'] = true, }
+setmetatable(_G, {
+  __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n..'"') end rawset(t, n, v) end,
+  __index = function (_, n) if not exclude[n] and not declaredNames[n] then log('Warning: Read undeclared global variable "'..n..'"') end return nil end,
+})
 
-declare('logging', false)        -- Enable detailed logging
-declare('logms', false)          -- Include timestamp in milliseconds for logs
-declare('checkForChanges', 3)    -- Interval to check for heartbeat registration changes
+local logging = false        -- Enable detailed logging
+local logms = false          -- Include timestamp in milliseconds for logs
+local checkForChanges = 3    -- Interval to check for heartbeat registration changes
 
 --[[
 *** Use code like the following to register with this Heartbeat script...
 
-heartbeatConditions = { ['max'] = 90, ['storageExists'] = 'hueactive' } -- At most 90 seconds without a heartbeat or else restart, but only if hueactive exists
-logging = false -- Enable detailed logging
-FORCE = true -- For logger. Use to force a log entry, regardless of the logging= value
+local heartbeatConditions = { ['max'] = 90, ['storageExists'] = 'hueactive' } -- At most 90 seconds without a heartbeat or else restart, but only if hueactive exists
+local logging = false -- Enable detailed logging
+local FORCE = true -- For logger. Use to force a log entry, regardless of the logging= value
 
-started = socket.gettime()
-function logger(msg, force) local ts if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
-function equals(o1, o2, ignore_mt)
+local started = socket.gettime()
+local function logger(msg, force) local ts if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
+local function equals(o1, o2, ignore_mt)
   if ignoreMt == nil then ignoreMt = true end
   if o1 == o2 then return true end
   local o1Type = type(o1) local o2Type = type(o2)
@@ -39,7 +45,7 @@ function equals(o1, o2, ignore_mt)
   return true
 end
 
-function isRegistered() local hbeat = storage.get('heartbeat', {}); local k; for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
+local function isRegistered() local hbeat = storage.get('heartbeat', {}); local k; for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
 if sendHeartbeat > 0 then
   -- Check whether registration is required, and if not registered (or conditions changed) then register
   local r, hbeat = isRegistered()
@@ -56,9 +62,11 @@ end
 
 *** And use code like this to periodically send a heartbeat from monitored resident scripts...
 
-sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
-heartbeat = os.time()
+Init...
+local sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
+local heartbeat = os.time()
 
+Main loop...
 if sendHeartbeat > 0 then
   local stat, err = pcall(function ()
     if os.time() - heartbeat >= sendHeartbeat then
@@ -70,17 +78,14 @@ end
 
 --]]
 
-declare('FORCE', true) -- For logger. Use to force a log entry, regardless of the logging= value
+local FORCE = true -- For logger. Use to force a log entry, regardless of the logging= value
 
-declare('started', socket.gettime())
-declare('logger') declare('contains')
-function logger(msg, force) local ts if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
-function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
+local function logger(msg, force) local ts if logging or force then if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end log(ts..msg) end end -- Log helper
+local function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end
 
-declare('scripts', {})
+local scripts = {}
 
-declare('checkChanges')
-function checkChanges()
+local function checkChanges()
   local hbeat = storage.get('heartbeat', {})
   local k, v, s, val
   
@@ -119,7 +124,7 @@ function checkChanges()
   end
 end
 
-if rawget(_G, 'server') == nil then declare('server') end
+local server
 if server then server:close() end  -- Handle script re-entry
 server = require('socket').udp()
 server:settimeout(1)
@@ -135,11 +140,12 @@ logger('Heartbeat initialised', FORCE)
 --[[
 Monitor heartbeats
 --]]
-declare('check', socket.gettime())
+local check = socket.gettime()
 
 while true do
   local cmd, s
   local timeCheck = socket.gettime()
+  local gotHb = {}
   
   if timeCheck > check then check = socket.gettime() + checkForChanges; checkChanges() end -- Check for heartbeat changes periodically
 
@@ -153,6 +159,7 @@ while true do
         s = scripts[parts[1]]
         if s then
           s.heartbeat = tonumber(parts[2])
+          gotHb[s] = true
           logger('Heartbeat from '..parts[1]..' at '..s.heartbeat)
         end
       end
@@ -165,8 +172,8 @@ while true do
 
   for k, v in pairs(scripts) do
     if script.status(k) ~= nil then
-      if v.storageExists ~= nil then
-        storageE = storage.get(v.storageExists)
+      if gotHb[s] and v.storageExists ~= nil then
+         storageE = storage.get(v.storageExists)
         if not storageE then v.heartbeat = os.time() end
       end
 

@@ -1,13 +1,10 @@
--- Runtime global variable declaraion function to catch name typos
-local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true} function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
-
 --[[ CHANGE TO SUIT ENVIRONMENT --]]
-declare('mqttBroker', '192.168.10.21')
-declare('mqttUsername', 'mqtt')
-declare('mqttPassword', 'password')
-declare('lighting', { ['56'] = true }) -- Array of applications that are used for lighting (ramp detection only applies to lighting)
-declare('checkForChanges', true)       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
-declare('checkChanges', 30)            -- Interval in seconds to check for changes to object keywords
+local mqttBroker = '192.168.10.21'
+local mqttUsername = 'mqtt'
+local mqttPassword = 'password'
+local lighting = { ['56'] = true } -- Array of applications that are used for lighting (ramp detection only applies to lighting)
+local checkForChanges = true       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
+local checkChanges = 30            -- Interval in seconds to check for changes to object keywords
 
 --[[
 Resident, zero sleep interval, name: 'MQTT send receive'
@@ -17,8 +14,11 @@ Manage CBus, Panasonic and Airtopia AC and environment events for MQTT, and publ
 Documentation available at https://github.com/autoSteve/acMqtt
 --]]
 
-local exclude = {['server'] = true, ['ngx'] = true, }
-setmetatable(_G, { -- Metatable to check globals
+-- Runtime global variable checking. Globals must be explicitly declared, which will catch variable name typos
+local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true}
+local function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
+local exclude = {['ngx'] = true, }
+setmetatable(_G, {
   __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n..'"') end rawset(t, n, v) end,
   __index = function (_, n) if not exclude[n] and not declaredNames[n] then log('Warning: Read undeclared global variable "'..n..'"') end return nil end,
 })
@@ -26,103 +26,102 @@ setmetatable(_G, { -- Metatable to check globals
 --[[
 General configuration variables follow. Change as required, but probably no need to.
 --]]
-declare('logging', false)        -- Enable detailed logging
-declare('logms', false)          -- Include timestamp in milliseconds for logs
+local logging = false        -- Enable detailed logging
+local logms = false          -- Include timestamp in milliseconds for logs
 
-declare('sendHeartbeat', 5)      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
-declare('heartbeatConditions', { ['max'] = 60, }) -- At most 60 seconds without a heartbeat or else get restarted
-declare('publishNoLevel', false) -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
-declare('selectExact', true)     -- For select, if a CBus level other than in the select levels is set then adjust the CBus level to the closest select level
-declare('blindKey')              -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
-declare('mqttClientId', 'nac')   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
-declare('mqttQoS', 2)            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
-declare('mqttJunk', true)        -- Whether to publish junk before a blank publish message when removing topics (not necessary, but cleans up MQTT Explorer view)
+local sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
+local heartbeatConditions = { ['max'] = 60, } -- At most 60 seconds without a heartbeat or else get restarted
+local publishNoLevel = false -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
+local selectExact = true     -- For select, if a CBus level other than in the select levels is set then adjust the CBus level to the closest select level
+local blindKey               -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
+local mqttClientId = 'nac'   -- #ditchunderscoresinvariablenames ... wherever practical please! Be kind to others, and your fingers typing...
+local mqttQoS = 2            -- Quality of service for MQTT messages: 0 = only once, 1 = at least once, 2 = exactly once
+local mqttJunk = true        -- Whether to publish junk before a blank publish message when removing topics (not necessary, but cleans up MQTT Explorer view)
 
 --[[
 Timing variables. Adjust to taste if you know what you're doing. These provide a good compromise, but your deployment may vary.
 --]]
-declare('rampTimeout', 5)        -- Time beyond ramp to declare a ramp orphan in seconds
-declare('socketTimeout', 0.05)   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
-declare('mqttTimeout', 0)        -- In milliseconds, go with zero unless you know what you're doing
-declare('ignoreTimeout', 2)      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
+local rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
+local socketTimeout = 0.05   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
+local mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
+local ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
 
 --[[
 Topic prefixes for read/write/publish. The mqttDiscovery topic is recommended to be set to 'homeassistant/'
 for use with HA, which is the default here. The MQTT CBus topics can be called whatever you want, as discovery/subscribe
 adjusts. All topic prefixes must end in '/'.
 --]]
-declare('mqttCbus', 'cbus/')
-declare('mqttReadTopic', mqttCbus..'read/')
-declare('mqttWriteTopic', mqttCbus..'write/')
-declare('mqttDiscoveryTopic', 'homeassistant/')
+local mqttCbus = 'cbus/'
+local mqttReadTopic = mqttCbus..'read/'
+local mqttWriteTopic = mqttCbus..'write/'
+local mqttDiscoveryTopic = 'homeassistant/'
 
 --[[
 Variables not to be messed with unless you definitely know what you're doing.
 --]]
-declare('discovery', {})         -- MQTT discovery topics lookup
-declare('discoveryDelete', {})   -- If duplicate discovery topics are detected on startup then they will be removed
-declare('atDiscovery', {})       -- AT discovery topics lookup
-declare('atDiscoveryDelete', {}) -- If duplicate discovery topics are detected on startup then they will be removed
-declare('mqttDevices', {})       -- CBus groups to send MQTT topics for
-declare('ac', {})                -- AC device details
-declare('acDevices', {})         -- Quick lookup to determine whether an object is an AC device
-declare('acBoards', {})          -- All physical AC boards (esp32)
-declare('at', {})                -- AT device details
-declare('atDevices', {})         -- Quick lookup to determine whether an object is an AT device
-declare('atBoards', {})          -- All physical AT boards
-declare('env', {})               -- Environment device details
-declare('envDevices', {})        -- Quick lookup to determine whether an object is an environment device
-declare('envBoards', {})         -- All physical environment boards (esp32)
-declare('cbusMessages', {})      -- Message queue
-declare('mqttMessages', {})      -- Message queue
-declare('ignoreCbus', {})        -- To prevent message loops
-declare('ignoreMqtt', {})        -- To prevent message loops
-declare('ramp', {})              -- Keeps track of ramping to ignore some zero level MQTT publish events outstandingCbusMessage()
-declare('triggers', {})          -- Trigger groups and their levels
-declare('selects', {})           -- Select groups and their options/levels
-declare('cover', {})             -- Quick lookup to determine whether an object is a cover (blind)
-declare('fan', {})               -- Quick lookup to determine whether an object is a fan (sweep fan)
-declare('bSensor', {})           -- Quick lookup to determine whether an object is a bsensor (a regular lighting group acting as status)
-declare('binarySensor', {})      -- Quick lookup to determine whether an object is a binary sensor
-declare('lightingButton', {})    -- Quick lookup to determine whether an object is a lighting group as a button
-declare('userParameter', {})     -- Quick lookup to determine whether an object is a user parameter
-declare('publishAdj', {})        -- Holds scale and decimals to apply
-declare('includeUnits', {})      -- Holds table of booleans to add sensor unit (%, $, °C, etc.) to MQTT value
-declare('unpublished', {})       -- The outstanding set of CBus objects to publish discovery topics for
-declare('unpublishedAt', {})     -- The outstanding set of CBus Airtopia objects to publish discovery topics for
-declare('mqttStatus', 2)         -- The status of the MQTT connection. Initially disconnected 1=connected, 2=disconnected
-declare('mqttConnected', 0)      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
-declare('imgDefault', {          -- Defaults for images - Simple image name, or a set of 'also contains' keywords (which must include an #else entry)
+local discovery = {}         -- MQTT discovery topics lookup
+local discoveryDelete = {}   -- If duplicate discovery topics are detected on startup then they will be removed
+local atDiscovery = {}       -- AT discovery topics lookup
+local atDiscoveryDelete = {} -- If duplicate discovery topics are detected on startup then they will be removed
+local mqttDevices = {}       -- CBus groups to send MQTT topics for
+local ac = {}                -- AC device details
+local acDevices = {}         -- Quick lookup to determine whether an object is an AC device
+local acBoards = {}          -- All physical AC boards (esp32)
+local at = {}                -- AT device details
+local atDevices = {}         -- Quick lookup to determine whether an object is an AT device
+local atBoards = {}          -- All physical AT boards
+local env = {}               -- Environment device details
+local envDevices = {}        -- Quick lookup to determine whether an object is an environment device
+local envBoards = {}         -- All physical environment boards (esp32)
+local cbusMessages = {}      -- Message queue
+local mqttMessages = {}      -- Message queue
+local ignoreCbus = {}        -- To prevent message loops
+local ignoreMqtt = {}        -- To prevent message loops
+local ramp = {}              -- Keeps track of ramping to ignore some zero level MQTT publish events outstandingCbusMessage()
+local triggers = {}          -- Trigger groups and their levels
+local selects = {}           -- Select groups and their options/levels
+local cover = {}             -- Quick lookup to determine whether an object is a cover (blind)
+local fan = {}               -- Quick lookup to determine whether an object is a fan (sweep fan)
+local bSensor = {}           -- Quick lookup to determine whether an object is a bsensor (a regular lighting group acting as status)
+local binarySensor = {}      -- Quick lookup to determine whether an object is a binary sensor
+local lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
+local userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
+local publishAdj = {}        -- Holds scale and decimals to apply
+local includeUnits = {}      -- Holds table of booleans to add sensor unit (%, $, °C, etc.) to MQTT value
+local unpublished = {}       -- The outstanding set of CBus objects to publish discovery topics for
+local unpublishedAt = {}     -- The outstanding set of CBus Airtopia objects to publish discovery topics for
+local mqttStatus = 2         -- The status of the MQTT connection. Initially disconnected 1=connected, 2=disconnected
+local mqttConnected = 0      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
+local imgDefault = {          -- Defaults for images - Simple image name, or a set of 'also contains' keywords (which must include an #else entry)
   ['heat']        = 'mdi:radiator',
   ['blind']       = 'mdi:blinds',
   ['under floor'] = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
   ['towel rail']  = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
   ['fan']         = {['sweep'] = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
   ['gate']        = {['open'] = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
-})
+}
 
-declare('airtopiaCmds', {'power', 'fan', 'swing', 'mode', 'target_temperature'}) -- All command topics (used for clean up)
-declare('atmodes', {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'}) -- Airtopia modes
-declare('atswings', {'Off', 'Horizontal only', 'Vertical only', 'Horizontal and Vertical'}) -- Airtopia swing modes
-declare('atfans', {'Auto', '1', '2', '3', '4'}) -- Airtopia fan speed (THIS IS UNTESTED, will result in 0, 1, 2, 3, 4 being set in the user parameter in the order of the list)
-declare('airtopiaStates', {})    -- Current state topics in use (used for clean up)
+local airtopiaCmds = {'power', 'fan', 'swing', 'mode', 'target_temperature'} -- All command topics (used for clean up)
+local atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
+local atswings = {'Off', 'Horizontal only', 'Vertical only', 'Horizontal and Vertical'} -- Airtopia swing modes
+local atfans = {'Auto', '1', '2', '3', '4'} -- Airtopia fan speed (THIS IS UNTESTED, will result in 0, 1, 2, 3, 4 being set in the user parameter in the order of the list)
+local airtopiaStates = {}    -- Current state topics in use (used for clean up)
 
-declare('RETAIN', true)          -- Boolean aliases for MQTT retain and no-retain settings
-declare('NORETAIN', false)
-declare('FORCE', true)           -- For logger. Use to force a log entry, regardless of the logging= value
+local RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
+local NORETAIN = false
+local FORCE = true           -- For logger. Use to force a log entry, regardless of the logging= value
 
-declare('heartbeat', socket.gettime())
-declare('started', socket.gettime())
+local heartbeat = socket.gettime()
+local started = socket.gettime()
 
-declare('sleep') declare('contains') declare('trim') declare('tNetCBus') declare('tNetAC') declare('len') declare('indexOf') declare('copy') declare('equals') declare('logger')
-function sleep(sec) socket.select(nil, nil, sec) end
-function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring
-function trim(s) if s ~= nil then return s:match "^%s*(.-)%s*$" else return nil end end -- Remove leading and trailing spaces
-function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
-function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
-function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return i end -- Get number of dictionary members
-function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end -- Find the index number of an array member
-function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
+local function sleep(sec) socket.select(nil, nil, sec) end
+local function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring
+local function trim(s) if s ~= nil then return s:match "^%s*(.-)%s*$" else return nil end end -- Remove leading and trailing spaces
+local function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
+local function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
+local function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return i end -- Get number of dictionary members
+local function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end -- Find the index number of an array member
+local function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
   if type(obj) ~= 'table' then return obj end
   if seen and seen[obj] then return seen[obj] end
   local s = seen or {}
@@ -131,7 +130,7 @@ function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
   for k, v in pairs(obj) do res[copy(k, s)] = copy(v, s) end
   return res
 end
-function equals(o1, o2, ignoreMt) -- Compare two variables (simple, tables, anything)
+local function equals(o1, o2, ignoreMt) -- Compare two variables (simple, tables, anything)
   if ignoreMt == nil then ignoreMt = true end
   if o1 == o2 then return true end
   local o1Type = type(o1) local o2Type = type(o2)
@@ -142,7 +141,7 @@ function equals(o1, o2, ignoreMt) -- Compare two variables (simple, tables, anyt
   for key2, _ in pairs(o2) do if not keySet[key2] then return false end end
   return true
 end
-function logger(msg, force) -- Log helper
+local function logger(msg, force) -- Log helper
   local ts
   if logging or force ~= nil then
     if logms then ts = string.format('%.3f ', socket.gettime()-started) else ts = '' end
@@ -153,8 +152,7 @@ end
 --[[
 Register with the Heartbeat script
 --]]
-declare('isRegistered')
-function isRegistered() local hbeat = storage.get('heartbeat', {}); local k; for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
+local function isRegistered() local hbeat = storage.get('heartbeat', {}); local k; for k, _ in pairs(hbeat) do if k == _SCRIPTNAME then return true, hbeat end end return false, hbeat end
 if sendHeartbeat > 0 then
   -- Check whether registration is required, and if not registered (or conditions changed) then register
   local r, hbeat = isRegistered()
@@ -172,7 +170,7 @@ end
 --[[
 UDP listener - receive messages from CBus level change event scripts
 --]]
-if rawget(_G, 'server') == nil then declare('server') end
+local server
 if server then server:close() end  -- Handle script re-entry
 server = require('socket').udp()
 server:settimeout(socketTimeout)
@@ -182,8 +180,8 @@ server:setsockname('127.0.0.1', 5432) -- Listen on port 5432 for CBus changes
 Mosquitto client and call-backs
 --]]
 
-declare('mqtt', require('mosquitto'))
-declare('client', mqtt.new(mqttClientId))
+local mqtt = require('mosquitto')
+local client = mqtt.new(mqttClientId)
 client:will_set(mqttCbus..'status', 'offline', mqttQoS, RETAIN) -- Last will and testament is to set status offline
 if mqttUsername then client:login_set(mqttUsername, mqttPassword) end
 
@@ -226,8 +224,7 @@ end
 --[[
 Publish lighting and user parameter objects to MQTT 
 --]]
-declare('publish')
-function publish(net, app, group, level)
+local function publish(net, app, group, level)
   if level == nil then logger('Warning: Nil CBus level for '..net..'/'..app..'/'..group, FORCE); do return end end
   local alias = net..'/'..app..'/'..group
   local aAlias = tNetAC(net)..'/'..app..'/'..group
@@ -278,8 +275,7 @@ end
 --[[
 Publish measurement application objects to MQTT 
 --]]
-declare('publishMeasurement')
-function publishMeasurement(net, app, group, channel, value)
+local function publishMeasurement(net, app, group, channel, value)
   local units, v
   local alias = net..'/'..app..'/'..group..'/'..channel
   if value == nil then logger('Warning: Nil CBus measurement value for '..net..'/'..app..'/'..group, FORCE); do return end end
@@ -302,8 +298,7 @@ end
 --[[
 Publish Panasonic ESPHome objects to MQTT 
 --]]
-declare('publishAc')
-function publishAc(net, app, group, level, select)
+local function publishAc(net, app, group, level, select)
   if level == nil then logger('Warning: Nil AC level for '..net..'/'..app..'/'..group, FORCE); do return end end
   local alias = net..'/'..app..'/'..group
   if ac[alias].state ~= level then
@@ -343,8 +338,7 @@ end
 --[[
 Publish Airtopia MODBUS objects to MQTT 
 --]]
-declare('publishAt')
-function publishAt(net, app, group, level)
+local function publishAt(net, app, group, level)
   if level == nil then logger('Warning: Nil AT level for '..net..'/'..app..'/'..group, FORCE); do return end end
   local alias = net..'/'..app..'/'..group
   if at[alias].state ~= level then
@@ -413,8 +407,7 @@ end
 --[[
 Build and publish a CBus MQTT discovery topic
 --]]
-declare('addDiscover')
-function addDiscover(net, app, group, channel, tags, name)
+local function addDiscover(net, app, group, channel, tags, name)
   if not name then -- Need a name from tag lookup for everything but measurement app
     if channel == nil then
       logger('Warning: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required so ignoring', FORCE)
@@ -524,7 +517,7 @@ function addDiscover(net, app, group, channel, tags, name)
       local v = trim(tp[2])
       if _L[k] then
         if type(_L[k]) == 'number' then _L[k] = tonumber(v)
-        elseif k == 'lvl' then _L[k] = string.split(v, '-') local lv for _, lv in ipairs(_L[k]) do lv = trim(lv) end
+        elseif type(_L[k]) == 'table' then _L[k] = string.split(v, '-') local tv for _, tv in ipairs(_L[k]) do tv = trim(tv) end
         else _L[k] = v end
       end
     else
@@ -656,15 +649,14 @@ function addDiscover(net, app, group, channel, tags, name)
     logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa)
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
   else
-    logger('Warning: a publish payload for '..name..' could not be built, so nothing published')
+    logger('Warning: a publish payload for '..name..' could not be built, so not published', FORCE)
   end
 end
 
 --[[
 Build and publish an Airtopia discovery topic
 --]]
-declare('addAtDiscover')
-function addAtDiscover(name, sa, unit)
+local function addAtDiscover(name, sa, unit)
   local dSa, payload
 
   if logging then
@@ -726,10 +718,9 @@ end
 --[[
 Add Airtopia objects 
 --]]
-declare('atLog', {})
-declare('atLogGrp', {})
-declare('addAt')
-function addAt(grps, found)
+local atLog = {}
+local atLogGrp = {}
+local function addAt(grps, found)
   local atArea = {}
   local atDevs = {}
   local k, v
@@ -819,8 +810,7 @@ end
 --[[
 Queue up initial discovery and current state CBus objects, plus Airtopia if used
 --]]
-declare('publishCurrent')
-function publishCurrent()
+local function publishCurrent()
   -- CBus
   mqttDevices = {}
   local grps = GetCBusByKW('MQTT', 'or')
@@ -874,9 +864,8 @@ end
 --[[
 Create / update / delete AC devices
 --]]
-declare('acLogGrp', {})
-declare('cudAc')
-function cudAc(initial)
+local acLogGrp = {}
+local function cudAc(initial)
   local grps = GetCBusByKW('AC', 'or')
   local found = {}
   local addition = false
@@ -940,8 +929,7 @@ end
 --[[
 Publish the state of Airtopia devices
 --]]
-declare('publishAtState')
-function publishAtState()
+local function publishAtState()
   local k
   for k, _ in pairs(atBoards) do
     local parts, topic, level
@@ -985,8 +973,7 @@ end
 --[[
 Create / update / delete Airtopia devices
 --]]
-declare('cudAt')
-function cudAt(initial)
+local function cudAt(initial)
   local grps = GetCBusByKW('AT', 'or')
   local boards = copy(atBoards)
   local k, v, topic
@@ -1043,9 +1030,8 @@ end
 --[[
 Create / update / delete ENV (environment) devices
 --]]
-declare('envLogGrp', {})
-declare('cudEnv')
-function cudEnv(initial)
+local envLogGrp = {}
+local function cudEnv(initial)
   local grps = GetCBusByKW('ENV', 'or')
   local found = {}
   local addition = false
@@ -1097,8 +1083,7 @@ end
 --[[
 Create / update / delete CBus MQTT discovery topics
 --]]
-declare('cudCBusTopics')
-function cudCBusTopics()
+local function cudCBusTopics()
   local grps = GetCBusByKW('MQTT', 'or')
   local found = {}
   local lvlDelete = {}
@@ -1220,8 +1205,7 @@ end
 --[[
 Publish queued CBus discovery topics
 --]]
-declare('outstandingPublish')
-function outstandingPublish()
+local function outstandingPublish()
   local nClock = socket.gettime()
   local u
   for _, u in ipairs(unpublished) do
@@ -1256,8 +1240,7 @@ end
 --[[
 Publish queued Airtopia topics
 --]]
-declare('outstandingAtPublish')
-function outstandingAtPublish()
+local function outstandingAtPublish()
   local nClock = socket.gettime()
   local u
   for _, u in ipairs(unpublishedAt) do addAtDiscover(u['name'], u['sa'], nil) end
@@ -1274,8 +1257,7 @@ end
 --[[
 Publish the next queued messages for CBus
 --]]
-declare('outstandingMqttMessage')
-function outstandingMqttMessage()
+local function outstandingMqttMessage()
   local msg, k, v, device
   for _, msg in ipairs(mqttMessages) do
     local topic = msg.topic
@@ -1532,8 +1514,7 @@ end
 --[[
 Publish the next queued messages for MQTT
 --]]
-declare('outstandingCbusMessage')
-function outstandingCbusMessage()
+local function outstandingCbusMessage()
   local cmd
 
   local lastLevel = storage.get('lastlvl', {})
@@ -1618,8 +1599,7 @@ end
 --[[
 Remove any orphaned ramp flags
 --]]
-declare('checkRampOrphans')
-function checkRampOrphans()
+local function checkRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do
     if socket.gettime() > v.ts + v.ramp + rampTimeout then
@@ -1639,8 +1619,7 @@ end
 --[[
 Duplicate discovery delete
 --]]
-declare('dupDelete')
-function dupDelete()
+local function dupDelete()
   -- If duplicate discovery topics are detected then remove them (discoveryDelete is set in broker ON_MESSAGE call-back)
   logger('Warning: Removing '..len(discoveryDelete)..' duplicate discovery topics', FORCE)
   local toDelete
@@ -1660,20 +1639,19 @@ Main loop
 --]]
 
 -- Create/update/delete functions spread evenly over the period 'trackChanges'
-declare('cud', {
+local cud = {
   { func = cudCBusTopics, init = false },
   { func = cudAc, init = true, script = 'AC' },
   { func = cudEnv, init = true },
   { func = cudAt, init = false, script = 'AT' },
-})
+}
 local i, c
 for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function
 
 -- Initial load of devices excluding CBus, suppressing MQTT re-subscribe
 for _, c in ipairs(cud) do if c.init then c.func(true); if c.script and script.status(c.script) ~= nil then script.disable(c.script); script.enable(c.script) end end end
 
-declare('validateIncoming')
-function validateIncoming(cmd) -- Reject any weird socket messages received
+local function validateIncoming(cmd) -- Reject any weird socket messages received
   local _, count = cmd:gsub("/", ''); if count < 3 or count > 4 then return false end
   local parts = string.split(cmd, '/')
   local dstC, payload, n
@@ -1736,6 +1714,7 @@ while true do
       if not stat then logger('Error checking ramp orphans: '..err, FORCE) end -- Log and continue
     end
     if len(discoveryDelete) > 0 then
+      -- A type has changed for existing topics, so clean up discovery for the old topics
       stat, err = pcall(dupDelete)
       if not stat then logger('Error processing delete discovery duplicates: '..err, FORCE) end -- Log and continue
     end
