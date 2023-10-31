@@ -14,15 +14,6 @@ Manage CBus, Panasonic and Airtopia AC and environment events for MQTT, and publ
 Documentation available at https://github.com/autoSteve/acMqtt
 --]]
 
--- Runtime global variable checking. Globals must be explicitly declared, which will catch variable name typos
-local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true}
-local function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
-local exclude = {['ngx'] = true, }
-setmetatable(_G, {
-  __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n..'"') end rawset(t, n, v) end,
-  __index = function (_, n) if not exclude[n] and not declaredNames[n] then log('Warning: Read undeclared global variable "'..n..'"') end return nil end,
-})
-
 --[[
 General configuration variables follow. Change as required, but probably no need to.
 --]]
@@ -90,9 +81,9 @@ local publishAdj = {}        -- Holds scale and decimals to apply
 local includeUnits = {}      -- Holds table of booleans to add sensor unit (%, $, °C, etc.) to MQTT value
 local unpublished = {}       -- The outstanding set of CBus objects to publish discovery topics for
 local unpublishedAt = {}     -- The outstanding set of CBus Airtopia objects to publish discovery topics for
-local mqttStatus = 2         -- The status of the MQTT connection. Initially disconnected 1=connected, 2=disconnected
-local mqttConnected = 0      -- Timestamp of MQTT connection, initially zero which will cause an immediate connection
-local imgDefault = {          -- Defaults for images - Simple image name, or a set of 'also contains' keywords (which must include an #else entry)
+local mqttStatus = 2         -- The status of the MQTT connection. Initially disconnected, which will cause an immediate connection. 1=connected, 2=disconnected
+local mqttConnected = 0      -- Timestamp of MQTT connection
+local imgDefault = {         -- Defaults for images - Simple image name, or a table of 'also contains' keywords (which must include an #else entry)
   ['heat']        = 'mdi:radiator',
   ['blind']       = 'mdi:blinds',
   ['under floor'] = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
@@ -104,7 +95,7 @@ local imgDefault = {          -- Defaults for images - Simple image name, or a s
 local airtopiaCmds = {'power', 'fan', 'swing', 'mode', 'target_temperature'} -- All command topics (used for clean up)
 local atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
 local atswings = {'Off', 'Horizontal only', 'Vertical only', 'Horizontal and Vertical'} -- Airtopia swing modes
-local atfans = {'Auto', '1', '2', '3', '4'} -- Airtopia fan speed (THIS IS UNTESTED, will result in 0, 1, 2, 3, 4 being set in the user parameter in the order of the list)
+local atfans = {'Auto', '1', '2', '3', '4'} -- Airtopia fan speed (THIS IS UNTESTED, will result in 0, 1, 2, 3, 4 being set in the user parameter in the order of the table)
 local airtopiaStates = {}    -- Current state topics in use (used for clean up)
 
 local RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
@@ -113,6 +104,15 @@ local FORCE = true           -- For logger. Use to force a log entry, regardless
 
 local heartbeat = socket.gettime()
 local started = socket.gettime()
+
+-- Runtime global variable checking. Globals must be explicitly declared, which will catch variable name typos
+local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true}
+local function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
+local exclude = {['ngx'] = true, }
+setmetatable(_G, {
+  __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n..'"') end rawset(t, n, v) end,
+  __index = function (_, n) if not exclude[n] and not declaredNames[n] then log('Warning: Read undeclared global variable "'..n..'"') end return nil end,
+})
 
 local function sleep(sec) socket.select(nil, nil, sec) end
 local function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring
@@ -130,7 +130,7 @@ local function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
   for k, v in pairs(obj) do res[copy(k, s)] = copy(v, s) end
   return res
 end
-local function equals(o1, o2, ignoreMt) -- Compare two variables (simple, tables, anything)
+local function equals(o1, o2, ignoreMt) -- Compare two variables (simple, tables, anything). Default ignore metatables.
   if ignoreMt == nil then ignoreMt = true end
   if o1 == o2 then return true end
   local o1Type = type(o1) local o2Type = type(o2)
@@ -148,6 +148,7 @@ local function logger(msg, force) -- Log helper
     log(ts..msg)
   end
 end
+
 
 --[[
 Register with the Heartbeat script
@@ -176,6 +177,7 @@ server = require('socket').udp()
 server:settimeout(socketTimeout)
 server:setsockname('127.0.0.1', 5432) -- Listen on port 5432 for CBus changes
 
+
 --[[
 Mosquitto client and call-backs
 --]]
@@ -188,38 +190,35 @@ if mqttUsername then client:login_set(mqttUsername, mqttPassword) end
 client.ON_CONNECT = function(success)
   local k
   if success then
-    logger('MQTT connected', FORCE)
+    logger('Connected to Mosquitto broker', FORCE)
     client:publish(mqttCbus..'status', 'online', mqttQoS, RETAIN)
     mqttStatus = 1
-    -- Subscribe to relevant topics
-    client:subscribe(mqttWriteTopic..'#', mqttQoS)
-    client:subscribe(mqttDiscoveryTopic..'#', mqttQoS)
-    for k, _ in pairs(acBoards) do client:subscribe(k..'/#', mqttQoS) end
-    for k, _ in pairs(atBoards) do client:subscribe('airtopia/'..k..'/#', mqttQoS) end
-    for k, _ in pairs(envBoards) do client:subscribe(k..'/#', mqttQoS) end
   end
 end
 
 client.ON_DISCONNECT = function(...)
-  logger('MQTT disconnected', FORCE)
+  logger('Mosquitto broker has disconnected', FORCE)
   mqttStatus = 2
 end
 
 client.ON_MESSAGE = function(mid, topic, payload)
-  -- Record discovery topics to check for duplication
-  local parts = string.split(topic, '/')
-  if parts[1] == string.split(mqttDiscoveryTopic, '/')[1] then
-    if discovery[parts[3]] ~= nil then
-      if discovery[parts[3]] ~= parts[2] then
-        discoveryDelete[parts[3]..'/'..parts[2]] = true
-      else
-        discovery[parts[3]] = parts[2] -- Table of CBus addresses with type as the value
+  if contains('/cbus_mqtt_', topic) then
+    -- Record discovery topics to check for duplication
+    local parts = string.split(topic, '/')
+    if parts[1] == string.split(mqttDiscoveryTopic, '/')[1] then
+      if discovery[parts[3]] ~= nil then
+        if discovery[parts[3]] ~= parts[2] then
+          discoveryDelete[parts[3]..'/'..parts[2]] = true
+        else
+          discovery[parts[3]] = parts[2] -- Table of CBus addresses with type as the value
+        end
       end
     end
   else
-    mqttMessages[#mqttMessages + 1] = { topic=topic, payload=payload } -- Queue the MQTT message
+    mqttMessages[#mqttMessages + 1] = { topic=topic, payload=payload } -- Queue the message
   end
 end
+
 
 --[[
 Publish lighting and user parameter objects to MQTT 
@@ -555,7 +554,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   if payload ~= nil then
     mqttDevices[aAlias].type = dType -- If payload recieved than set the mqttDevices type, then move on to publish
   else
-    -- Or if a nil payload so far then build the trigger app buttons if applicable on all specific levels and publish as separate devices, and then return
+    -- Or if a nil payload so far then build and publish the trigger app buttons if applicable on all specific levels and publish as separate devices, and then return
     if dType == 'button' and app == 202 then
       local i
       mqttDevices[aAlias].trigger = {}
@@ -628,7 +627,6 @@ local function addDiscover(net, app, group, channel, tags, name)
         end
       until not startIdx or startIdx > 1
     end 
-
     payload.name = ''
     payload.obj_id = oid
     payload.uniq_id = oid
@@ -643,8 +641,8 @@ local function addDiscover(net, app, group, channel, tags, name)
     end
 
     -- Publish to MQTT broker
-    discovery[oid] = dType
     local j = json.encode(payload)
+    discovery[oid] = dType
     if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
     logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa)
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
@@ -738,7 +736,7 @@ local function addAt(grps, found)
     local dev = ''; local func = ''; local sense = ''; local sa = ''; local tags = v.keywords
     for _, t in ipairs(tags) do
       tp = string.split(t, '=')
-      tp[1] = trim(tp[1])
+      tp[1] = trim(tp[1]):lower()
       if tp[2] then
         tp[2] = trim(tp[2])
         if tp[1] == 'dev' then dev = tp[2]; atDevs[dev] = true -- Device
@@ -806,6 +804,7 @@ local function addAt(grps, found)
   end
   return addition, found
 end
+
 
 --[[
 Queue up initial discovery and current state CBus objects, plus Airtopia if used
@@ -1265,7 +1264,7 @@ local function outstandingMqttMessage()
 
     local parts = string.split(topic, '/')
 
-    -- Messages from CBus
+    -- Messages from CBus write topics
     if parts[1] == 'cbus' and parts[2] == 'write' then
 
       local net = tNetAC(tonumber(parts[3])); local app = tonumber(parts[4]); local group = tonumber(parts[5])
@@ -1352,7 +1351,7 @@ local function outstandingMqttMessage()
         end
       end
 
-    -- Messages from AC boards
+    -- Messages from AC board select/sensor topics
     elseif parts[2] == 'climate' or parts[2] == 'select' or parts[2] == 'sensor' then
       local sel = 'func'
       -- for loop finding items parts[2] or parts[3] matches a 'sense'... is topic important??? Prolly not...
@@ -1395,7 +1394,7 @@ local function outstandingMqttMessage()
         end
       end
     
-    -- Messages from AT boards
+    -- Messages from AT board cmd topics
     elseif parts[1] == 'airtopia' and parts[3] == 'cmd' then
       device = parts[2]..'-'..parts[4]
       local net, app, group
@@ -1488,7 +1487,7 @@ local function outstandingMqttMessage()
       if indexOf(airtopiaStates, parts[4]) == nil then table.insert(airtopiaStates, parts[4]) end
     end
     
-    -- Messages from ENV boards - simpler, only messages inbound
+    -- Messages from ENV board sensor topics - simpler, only messages inbound
     if parts[2] == 'sensor' and parts[4] == 'state' then
       device = parts[1]..'-'..parts[3]
       if envDevices[device] then
@@ -1596,6 +1595,7 @@ local function outstandingCbusMessage()
   cbusMessages = {}
 end
 
+
 --[[
 Remove any orphaned ramp flags
 --]]
@@ -1615,6 +1615,7 @@ local function checkRampOrphans()
   end
   for _, k in ipairs(orphan) do ramp[k] = nil; logger('Removing orphaned ramp for '..k) end
 end
+
 
 --[[
 Duplicate discovery delete
@@ -1736,10 +1737,20 @@ while true do
         do return end
       end
     end
-    -- Connected...
+    -- Subscribe to relevant topics
+    client:subscribe(mqttWriteTopic..'#', mqttQoS)
+    client:subscribe(mqttDiscoveryTopic..'#', mqttQoS)
+    for k, _ in pairs(acBoards) do client:subscribe(k..'/#', mqttQoS) end
+    for k, _ in pairs(atBoards) do client:subscribe('airtopia/'..k..'/#', mqttQoS) end
+    for k, _ in pairs(envBoards) do client:subscribe(k..'/#', mqttQoS) end
+    -- Connected... Now loop briefly to allow retained value retrieval for subscribed topics because synchronous
+    while socket.gettime() - mqttConnected < 0.5 do client:loop(0) end
     -- Full publish CBus topics
     stat, err = pcall(publishCurrent)
     if not stat then logger('Error publishing current values: '..err, FORCE) end -- Log and continue
+  else
+    logger('Error: Invalid mqttStatus: '..mqttStatus, FORCE)
+    do return end
   end
 
   --[[
