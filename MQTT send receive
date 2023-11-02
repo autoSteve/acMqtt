@@ -6,6 +6,8 @@ local lighting = { ['56'] = true } -- Array of applications that are used for li
 local checkForChanges = true       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
 local checkChanges = 30            -- Interval in seconds to check for changes to object keywords
 
+--[[ NOTE: !!!+++BREAKING CHANGE+++!!! Keywords for the lvl= tag have CHANGED. Use '/' instead of '-', and ':' where '/' was previously used. See the README for updated examples. --]]
+
 --[[
 Resident, zero sleep interval, name: 'MQTT send receive'
 
@@ -410,7 +412,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   if not name then -- Need a name from tag lookup for everything but measurement app
     if channel == nil then
       logger('Warning: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required so ignoring', FORCE)
-      do return end
+      return false
     else
       name = 'measurement'
     end
@@ -483,7 +485,8 @@ local function addDiscover(net, app, group, channel, tags, name)
       local options = {}
       selects[aAlias] = {}
       for _, level in ipairs(_L.lvl) do
-        local parts = string.split(level, '/')
+        if contains('/', level) then logger('Error: Legacy separator "/" being used for '..aAlias..'! Use ":" instead', FORCE) return nil end
+        local parts = string.split(level, ':')
         if #parts == 2 then -- A select option and level
           options[#options + 1] = parts[1]
           selects[aAlias][parts[1]] = tonumber(parts[2])
@@ -516,7 +519,10 @@ local function addDiscover(net, app, group, channel, tags, name)
       local v = trim(tp[2])
       if _L[k] then
         if type(_L[k]) == 'number' then _L[k] = tonumber(v)
-        elseif type(_L[k]) == 'table' then _L[k] = string.split(v, '-') local tv for _, tv in ipairs(_L[k]) do tv = trim(tv) end
+        elseif type(_L[k]) == 'table' then
+          if contains('-', v) then logger('Error: Legacy separator "-" being used to separate list members '..aAlias..'! Use "/" instead', FORCE) return false end
+          _L[k] = string.split(v, '/')
+          local tv for _, tv in ipairs(_L[k]) do tv = trim(tv) end
         else _L[k] = v end
       end
     else
@@ -558,6 +564,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     if dType == 'button' and app == 202 then
       local i
       mqttDevices[aAlias].trigger = {}
+      mqttDevices[aAlias].type = 'button'
       if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels
       for _, i in ipairs(_L.lvl) do 
         tag = GetCBusLevelTag(tNetAC(net), 202, group, tonumber(i))
@@ -607,11 +614,11 @@ local function addDiscover(net, app, group, channel, tags, name)
           table.insert(mqttDevices[aAlias].trigger, boid)
         end
       end
-      do return end
+      return true
 
     elseif dType == 'button' then
       logger('Warning: MQTT button keyword used for unsupported application group '..aAlias..', so ignoring', FORCE)
-      do return end
+      return false
     end
   end
 
@@ -646,6 +653,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
     logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa)
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
+    return true
   else
     logger('Warning: a publish payload for '..name..' could not be built, so not published', FORCE)
   end
@@ -659,7 +667,7 @@ local function addAtDiscover(name, sa, unit)
 
   if logging then
     if sa == '' then dSa = 'no preferred area' else dSa = sa end
-    logger('Publish discovery '..name..' in area '..dSa, FORCE)
+    logger('Publish discovery '..name..' in area '..dSa)
   end
   if unit == nil then unit = 'A' end
 
@@ -1089,7 +1097,7 @@ local function cudCBusTopics()
   local n = 0
   unpublished = {}
   local queued = {}
-  local k, v, alias, lvl
+  local k, v, alias, lvl, name
 
   for k, v in pairs(grps) do
     local change = false
@@ -1183,15 +1191,17 @@ local function cudCBusTopics()
         for _, lvl in ipairs(lvlDelete[k]) do
           local parts = string.split(k, '/')
           local group = tonumber(parts[3])
-          local a, t, act; for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
-          trigger = nil
-          for _, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; break end end
-          if trigger then
-            topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
-            client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic '..topic, FORCE)
-            t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
-            if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
-            client:publish(t, '', mqttQoS, RETAIN)
+          if triggers[group] then
+            local a, t, act; for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
+            trigger = nil
+            for _, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; break end end
+            if trigger then
+              topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
+              client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic '..topic, FORCE)
+              t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
+              if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
+              client:publish(t, '', mqttQoS, RETAIN)
+            end
           end
         end
       end
@@ -1207,8 +1217,9 @@ Publish queued CBus discovery topics
 local function outstandingPublish()
   local nClock = socket.gettime()
   local u
+  local failed = 0
   for _, u in ipairs(unpublished) do
-    addDiscover(tNetCBus(u.net), u.app, u.group, u.channel, u.tags, u.name)
+    if not addDiscover(tNetCBus(u.net), u.app, u.group, u.channel, u.tags, u.name) then failed = failed + 1 end
     local alias = u.net..'/'..u.app..'/'..u.group
     -- storage.set('pre'..alias, nil) -- Un-comment to clear out all previous values for testing
     -- Measurement application
@@ -1230,7 +1241,7 @@ local function outstandingPublish()
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
     if script.status('MQTT') ~= nil then script.disable('MQTT'); script.enable('MQTT') end
-    logger('Published '..#unpublished..' CBus discovery and current level topic'..(#unpublished ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted', FORCE)
+    logger('Published '..#unpublished - failed..' CBus discovery and current level topic'..(#unpublished - failed ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted', FORCE)
     unpublished = {}
   end
 end

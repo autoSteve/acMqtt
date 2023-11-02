@@ -60,7 +60,7 @@ And in addition to the type...
 - dec=    Decimal places (User param/sensor only)
 - unit=   Unit of measurement (User param/sensor only)
 - scale=  Multiplier / divider (User param/sensor only)
-- lvl=    List of applicable levels, separated by "-' (Trigger button and select only)
+- lvl=    List of applicable levels, separated by "/" (Trigger button and select only)
 - on=     Preferred value shown in HA for a 'bsensor' ON value (bsensor only)
 - off=    Preferred value shown in HA for a 'bsensor' OFF value (bsensor only)
 - Plus the keyword includeunits for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, not the unit= keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without includeunits is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
@@ -68,9 +68,9 @@ And in addition to the type...
 Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
 Using lvl= for select is mandatory. This defines the selection name and its corresponding CBus level for the group. There are three options for lvl=:
-- Using the format: lvl=Option 1/0-Option 2/255, for any name desired and a level number
-- The level numbers: lvl=0-255, which will use the level tag
-- The level tags: lvl=Option 1-Option 2, which will look up the level number
+- Using the format: lvl=Option 1:0/Option 2:255, for any name desired and a level number
+- The level numbers: lvl=0/255, which will use the level tag
+- The level tags: lvl=Option 1/Option 2, which will look up the level number
 
 And futher for select only, if it is desirable to allow CBus levels other than the specific select levels to be set then alter the selectExact variable in the 'MQTT send receive' script, otherwise that script will force the level to be set to the nearest select level.
 
@@ -97,12 +97,12 @@ Keyword examples:
 - MQTT, switch, sa=Bathroom 1, img=mdi:radiator, 
 - MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 - MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
-- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=0-137-255, 
-- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed-Half open-Open, 
-- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/0-Half open/137-Open/255, 
+- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=0/137/255, 
+- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/Half open/Open, 
+- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed:0/Half open:137/Open:255, 
 - MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
-- MQTT, button, sa=Entry / Egress, lvl=0-1-2-5-127, pn=Inside      *(a trigger control group with various levels)*
+- MQTT, button, sa=Entry / Egress, lvl=0/1/2/5/127, pn=Inside      *(a trigger control group with various levels)*
 - MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
 - MQTT, button, sa=Outside, img=mdi:gate-open,    *(a lighting group button to open a gate)*
 
