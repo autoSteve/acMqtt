@@ -1738,15 +1738,15 @@ while true do
     end
   elseif mqttStatus == 2 then
     -- MQTT is disconnected, so attempt a connection, waiting up to five seconds. If fail to connect then exit and await script re-entry
-    local timeout = 5
+    local timeout = 30
     mqttConnected = socket.gettime()
     stat, err = pcall(function (b, p, k) client:connect(b, p, k) end, mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
     if not stat then logger('Error connecting to broker: '..err, FORCE) do return end end -- Log and abort
     while mqttStatus ~= 1 do
       client:loop(0) -- Service the client
       if socket.gettime() - mqttConnected > timeout then
-        logger('Failed to connect to the MQTT broker within '..timeout..' seconds', FORCE)
-        do return end
+        logger('Failed to connect to the MQTT broker within '..timeout..' seconds, retrying', FORCE)
+        goto hbeat
       end
     end
     -- Subscribe to relevant topics
@@ -1771,7 +1771,7 @@ while true do
   If sending the heartbeat faults, then the loop is exited, which will also re-start this
   script (it being resident/sleep zero).
   --]]
-  
+  ::hbeat::
   if sendHeartbeat > 0 then
     local stat, err = pcall(function ()
       if socket.gettime() - heartbeat >= sendHeartbeat then
