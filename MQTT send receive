@@ -174,8 +174,8 @@ end
 --[[
 UDP listener - receive messages from CBus level change event scripts
 --]]
-local server
-if server then server:close() end  -- Handle script re-entry
+declare('server')
+pcall(function () server:close() end)
 server = require('socket').udp()
 server:settimeout(socketTimeout)
 server:setsockname('127.0.0.1', 5432) -- Listen on port 5432 for CBus changes
@@ -1737,11 +1737,15 @@ while true do
       if not stat then logger('Error checking create/update/delete: '..err, FORCE) end -- Log and continue
     end
   elseif mqttStatus == 2 then
-    -- MQTT is disconnected, so attempt a connection, waiting up to five seconds. If fail to connect then exit and await script re-entry
+    -- MQTT is disconnected, so attempt a connection, waiting. If fail to connect then exit and await script re-entry
     local timeout = 30
     mqttConnected = socket.gettime()
     stat, err = pcall(function (b, p, k) client:connect(b, p, k) end, mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
-    if not stat then logger('Error connecting to broker: '..err, FORCE) do return end end -- Log and abort
+    if not stat then -- Log and abort
+      logger('Error calling connect to broker: '..err, FORCE)
+      pcall(function () server:close() end)
+      do return end
+    end
     while mqttStatus ~= 1 do
       client:loop(0) -- Service the client
       if socket.gettime() - mqttConnected > timeout then
@@ -1762,6 +1766,7 @@ while true do
     if not stat then logger('Error publishing current values: '..err, FORCE) end -- Log and continue
   else
     logger('Error: Invalid mqttStatus: '..mqttStatus, FORCE)
+    pcall(function () server:close() end)
     do return end
   end
 
@@ -1778,6 +1783,10 @@ while true do
         heartbeat = socket.gettime(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
       end
     end)
-    if not stat then logger('A fault occurred sending heartbeat. Restarting...', FORCE); do return end end
+    if not stat then
+      logger('A fault occurred sending heartbeat. Restarting...', FORCE)
+      pcall(function () server:close() end)
+      do return end
+    end
   end
 end
