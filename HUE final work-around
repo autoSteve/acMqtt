@@ -6,10 +6,7 @@ Pushes HUE final level events to resident script via socket.
 Tag required objects with the "HUE" keyword and this script will run whenever one of those objects reaches its target level.
 
 This script is a work-around version of 'HUE final' that avounds a bug introduced after firmware 1.6.0, where scripts always
-execute during ramping, regardless of the setting of "Execute during ramping" for the script. Report filed for 1.10.0, but
-the bug remains up to 1.14.0... 🤦🏻
-
-But for the bug, these 30 lines should be just 11, which would be far easier to understand what's going on.
+execute during ramping, regardless of the setting of "Execute during ramping" for the script. Firmware bug fixed in 1.15.0.
 --]]
 
 logging = false
