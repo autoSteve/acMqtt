@@ -52,8 +52,6 @@ setmetatable(_G, {
 local logging = false        -- Enable detailed logging
 local logms = false          -- Include timestamp in milliseconds for logs
 
-storage.set('hueactive', nil)
-
 local eventStream = '/eventstream/clip/v2'
 local resource = '/clip/v2/resource'
 local connectivity = '/clip/v2/resource/zigbee_connectivity'
@@ -67,7 +65,7 @@ local minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brigh
 local rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
 local pendingTimeout = 30    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream updates are quite delayed from lights)
 local sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
-local heartbeatConditions = { ['max'] = 60, ['storageExists'] = 'hueactive' }  -- At most 60 seconds without a heartbeat or else restart, but only if hueactive exists
+local heartbeatConditions = { ['max'] = 120, ['storageExists'] = 'hueactive' }  -- At most two minutes without a heartbeat or else restart, but only if hueactive exists
 
 local huePort = 5435         -- Listening port to receive messages from 'HUE' and 'HUE final' scripts
 local port = 443             -- Listening port of the Hue bridge
@@ -116,7 +114,7 @@ if sendHeartbeat > 0 then
   -- Check whether registration is required, and if not registered (or conditions changed) then register
   local r, hbeat = isRegistered()
   if not r or (r and not equals(hbeat[_SCRIPTNAME], heartbeatConditions)) then
-    local k, v
+    local k, v, vals
     vals = '' for k, v in pairs(heartbeatConditions) do vals = vals..k..'='..v..' ' end
     logger('Registering '.._SCRIPTNAME..' with Heartbeat of '..vals, FORCE)
     hbeat[_SCRIPTNAME] = heartbeatConditions
@@ -131,13 +129,13 @@ end
 UDP listener - receive messages from the event script 'HUE'
 --]]
 
-local server
-if server then server:close() end -- Handle script re-entry
+declare('server')
 server = require('socket').udp()
 server:settimeout(socketTimeout)
-if not server:setsockname('0.0.0.0', huePort) then -- Listen on huePort/all interfaces for Hue object changes
-  logger('Error: Could not listen on port '..huePort, FORCE)
-  storage.set('hueactive', true) -- Ensure that Heartbeat can re-start this script should an error occur
+local result, err
+result, err = server:setsockname('0.0.0.0', huePort)
+if not result then -- Listen on huePort/all interfaces for Hue object changes
+  logger('Error: Could not listen on port '..huePort..': '..err..', restarting in 60 seconds', FORCE)
   socket.sleep(60)
   do return end
 end
@@ -163,8 +161,12 @@ local function rest(method, cmd, body)
     sink = ltn12.sink.table(respbody)
   }
   if respcode ~= 200 then
-    local j = json.decode(respbody[1])
-    logger('Error: Received response '..respcode..' requesting '..method..' '..cmd..' '..j.errors[1].description, FORCE)
+    local desc = ''
+    if respbody and respbody[1] then
+      desc = ' '..json.decode(respbody[1]).errors[1].description
+    end
+    logger('Error: Received response '..respcode..' requesting '..method..' '..cmd..desc, FORCE)
+    return(nil)
   end
   return table.concat(respbody)
 end
@@ -242,6 +244,7 @@ Connect to the bridge and initiate event stream
 
 require('ssl')
 local sock = require('socket').tcp()
+sock:settimeout(5)
 
 local res, err = sock:connect(bridge, port)
 if res then
@@ -253,14 +256,16 @@ if res then
     getResources()
     sock:send('GET '..eventStream..' HTTP/1.1\nHost: '..bridge..'\nAccept: text/event-stream\nhue-application-key: '..clientKey..'\n\n')
   else
-    logger('Handshake failed, restarting in 60 seconds: '..tostring(err), FORCE)
-    sock:close()
+    logger('Bridge handshake failed: '..tostring(err)..', restarting in 60 seconds', FORCE)
+    pcall(function () sock:close() end)
+    pcall(function () server:close() end)
     socket.sleep(60)
     do return end
   end
 else
-  logger('Connect failed, restarting in 60 seconds: '..tostring(err), FORCE)
-  sock:close()
+  logger('Bridge connect failed: '..tostring(err)..', restarting in 60 seconds', FORCE)
+  pcall(function () sock:close() end)
+  pcall(function () server:close() end)
   socket.sleep(60)
   do return end
 end
@@ -743,7 +748,8 @@ local function validateIncoming(cmd) -- Reject any weird socket messages receive
 end
 
 
-local lastReceived = socket.gettime()
+local lastTest = socket.gettime()
+local lastReceived = lastTest
 
 while true do
   -- Read the bridge event stream
@@ -768,21 +774,30 @@ while true do
   else
     if err ~= 'wantread' then
       logger('Hue receive failed, restarting in 60 seconds: ' .. tostring(err), FORCE)
-      sock:close()
+      pcall(function () sock:close() end)
+      pcall(function () server:close() end)
+      storage.set('hueactive', nil)
       socket.sleep(60)
       do return end
     end
   end
 
-  -- Get the bridge details every thirty seconds
-  -- If no valid response after 90 seconds then restart
-  if socket.gettime() - lastReceived >= 30 then
-    local msg; msg = json.decode(rest('GET', resource..'/bridge'))
-    for k, _ in pairs(msg) do if k == 'data' then lastReceived = socket.gettime() end end
+  -- Get the bridge details periodically
+  -- If no valid response beyond 60 seconds then restart (http timeout is 60 seconds)
+  if socket.gettime() - lastTest >= 15 then
+    lastTest = socket.gettime()
+    local msg, response
+    response = rest('GET', resource..'/bridge')
+    if response then
+      msg = json.decode(response)
+      for k, _ in pairs(msg) do if k == 'data' then lastReceived = lastTest end end
+    end
   end
-  if socket.gettime() - lastReceived > 90 then
-    logger('Failed to get bridge details, restarting', FORCE)
-    sock:close()
+  if socket.gettime() - lastReceived > 60 then
+    logger('Timed out getting bridge details, restarting', FORCE)
+    pcall(function () sock:close() end)
+    pcall(function () server:close() end)
+    storage.set('hueactive', nil)
     do return end
   end
 
@@ -817,13 +832,19 @@ while true do
   If sending the heartbeat faults, then the loop is exited, which will also re-start this
   script (it being resident/sleep zero).
   --]]
-  
+
   if sendHeartbeat > 0 then
     local stat, err = pcall(function ()
       if os.time() - heartbeat >= sendHeartbeat then
         heartbeat = os.time(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
       end
     end)
-    if not stat then logger('A fault occurred sending heartbeat. Restarting...', FORCE); do return end end
+    if not stat then
+      storage.set('hueactive', nil)
+      logger('A fault occurred sending heartbeat. f...', FORCE)
+      pcall(function () sock:close() end)
+      pcall(function () server:close() end)
+      do return end
+    end
   end
 end
