@@ -104,8 +104,8 @@ local RETAIN = true          -- Boolean aliases for MQTT retain and no-retain se
 local NORETAIN = false
 local FORCE = true           -- For logger. Use to force a log entry, regardless of the logging= value
 
-local heartbeat = socket.gettime()
 local started = socket.gettime()
+local heartbeat = started
 
 -- Runtime global variable checking. Globals must be explicitly declared, which will catch variable name typos
 local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true}
@@ -169,6 +169,7 @@ if sendHeartbeat > 0 then
 else -- Remove script from hearbeat registration
   local r, hbeat = isRegistered() if r then hbeat[_SCRIPTNAME] = nil storage.set('heartbeat', hbeat) end
 end
+
 
 --[[
 UDP listener - receive messages from CBus level change event scripts
@@ -1728,7 +1729,7 @@ while true do
     if len(discoveryDelete) > 0 then
       -- A type has changed for existing topics, so clean up discovery for the old topics
       stat, err = pcall(dupDelete)
-      if not stat then logger('Error processing delete discovery duplicates: '..err, FORCE) end -- Log and continue
+      if not stat then logger('Error processing delete discovery duplicates: '..err, FORCE); discoveryDelete = {} end -- Log error and clear the queue, continue
     end
     if checkForChanges then
       -- Periodically create/update/delete device items that change
