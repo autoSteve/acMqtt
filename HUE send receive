@@ -103,8 +103,6 @@ local function equals(o1, o2, ignoreMt)
   return true
 end
 
-local heartbeat = os.time()
-
 
 --[[
 Register with the Heartbeat script
@@ -123,6 +121,9 @@ if sendHeartbeat > 0 then
 else -- Remove script from hearbeat registration
   local r, hbeat = isRegistered() if r then hbeat[_SCRIPTNAME] = nil storage.set('heartbeat', hbeat) end
 end
+local heartbeat = os.time()
+
+storage.set('hueactive', nil) -- Initially not connected
 
 
 --[[
@@ -135,8 +136,8 @@ server:settimeout(socketTimeout)
 local result, err
 result, err = server:setsockname('0.0.0.0', huePort)
 if not result then -- Listen on huePort/all interfaces for Hue object changes
-  logger('Error: Could not listen on port '..huePort..': '..err..', restarting in 60 seconds', FORCE)
-  socket.sleep(60)
+  logger('Error: Could not listen on port '..huePort..': '..err..', restarting in 30 seconds', FORCE)
+  socket.sleep(30)
   do return end
 end
 
@@ -246,28 +247,36 @@ require('ssl')
 local sock = require('socket').tcp()
 sock:settimeout(5)
 
-local res, err = sock:connect(bridge, port)
-if res then
-  sock = ssl.wrap(sock, protocol)
-  res, err = sock:dohandshake()
+local connected = false
+local conTest = socket.gettime() - 30
+local oldErr
+
+while not connected do
+  local res, err = sock:connect(bridge, port)
   if res then
-    logger('Connected to Philips Hue bridge', FORCE)
-    sock:settimeout(bridgeTimeout)
-    getResources()
-    sock:send('GET '..eventStream..' HTTP/1.1\nHost: '..bridge..'\nAccept: text/event-stream\nhue-application-key: '..clientKey..'\n\n')
+    sock = ssl.wrap(sock, protocol)
+    res, err = sock:dohandshake()
+    if res then
+      logger('Connected to Philips Hue bridge', FORCE)
+      sock:settimeout(bridgeTimeout)
+      getResources()
+      sock:send('GET '..eventStream..' HTTP/1.1\nHost: '..bridge..'\nAccept: text/event-stream\nhue-application-key: '..clientKey..'\n\n')
+      connected = true
+    else
+      logger('Bridge handshake failed: '..tostring(err)..', restarting', FORCE)
+      pcall(function () sock:close() end)
+      pcall(function () server:close() end)
+      do return end
+    end
   else
-    logger('Bridge handshake failed: '..tostring(err)..', restarting in 60 seconds', FORCE)
-    pcall(function () sock:close() end)
-    pcall(function () server:close() end)
-    socket.sleep(60)
-    do return end
+    if socket.gettime() - conTest > 30 then
+      if err ~= 'closed' then
+        logger('Bridge connect failed: '..err, FORCE)
+        oldErr = err
+        conTest = socket.gettime()
+      end
+    end
   end
-else
-  logger('Bridge connect failed: '..tostring(err)..', restarting in 60 seconds', FORCE)
-  pcall(function () sock:close() end)
-  pcall(function () server:close() end)
-  socket.sleep(60)
-  do return end
 end
 
 
@@ -773,11 +782,9 @@ while true do
     end
   else
     if err ~= 'wantread' then
-      logger('Hue receive failed, restarting in 60 seconds: ' .. tostring(err), FORCE)
+      logger('Hue receive failed, restarting' .. tostring(err), FORCE)
       pcall(function () sock:close() end)
       pcall(function () server:close() end)
-      storage.set('hueactive', nil)
-      socket.sleep(60)
       do return end
     end
   end
@@ -797,7 +804,6 @@ while true do
     logger('Timed out getting bridge details, restarting', FORCE)
     pcall(function () sock:close() end)
     pcall(function () server:close() end)
-    storage.set('hueactive', nil)
     do return end
   end
 
