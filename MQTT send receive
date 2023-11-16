@@ -200,7 +200,7 @@ client.ON_CONNECT = function(success)
 end
 
 client.ON_DISCONNECT = function(...)
-  logger('Mosquitto broker has disconnected', FORCE)
+  logger('Mosquitto broker disconnected', FORCE)
   mqttStatus = 2
 end
 
@@ -1647,6 +1647,22 @@ local function dupDelete()
 end
 
 
+local function checkHeartbeat()
+  if sendHeartbeat > 0 then
+    local stat, err = pcall(function ()
+      if socket.gettime() - heartbeat >= sendHeartbeat then
+        heartbeat = socket.gettime(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
+      end
+    end)
+    if not stat then
+      logger('A fault occurred sending heartbeat. Restarting...', FORCE)
+      pcall(function () server:close() end)
+      do return end
+    end
+  end
+end
+
+
 --[[
 Main loop
 --]]
@@ -1736,10 +1752,14 @@ while true do
       stat, err = pcall(function () for _, c in ipairs(cud) do if socket.gettime() - c.t >=checkChanges then c.t = socket.gettime(); c.func() end end end)
       if not stat then logger('Error checking create/update/delete: '..err, FORCE) end -- Log and continue
     end
-  elseif mqttStatus == 2 then
-    -- MQTT is disconnected, so attempt a connection, waiting. If fail to connect then exit and await script re-entry
-    local timeout = 30
-    mqttConnected = socket.gettime()
+  elseif mqttStatus == 2 or not mqttStatus then
+    -- MQTT is disconnected, so attempt a connection, waiting. If fail to connect then retry.
+    local warningTimeout = 60
+    local timeout = 1
+    local timeoutStart = socket.gettime()
+    local connectStart = timeoutStart
+    logger('Connecting to Mosquitto broker', FORCE)
+    ::reconnect::
     stat, err = pcall(function (b, p, k) client:connect(b, p, k) end, mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
     if not stat then -- Log and abort
       logger('Error calling connect to broker: '..err, FORCE)
@@ -1747,12 +1767,18 @@ while true do
       do return end
     end
     while mqttStatus ~= 1 do
-      client:loop(0) -- Service the client
-      if socket.gettime() - mqttConnected > timeout then
-        logger('Failed to connect to the MQTT broker within '..timeout..' seconds, retrying', FORCE)
-        goto hbeat
+      client:loop(1) -- Service the client with a generous timeout
+      if socket.gettime() - timeoutStart > warningTimeout then
+        logger('Failed to connect to the Mosquitto broker, retrying continuously', FORCE)
+        timeoutStart = socket.gettime()
+      end
+      checkHeartbeat()
+      if socket.gettime() - connectStart > timeout then
+        connectStart = socket.gettime()
+        goto reconnect
       end
     end
+    mqttConnected = socket.gettime()
     -- Subscribe to relevant topics
     client:subscribe(mqttWriteTopic..'#', mqttQoS)
     client:subscribe(mqttDiscoveryTopic..'#', mqttQoS)
@@ -1776,17 +1802,5 @@ while true do
   If sending the heartbeat faults, then the loop is exited, which will also re-start this
   script (it being resident/sleep zero).
   --]]
-  ::hbeat::
-  if sendHeartbeat > 0 then
-    local stat, err = pcall(function ()
-      if socket.gettime() - heartbeat >= sendHeartbeat then
-        heartbeat = socket.gettime(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
-      end
-    end)
-    if not stat then
-      logger('A fault occurred sending heartbeat. Restarting...', FORCE)
-      pcall(function () server:close() end)
-      do return end
-    end
-  end
+  checkHeartbeat()
 end
