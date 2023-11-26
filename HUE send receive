@@ -199,42 +199,49 @@ Load lighting devices from the bridge (REST call or in response to the event str
 
 local function getResources(msg)
   local discovered = nil
+  local discovering = false
   if not msg then
+    discovering = true
     logger('Get light devices')
-    msg = json.decode(rest('GET', resource..'/light'))
+    local resp = rest('GET', resource..'/light')
+    if resp ~= nil then msg = json.decode(resp) end
   end
-  for _, d in ipairs(msg.data) do
-    if d.type == 'light' and not hueDeviceStatus[d.id_v1] then
-      if discovered == nil then discovered = {} end
-      hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on}
-      if d.dimming then
-        hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = math.floor(d.dimming.brightness * 254 / 100 + 0.5)
-      else
-        hueDeviceStatus[d.id_v1].level = (d.on.on and 255) or 0
-      end
-      local dmsg = json.decode(rest('GET', resource..'/device/'..d.owner.rid))
-      local s
-      for _, s in ipairs(dmsg['data'][1].services) do
-        if s.rtype == 'zigbee_connectivity' then hueDeviceStatus[d.id_v1].zid = s.rid break end
-      end
-      hueDeviceStatus[d.id_v1].reachable = json.decode(rest('GET', connectivity..'/'..hueDeviceStatus[d.id_v1].zid))['data'][1].status == 'connected'
+  if msg ~= nil then
+    for _, d in ipairs(msg.data) do
+      if d.type == 'light' and not hueDeviceStatus[d.id_v1] then
+        if discovered == nil then discovered = {} end
+        hueDeviceStatus[d.id_v1] = {id = d.id, rid = d.owner.rid, name = d.metadata.name, on = d.on.on}
+        if d.dimming then
+          hueDeviceStatus[d.id_v1].brightness = d.dimming.brightness; hueDeviceStatus[d.id_v1].level = math.floor(d.dimming.brightness * 254 / 100 + 0.5)
+        else
+          hueDeviceStatus[d.id_v1].level = (d.on.on and 255) or 0
+        end
+        local dmsg = json.decode(rest('GET', resource..'/device/'..d.owner.rid))
+        local s
+        for _, s in ipairs(dmsg['data'][1].services) do
+          if s.rtype == 'zigbee_connectivity' then hueDeviceStatus[d.id_v1].zid = s.rid break end
+        end
+        hueDeviceStatus[d.id_v1].reachable = json.decode(rest('GET', connectivity..'/'..hueDeviceStatus[d.id_v1].zid))['data'][1].status == 'connected'
 
-      hueIds[d.metadata.name] = d.id
-      hueV1Ids[d.metadata.name] = d.id_v1
-      discovered[d.id_v1] = hueDeviceStatus[d.id_v1]
-    end
-  end
-  if discovered ~= nil then
-    local ds = ''
-    for _, d in pairs(discovered) do
-      if logging then
-        ds = ds..'\n'..d.name..', id: '..d.id
-      else
-        ds = ds..d.name..', '
+        hueIds[d.metadata.name] = d.id
+        hueV1Ids[d.metadata.name] = d.id_v1
+        discovered[d.id_v1] = hueDeviceStatus[d.id_v1]
       end
     end
-    if not logging then ds = ds:sub(1, -3) end
-    logger('Discovered devices: '..ds, FORCE)
+    if discovered ~= nil then
+      local ds = ''
+      for _, d in pairs(discovered) do
+        if logging then
+          ds = ds..'\n'..d.name..', id: '..d.id
+        else
+          ds = ds..d.name..', '
+        end
+      end
+      if not logging then ds = ds:sub(1, -3) end
+      logger('Discovered devices: '..ds, FORCE)
+    end
+  else
+    if discovering then logger('REST call failed discovering devices', FORCE) end
   end
 end
 
@@ -259,7 +266,8 @@ while not connected do
     if res then
       logger('Connected to Philips Hue bridge', FORCE)
       sock:settimeout(bridgeTimeout)
-      getResources()
+      local stat, err = pcall(getResources)
+      if stat == false then logger('Error: Call to getResources() failed: '..err, FORCE) end
       sock:send('GET '..eventStream..' HTTP/1.1\nHost: '..bridge..'\nAccept: text/event-stream\nhue-application-key: '..clientKey..'\n\n')
       connected = true
     else
@@ -719,7 +727,8 @@ local function updateMessage(msg)
       end
     end
   elseif msg.type == 'add' then
-    getResources(msg)
+    local stat, err = pcall(getResources, msg)
+    if stat == false then logger('Error: Call to getResources() failed: '..err, FORCE) end
   end
 end
 
