@@ -556,10 +556,12 @@ local function outstandingBridgeMessage()
     local sKey = 'pre'..alias
     local parts = string.split(alias, '/')
     local net = parts[1]; local app = parts[2]; local group = parts[3]
-
+    logger('Message received for '..id..'('..net..'/'..app..'/'..group..')')
+    
     if hueDeviceStatus[id].brightness ~= nil then
       if hue[alias].dimmable == nil then hue[alias].dimmable = true end
-      level = (hueDeviceStatus[id].on and hueDeviceStatus[id].level) or 0
+      if hueDeviceStatus[id].on and hueDeviceStatus[id].level ~= lastLevel[alias] then lastLevel[alias] = hueDeviceStatus[id].level end
+      level = (hueDeviceStatus[id].on and lastLevel[alias]) or 0 -- was hueDeviceStatus[id].level
     else
       level = (hueDeviceStatus[id].on and 255) or 0
     end
@@ -589,6 +591,7 @@ local function outstandingBridgeMessage()
         end
         if not ramp[alias] and not pendingEndRamp[alias] then
           lvl = nil; local stat, err = pcall(function () lvl = GetCBusLevel(net, app, group) end); if lvl == 255 then lvl = 254 end -- Max Hue level is 254
+        log('here', lvl, level)
           if lvl ~= level then
             if msg.on and not msg.lvl then -- No level set, so return to lastLevel
               if level > 0 and level ~= lastLevel[alias] then
