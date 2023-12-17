@@ -38,6 +38,9 @@ While executing a CBus ramp the status of lamps in HomeAssistant will not match 
 is likely because the Hue event stream does not provide notification that a transition from one state to another
 is occurring, and so HomeAssistant adjusts its status as updates during the transition are received. This looks
 a little crazy, especially when triggering a CBus scene from HomeAssistant but it works.
+
+### Known issues ###
+- Ramp on/off of a CBus group address is unreliable at present. See https://github.com/autoSteve/acMqtt/issues/19.
 --]]
 
 -- Runtime global variable checking. Globals must be explicitly declared, which will catch variable name typos
@@ -62,6 +65,7 @@ local socketTimeout = 0.1    -- Lower = higher CPU, higher = less responsiveness
 local bridgeTimeout = 0.1    -- Lower = higher CPU, higher = less responsiveness
 local ignoreTimeout = 8      -- Timeout for stale ignore messages in seconds (eight seconds is a long time, but it happens...)
 local minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brightness level, with the lamp then turned off 
+local retryDelay = 10        -- If there's an error getting resources using REST then delay and try again (tolerate bridge restarts)
 local rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
 local pendingTimeout = 30    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream updates are quite delayed from lights)
 local sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
@@ -163,10 +167,10 @@ local function rest(method, cmd, body)
   }
   if respcode ~= 200 then
     local desc = ''
-    if respbody and respbody[1] then
+    if len(respbody) > 0 and respbody[1] then
       desc = ' '..json.decode(respbody[1]).errors[1].description
     end
-    logger('Error: Received response '..respcode..' requesting '..method..' '..cmd..desc, FORCE)
+    logger('Error: REST response: '..respcode..' requesting '..method..' '..cmd..desc, FORCE)
     return(nil)
   end
   return table.concat(respbody)
@@ -241,7 +245,7 @@ local function getResources(msg)
       logger('Discovered devices: '..ds, FORCE)
     end
   else
-    if discovering then logger('REST call failed discovering devices', FORCE) end
+    if discovering then error('REST call failed discovering devices') end
   end
 end
 
@@ -258,28 +262,35 @@ local connected = false
 local conTest = socket.gettime() - 30
 local oldErr
 
+local gotResources = false
+while not gotResources do
+  local stat, err = pcall(getResources)
+  if stat == false then
+    logger('Error: Call to getResources(): '..err..', retrying', FORCE)
+    socket.sleep(retryDelay)
+  else
+    gotResources = true
+  end
+end
+
 while not connected do
   local res, err = sock:connect(bridge, port)
   if res then
     sock = ssl.wrap(sock, protocol)
     res, err = sock:dohandshake()
     if res then
-      logger('Connected to Philips Hue bridge', FORCE)
       sock:settimeout(bridgeTimeout)
-      local stat, err = pcall(getResources)
-      if stat == false then logger('Error: Call to getResources() failed: '..err, FORCE) end
       sock:send('GET '..eventStream..' HTTP/1.1\nHost: '..bridge..'\nAccept: text/event-stream\nhue-application-key: '..clientKey..'\n\n')
+      logger('Initiated event stream', FORCE)
       connected = true
     else
       logger('Bridge handshake failed: '..tostring(err)..', restarting', FORCE)
       pcall(function () sock:close() end)
-      pcall(function () server:close() end)
-      do return end
     end
   else
     if socket.gettime() - conTest > 30 then
       if err ~= 'closed' then
-        logger('Bridge connect failed: '..err, FORCE)
+        logger('Initiate event stream failed: '..err, FORCE)
         oldErr = err
         conTest = socket.gettime()
       end
@@ -295,55 +306,61 @@ local function cudHue(initial)
   local grps = GetCBusByKW('HUE', 'or')
   local found = {}
   local addition = false
-  local k, v
+  local k, v, stat, err
 
-  for k, v in pairs(grps) do
-    local net = tonumber(v['address'][1]); local app = tonumber(v['address'][2]); local group = tonumber(v['address'][3])
-    local pn = GetCBusGroupTag(net, app, group)
-    local alias = net..'/'..app..'/'..group
+  stat, err = pcall(
+    function ()
+      for k, v in pairs(grps) do
+        local net = tonumber(v['address'][1]); local app = tonumber(v['address'][2]); local group = tonumber(v['address'][3])
+        local pn = GetCBusGroupTag(net, app, group)
+        local alias = net..'/'..app..'/'..group
 
-    table.insert(found, alias)
-    if not hue[alias] then hue[alias] = {}; addition = true end
+        table.insert(found, alias)
+        if not hue[alias] then hue[alias] = {}; addition = true end
 
-    local tags = v['keywords']
-    for _, t in ipairs(tags) do
-      local tp = string.split(t, '=')
-      tp[1] = trim(tp[1])
-      if tp[2] then tp[2] = trim(tp[2]) if tp[1] == 'pn' then pn = tp[2] end end
-    end
-    hue[alias].name = pn
-    hue[alias].hueid = hueIds[pn]
-    hue[alias].hueV1id = hueV1Ids[pn]
-    if addition then
-      if initial then
-        local level = nil; pcall(function () level = GetCBusLevel(net, app, group) end); if not level then level = -1 end
-        local hueLevel = hueDeviceStatus[hueV1Ids[pn]].level; hueLevel = (hueLevel == 254 and 255) or hueLevel
-        if not ramp[alias] then -- Do not mess with the CBusLevel during ramping
-          if level ~= hueLevel and hueDeviceStatus[hueV1Ids[pn]].on then
-            logger('Adjusting '..alias..' to match Hue, on=true, level='..level..', hueLevel='..hueLevel)
-            SetCBusLevel(net, app, group, hueLevel, 0)
-            level = hueLevel
+        local tags = v['keywords']
+        for _, t in ipairs(tags) do
+          local tp = string.split(t, '=')
+          tp[1] = trim(tp[1])
+          if tp[2] then tp[2] = trim(tp[2]) if tp[1] == 'pn' then pn = tp[2] end end
+        end
+        hue[alias].name = pn
+        hue[alias].hueid = hueIds[pn]
+        hue[alias].hueV1id = hueV1Ids[pn]
+        if addition then
+          if initial then
+            local level = nil; pcall(function () level = GetCBusLevel(net, app, group) end); if not level then level = -1 end
+            local hueLevel = hueDeviceStatus[hueV1Ids[pn]].level; hueLevel = (hueLevel == 254 and 255) or hueLevel
+            if not ramp[alias] then -- Do not mess with the CBusLevel during ramping
+              if level ~= hueLevel and hueDeviceStatus[hueV1Ids[pn]].on then
+                logger('Adjusting '..alias..' to match Hue, on=true, level='..level..', hueLevel='..hueLevel)
+                SetCBusLevel(net, app, group, hueLevel, 0)
+                level = hueLevel
+              end
+              if level > 0 and not hueDeviceStatus[hueV1Ids[pn]].on then
+                logger('Adjusting '..alias..' to match Hue, on=false, level='..level..', hueLevel='..hueLevel)
+                SetCBusLevel(net, app, group, 0, 0)
+                level = 0
+              end
+            end
           end
-          if level > 0 and not hueDeviceStatus[hueV1Ids[pn]].on then
-            logger('Adjusting '..alias..' to match Hue, on=false, level='..level..', hueLevel='..hueLevel)
-            SetCBusLevel(net, app, group, 0, 0)
-            level = 0
-          end
+          if not storage.get('pre'..alias) then storage.set('pre'..alias, level) end
+          hueDevices[pn] = alias
+          hueDeviceStatus[hueV1Ids[pn]].alias = alias
+          if hueDeviceStatus[hueV1Ids[pn]].brightness ~= nil then hue[alias].dimmable = true end
         end
       end
-      if not storage.get('pre'..alias) then storage.set('pre'..alias, level) end
-      hueDevices[pn] = alias
-      hueDeviceStatus[hueV1Ids[pn]].alias = alias
-      if hueDeviceStatus[hueV1Ids[pn]].brightness ~= nil then hue[alias].dimmable = true end
-    end
-  end
     
-  -- Handle deletions
-  for k, _ in pairs(hue) do
-    local f = false; for _, v in ipairs(found) do if k == v then f = true; break end end
-    if not f then
-      kill = hue[k].name; hue[k] = nil; hueDevices[kill] = nil
-    end
+      -- Handle deletions
+      for k, _ in pairs(hue) do
+        local f = false; for _, v in ipairs(found) do if k == v then f = true; break end end
+        if not f then
+          kill = hue[k].name; hue[k] = nil; hueDevices[kill] = nil
+        end
+      end
+    end)
+    if stat == false then
+      logger('Error: cudHue() failed: '..err, FORCE)
   end
 end
 
@@ -706,7 +723,7 @@ local function updateMessage(msg)
         if hueDeviceStatus[id] then
           if status ~= nil  then if status == 'connected' then hueDeviceStatus[id].reachable = true else hueDeviceStatus[id].reachable = false end end
         end
-        if status then
+        if id ~= nil and status ~= nil and status then
           logger(hueDeviceStatus[id].name..' is '..tostring((hueDeviceStatus[id].reachable and 'reachable') or 'NOT reachable'), FORCE)
         end
       end
@@ -793,7 +810,11 @@ while true do
     end
   else
     if err ~= 'wantread' then
-      logger('Hue receive failed, restarting' .. tostring(err), FORCE)
+      if err == 'closed' then
+        logger('Event stream connection lost, restarting', FORCE)
+      else
+        logger('Event stream receive failed: Socket error state is '..tostring(err)..', restarting', FORCE)
+      end
       pcall(function () sock:close() end)
       pcall(function () server:close() end)
       do return end
@@ -827,7 +848,7 @@ while true do
       if validateIncoming(cmd) then
         cbusMessages[#cbusMessages + 1] = cmd -- Queue the new message
       else
-        logger('Invalid command received: '..cmd, FORCE)
+        logger('Invalid CBus command received: '..cmd, FORCE)
       end
       more = true; goto checkAgain -- Immediately check for more buffered inbound messages to queue
     end
