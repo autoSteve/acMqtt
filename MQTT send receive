@@ -324,16 +324,16 @@ local function publishAc(net, app, group, level, select)
       if topic ~= '' then client:publish(topic, level, mqttQoS, NORETAIN) end
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
-      if level ~= ac[alias].state then ignoreCbus[alias] = socket.gettime() end
+      ignoreCbus[alias] = socket.gettime()
       logger('Published AC '..ac[alias].name..' to '..level)
     else
       ignoreMqtt[alias] = nil
-      logger('Ignoring MQTT publish for '..alias)
+      -- logger('Intentionally ignoring MQTT publish for '..alias)
     end
     ac[alias].state = level
   else
     ignoreMqtt[alias] = nil
-    logger('Ignoring MQTT publish for '..alias)
+    logger('Ignoring MQTT publish for '..alias..' because already at level '..level)
   end
 end
 
@@ -396,12 +396,12 @@ local function publishAt(net, app, group, level)
       end
     else
       ignoreMqtt[alias] = nil
-      logger('Ignoring MQTT publish for '..alias)
+      logger('Intentionally ignoring MQTT publish for '..alias)
     end
     at[alias].state = level
   else
     ignoreMqtt[alias] = nil
-    logger('Ignoring MQTT publish for '..alias)
+    logger('Ignoring MQTT publish for '..alias..' because already at level '..level)
   end
 end
 
@@ -909,7 +909,7 @@ local function cudAc(initial)
       	ac[alias].name = dev..'-'..sel; ac[alias].select = 'sel'; acDevices[dev..'-'..sel] = alias; acBoards[dev] = true
       elseif sense ~= '' then
         if not ac[alias] then ac[alias] = {}; addition = true end
-      	ac[alias].name = dev..'-'..sel; ac[alias].select = 'sense'; ac[alias].sense = sense; ac[alias].topic = topic; acDevices[dev..'-'..sense] = alias; acBoards[dev] = true
+      	ac[alias].name = dev..'-'..sense; ac[alias].select = 'sense'; ac[alias].sense = sense; ac[alias].topic = topic; acDevices[dev..'-'..sense..'-sense'] = alias; acBoards[dev] = true
       end
       acLogGrp[alias] = nil
     else
@@ -1370,8 +1370,8 @@ local function outstandingMqttMessage()
       for _, a in pairs(ac) do
         if a.sense and (a.sense == parts[3] or a.sense == parts[4]) and a.topic == parts[2] then
           sel = 'sense'
-          if a.sense == parts[3] then device = parts[1]..'-'..parts[3]
-          elseif a.sense == parts[4] then device = parts[1]..'-'..parts[4] end
+          if a.sense == parts[3] then device = parts[1]..'-'..parts[3]..'-sense'
+          elseif a.sense == parts[4] then device = parts[1]..'-'..parts[4]..'-sense' end
           break
         end
       end
@@ -1397,7 +1397,10 @@ local function outstandingMqttMessage()
             end
             -- Setting CBus here will result in the AC event script requesting publication of the state using publishAc() above.
             -- This is undesired, so ignoreMqtt[alias] is used to ensure that the CBus change received does not publish to MQTT.
-            if set then ignoreMqtt[alias] = socket.gettime() logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
+            if set then
+              ignoreMqtt[alias] = socket.gettime()
+              -- logger('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload)
+            end
           else
             ignoreCbus[alias] = nil
             logger('Ignoring CBus publish for '..alias)
