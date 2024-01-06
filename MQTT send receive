@@ -209,7 +209,7 @@ client.ON_MESSAGE = function(mid, topic, payload)
     -- Record discovery topics to check for duplication
     local parts = string.split(topic, '/')
     if parts[1] == string.split(mqttDiscoveryTopic, '/')[1] then
-      if discovery[parts[3]] ~= nil then
+      if payload ~= '' and discovery[parts[3]] ~= nil then
         if discovery[parts[3]] ~= parts[2] then
           discoveryDelete[parts[3]..'/'..parts[2]] = true
         else
@@ -602,10 +602,12 @@ local function addDiscover(net, app, group, channel, tags, name)
             dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' },
           }
           if _L.img ~= '' then payload.ic = _L.img end
+          local oldDiscovery = discovery[boid]
+          discovery[boid] = dType
           -- If dType has changed for an existing discovery topic then remove the previous topic
-          if discovery[boid] ~= nil and discovery[boid] ~= dType then
-            client:publish(mqttDiscoveryTopic..discovery[boid]..'/'..boid..'/config', '', mqttQoS, RETAIN)
-            logger('Removed discovery topic'..mqttDiscoveryTopic..discovery[boid]..'/'..boid..'/config')
+          if oldDiscovery ~= nil and oldDiscovery ~= dType then
+            client:publish(mqttDiscoveryTopic..oldDiscovery..'/'..boid..'/config', '', mqttQoS, RETAIN)
+            logger('Removed discovery topic'..mqttDiscoveryTopic..oldDiscovery..'/'..boid..'/config')
           end
           -- Publish to MQTT broker
           local j = json.encode(payload)
@@ -642,15 +644,17 @@ local function addDiscover(net, app, group, channel, tags, name)
     payload.dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
     if _L.img ~= '' then payload.ic = _L.img end
 
+    local oldDiscovery = discovery[oid]
+    discovery[oid] = dType
+
     -- If dType has changed for an existing discovery topic then remove the previous topic
-    if discovery[oid] ~= nil and discovery[oid] ~= dType then
-      client:publish(mqttDiscoveryTopic..discovery[oid]..'/'..oid..'/config', '', mqttQoS, RETAIN)
-      logger('Removed discovery topic '..mqttDiscoveryTopic..discovery[oid]..'/'..oid..'/config')
+    if oldDiscovery ~= nil and oldDiscovery ~= dType then
+      client:publish(mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config', '', mqttQoS, RETAIN)
+      logger('Removed discovery topic '..mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config')
     end
 
     -- Publish to MQTT broker
     local j = json.encode(payload)
-    discovery[oid] = dType
     if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
     logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa)
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
