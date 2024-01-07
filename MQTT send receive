@@ -232,7 +232,9 @@ local function publish(net, app, group, level)
   local aAlias = tNetAC(net)..'/'..app..'/'..group
   local state = ''
   if cover[alias] then
-    state = 'stopped' -- For CBus blind controllers
+    -- For CBus blind controllers report level unless it is 5, which is a preset for stop in level translation mode
+    state = 'stopped'
+    if level == 5 then level = -1 end
   else
     state = (tonumber(level) ~= 0) and 'ON' or 'OFF'
   end
@@ -258,7 +260,7 @@ local function publish(net, app, group, level)
         end
       else -- It's a bog standard group
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
-        client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
+        if level ~= -1 then client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN) end
         logger('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level)
       end
     else -- It's a binary sensor
@@ -1314,12 +1316,14 @@ local function outstandingMqttMessage()
       elseif parts[6] == 'measurement' then SetCBusMeasurement(net, app, group, payload, 0)
 
       elseif parts[6] == 'ramp' then
-        if payload == 'OPEN' then      payload = '255'; logger("Payload is OPEN, so using RAMP instead")
-        elseif payload == 'CLOSE' then payload = '0';   logger("Payload is CLOSE, so using RAMP instead")
+        if payload == 'OPEN' then
+          SetCBusLevel(net, app, group, 255, 0)
+          goto next
+        elseif payload == 'CLOSE' then
+          SetCBusLevel(net, app, group, 0, 0)
+          goto next
         elseif payload == 'STOP' then
-          -- Once a blind level has been set for CBus it is set regardless of the current blind
-          -- position, which is not updated like a ramp, so a stop command is nonsensical
-          logger("Payload for '..alias..' is STOP, which is incompatible with CBus... ignoring")
+          SetCBusLevel(net, app, group, 5, 0)
           goto next
         elseif payload == 'ON' then
           if fan[alias] then
