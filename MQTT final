@@ -15,7 +15,9 @@ parts = string.split(event.dst, '/')
 net = tonumber(parts[1]); app = tonumber(parts[2]); group = tonumber(parts[3])
 
 -- Send a final level event
-if GetCBusRampRate(net, app, group) > 0 then
+ramp = GetCBusRampRate(net, app, group)
+
+if ramp ~= nil and ramp > 0 then
   if logging then log('Sending final level for '..event.dst..' of '..val) end
   server:sendto(event.dst..">"..val, '127.0.0.1', 5432)
 end
