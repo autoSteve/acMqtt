@@ -172,6 +172,38 @@ end
 
 
 --[[
+Warn for >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping
+--]]
+local version = string.split(io.readfile('/lib/genohm-scada/version'):trim(), '.')
+local finalNotInstalled = script.status('MQTT final') == nil or script.status('MQTT final') == false
+local eventNotInstalled = script.status('MQTT') == nil or script.status('MQTT') == false
+
+if eventNotInstalled then
+  logger("Error: The event script 'MQTT' is not installed or enabled. Not starting.", FORCE)
+  while true do sleep(1) end
+end
+
+local legacyFirmware = false
+if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version[3]) >= 0 then
+  local edr = db:getall([[ SELECT subparams FROM scripting WHERE name = 'MQTT' ]])
+  edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
+  if edr ~= '1' then
+    logger("Error firmware > 1.15.0: Event script 'MQTT' is not set to execute during ramping. Not starting.", FORCE)
+    while true do sleep(1) end
+  end
+  if not finalNotInstalled then
+    edr = db:getall([[ SELECT subparams FROM scripting WHERE name = 'MQTT final' ]])
+    edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
+    if edr ~= '0' then
+      logger("Error firmware > 1.15.0: Event script 'MQTT final' is set to execute during ramping. Turn this off. Not starting.", FORCE)
+      while true do sleep(1) end
+    end
+  end
+else
+  legacyFirmware = true
+end
+
+--[[
 UDP listener - receive messages from CBus level change event scripts
 --]]
 declare('server')
