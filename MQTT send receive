@@ -1561,9 +1561,9 @@ local function outstandingCbusMessage()
           -- ultimately cleaned up/published, albeit a bit late after rampTimeout seconds).
           if not ramp[alias] then
             if GetCBusRampRate(net, app, group) > 0 then
-              if lastLevel[alias] ~= GetCBusTargetLevel(net, app, group) or not lastLevel[alias] then
+              -- if lastLevel[alias] ~= GetCBusTargetLevel(net, app, group) or not lastLevel[alias] then
                 ramp[alias] = { ts=socket.gettime(), ramp=GetCBusRampRate(net, app, group), target=GetCBusTargetLevel(net, app, group) }
-              end
+              -- end
               if payload == 0 then
                 setting = false
                 if ramp[alias] then logger('Set ramp for '..alias..' and suppress zero send') end
@@ -1596,14 +1596,19 @@ local function outstandingCbusMessage()
               logger('Clear ramp for '..alias)
               -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
               publish(tNetCBus(net), app, group, payload)
+              if app ~= 202 then -- Not trigger
+                local p = payload
+                if tonumber(payload) ~= nil then p = string.format('%.3f', payload) end
+                storage.set('pre'..alias, p) -- Save payload as 'previous' for use in the MQTT event-based script
+              end
             end
           else
             publish(tNetCBus(net), app, group, payload)
-          end
-          if app ~= 202 then -- Not trigger
-            local p = payload
-            if tonumber(payload) ~= nil then p = string.format('%.3f', payload) end
-            storage.set('pre'..alias, p) -- Save payload as 'previous' for use in the MQTT event-based script
+            if app ~= 202 then -- Not trigger
+              local p = payload
+              if tonumber(payload) ~= nil then p = string.format('%.3f', payload) end
+              storage.set('pre'..alias, p) -- Save payload as 'previous' for use in the MQTT event-based script
+            end
           end
         end
       else -- Special case for measurement app
@@ -1634,6 +1639,9 @@ local function checkRampOrphans()
       local parts = string.split(k, '/')
       local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
       publish(tNetCBus(net), app, group, v.target)
+      local p = v.target
+      if tonumber(p) ~= nil then p = string.format('%.3f', p) end
+      storage.set('pre'..k, p) -- Save payload as 'previous' for use in the MQTT event-based script
     end
   end
   for _, k in ipairs(orphan) do ramp[k] = nil; logger('Removing orphaned ramp for '..k) end
