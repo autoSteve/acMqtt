@@ -185,6 +185,11 @@ end
 
 local legacyFirmware = false
 if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version[3]) >= 0 then
+  if finalNotInstalled then
+    logger('Warning firmware > 1.15.0: Script MQTT final is not installed, or is disabled. This script improves ramp detection reliability.', FORCE)
+    legacyFirmware = true
+  end
+
   local edr = db:getall([[ SELECT subparams FROM scripting WHERE name = 'MQTT' ]])
   edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
   if edr ~= '1' then
@@ -1570,9 +1575,18 @@ Publish the next queued messages for MQTT
 --]]
 local function outstandingCbusMessage()
   local cmd
+  local final = false
 
   local lastLevel = storage.get('lastlvl', {})
   for _, cmd in ipairs(cbusMessages) do
+    if not legacyFirmware then
+      -- Check for final levels
+      if contains('>', cmd) then
+        cmd = cmd:gsub('>', '/')
+        final = true
+      end
+    end
+
     local parts = string.split(cmd, '/')
     local alias = parts[1]..'/'..parts[2]..'/'..parts[3]
     
@@ -1623,7 +1637,7 @@ local function outstandingCbusMessage()
         end
         if setting then
           if ramp[alias] then
-            if payload == ramp[alias].target then
+            if final or payload == ramp[alias].target then
               ramp[alias] = nil
               logger('Clear ramp for '..alias)
               -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
@@ -1732,13 +1746,25 @@ for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + 
 for _, c in ipairs(cud) do if c.init then c.func(true); if c.script and script.status(c.script) ~= nil then script.disable(c.script); script.enable(c.script) end end end
 
 local function validateIncoming(cmd) -- Reject any weird socket messages received
-  local _, count = cmd:gsub("/", ''); if count < 3 or count > 4 then return false end
-  local parts = string.split(cmd, '/')
-  local dstC, payload, n
-  if parts[2] and parts[2] == '228' then dstC = 4; payload = parts[5] else dstC = 3; payload = parts[4] end -- Measurement app is four dest parts, else three
-  if payload == nil then return false end
-  for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dst parts are not whole decimal numbers
-  return true
+  if contains('>', cmd) then
+    local incoming = string.split(cmd, '>')
+    local _, count = incoming[1]:gsub('/', ''); if count ~= 2 then return false end
+    local parts = string.split(incoming[1], '/')
+    local n
+    local dstC = 3; local payload = incoming[2]
+    if payload == nil then return false end
+    for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dst parts are not whole decimal numbers
+    return true
+  else
+    local _, count = cmd:gsub('/', ''); if count < 3 or count > 4 then return false end
+    local parts = string.split(cmd, '/')
+    local dstC, payload, n
+    if parts[2] and parts[2] == '228' then dstC = 4; payload = parts[5] else dstC = 3; payload = parts[4] end -- Measurement app is four dest parts, else three
+    if payload == nil then return false end
+    for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dst parts are not whole decimal numbers
+    return true
+  end
+  return false
 end
 
 

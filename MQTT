@@ -17,6 +17,7 @@ another level is not affected - just "on" commands.
 logging = false
 lighting = {['56']=true} -- Array of applications that are used for lighting
 
+local finalNotInstalled = script.status('MQTT final') == nil or script.status('MQTT final') == false
 
 function saveLastLevel()
   -- Get old levels to see if anything changed
@@ -63,6 +64,7 @@ end
 
 -- Send an event to publish to broker if changed
 if toSet then
+  if finalNotInstalled and lighting[parts[2]] and GetCBusRampRate(net, app, group) > 0 and val == GetCBusTargetLevel(net, app, group) then do return end end
   if logging then log('Setting '..event.dst..' to '..comp..', previous='..pre) end
 
   server:sendto(event.dst.."/"..val, '127.0.0.1', 5432)

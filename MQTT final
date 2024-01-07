@@ -1,0 +1,21 @@
+--[[
+Event-based, DO NOT execute during ramping, name: "MQTT final"
+
+Pushes MQTT final level events to resident script via socket.
+
+Tag required objects with the "MQTT" keyword and this script will run whenever one of those objects reaches its target level after a ramp.
+--]]
+
+logging = false
+
+server = require('socket').udp()
+
+val = event.getvalue()
+parts = string.split(event.dst, '/')
+net = tonumber(parts[1]); app = tonumber(parts[2]); group = tonumber(parts[3])
+
+-- Send a final level event
+if GetCBusRampRate(net, app, group) > 0 then
+  if logging then log('Sending final level for '..event.dst..' of '..val) end
+  server:sendto(event.dst..">"..val, '127.0.0.1', 5432)
+end
