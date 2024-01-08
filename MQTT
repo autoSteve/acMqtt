@@ -12,6 +12,8 @@ Home Assistant with an MQTT integration and Google assistant only allows for on/
 ("Hey Google, turn on the dunny light"), and not remembering the previous level set, so
 this script, in conjunction with the MQTT send/receive script works around that. Setting
 another level is not affected - just "on" commands.
+
+VERSION: 2
 --]]
 
 logging = false

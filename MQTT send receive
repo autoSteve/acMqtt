@@ -52,6 +52,7 @@ local mqttDiscoveryTopic = 'homeassistant/'
 --[[
 Variables not to be messed with unless you definitely know what you're doing.
 --]]
+local EVENTVERSION = 2       -- MQTT/MQTT final event script compatible version
 local discovery = {}         -- MQTT discovery topics lookup
 local discoveryDelete = {}   -- If duplicate discovery topics are detected on startup then they will be removed
 local atDiscovery = {}       -- AT discovery topics lookup
@@ -172,7 +173,7 @@ end
 
 
 --[[
-Warn for >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping / missing scripts
+Warn for >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping / missing scripts / wrong version
 --]]
 local version = string.split(io.readfile('/lib/genohm-scada/version'):trim(), '.')
 local finalInstalled = not (script.status('MQTT final') == nil or script.status('MQTT final') == false)
@@ -185,6 +186,17 @@ end
 
 if not eventInstalled and not finalInstalled then
   logger("Error: The event script 'MQTT' or 'MQTT final' is not installed or enabled. Not starting.", FORCE)
+  while true do sleep(1) end
+end
+
+local compatibleEvent = false
+if eventInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall([[ SELECT script FROM scripting WHERE name = 'MQTT' ]] )[1]['script']) end
+if finalInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall([[ SELECT script FROM scripting WHERE name = 'MQTT final' ]] )[1]['script']) end
+if not compatibleEvent then
+  local scriptInUse = ''
+  if finalInstalled then scriptInUse = 'MQTT final' end
+  if eventInstalled then scriptInUse = 'MQTT' end
+  logger("Error: Incompatible '"..scriptInUse.."' script version detected, so please update it. Not starting.", FORCE)
   while true do sleep(1) end
 end
 

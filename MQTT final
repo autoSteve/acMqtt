@@ -1,7 +1,7 @@
 --[[
 Event-based, DO NOT execute during ramping, name: "MQTT final"
 
-Pushes MQTT final level events to resident script via socket.
+Pushes CBus events to MQTT resident scripts via internal sockets and maintains CBus 'lastlevels'
 
 Tag required objects with the "MQTT" keyword and this script will run whenever one of those objects reaches its target level after a ramp.
 
@@ -12,6 +12,8 @@ Home Assistant with an MQTT integration and Google assistant only allows for on/
 ("Hey Google, turn on the dunny light"), and not remembering the previous level set, so
 this script, in conjunction with the MQTT send/receive script works around that. Setting
 another level is not affected - just "on" commands.
+
+VERSION: 2
 --]]
 
 logging = false
