@@ -109,7 +109,7 @@ local started = socket.gettime()
 local heartbeat = started
 
 -- Runtime global variable checking. Globals must be explicitly declared, which will catch variable name typos
-local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true}
+local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true, ['rr'] = true, }
 local function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
 local exclude = {['ngx'] = true, }
 setmetatable(_G, {
@@ -498,7 +498,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   local action, boid, dSa, payload, prefix, tag
   
   -- Build an alias to refer to each group
-  local aAlias = tNetAC(net)..'/'..app..'/'..group;  if channel ~= nil then aAlias = aAlias..'/'..channel end -- Automation controller numbered networks
+  local aAlias = tNetAC(net)..'/'..app..'/'..group; if channel ~= nil then aAlias = aAlias..'/'..channel end -- Automation controller numbered networks
   local alias = net..'/'..app..'/'..group -- CBus numbered networks
 
   local allow = {
@@ -1782,10 +1782,11 @@ for _, c in ipairs(cud) do if c.init then c.func(true); if c.script and script.s
 local function validateIncoming(cmd) -- Reject any weird socket messages received
   if contains('>', cmd) then
     local incoming = string.split(cmd, '>')
-    local _, count = incoming[1]:gsub('/', ''); if count ~= 2 then return false end
+    local _, count = incoming[1]:gsub('/', ''); if count < 2 or count > 3 then return false end
     local parts = string.split(incoming[1], '/')
-    local n
-    local dstC = 3; local payload = incoming[2]
+    local payload = incoming[2]
+    local dstC, n
+    if parts[2] and parts[2] == '228' then dstC = 4 else dstC = 3 end -- Measurement app is four dest parts, else three
     if payload == nil then return false end
     for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dst parts are not whole decimal numbers
     return true
