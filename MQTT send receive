@@ -109,7 +109,7 @@ local started = socket.gettime()
 local heartbeat = started
 
 -- Runtime global variable checking. Globals must be explicitly declared, which will catch variable name typos
-local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true, ['rr'] = true, }
+local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true, ['rr'] = true, ['_'] = true, }
 local function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
 local exclude = {['ngx'] = true, }
 setmetatable(_G, {
@@ -224,6 +224,7 @@ if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version
 else
   legacyFirmware = true
 
+  logger('Warning: An upgrade to firmware 1.15.0+ is recommended. See the README at https://github.com/autoSteve/acMqtt.', FORCE)
   if finalInstalled then
     logger("Error: The script 'MQTT final' is only for firmware 1.15.0+. Not starting.", FORCE)
     while true do sleep(1) end
@@ -925,7 +926,7 @@ local function publishCurrent()
       end
     end
   end
-  local n = 0
+  n = 0
   for k, v in pairs(raw) do
     n = n + 1
     unpublishedAt[n] = {name=k, sa=v}
@@ -1234,10 +1235,10 @@ local function cudCBusTopics()
       	client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic, FORCE)
       end
       if parts[2] ~= '202' then
-        local count
+        local count, topic
         _, count = k:gsub('/','')
         if count == 3 then -- Measurement application
-          t = tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..parts[4]
+          local t = tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..parts[4]
           t = t:gsub('/', '_'); t = t:gsub('_', '/', 2) -- Convert the last slash to an underscore
           topic = mqttReadTopic..t;
         else
