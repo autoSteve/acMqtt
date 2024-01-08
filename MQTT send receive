@@ -172,20 +172,25 @@ end
 
 
 --[[
-Warn for >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping
+Warn for >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping / missing scripts
 --]]
 local version = string.split(io.readfile('/lib/genohm-scada/version'):trim(), '.')
-local finalNotInstalled = script.status('MQTT final') == nil or script.status('MQTT final') == false
-local eventNotInstalled = script.status('MQTT') == nil or script.status('MQTT') == false
+local finalInstalled = not (script.status('MQTT final') == nil or script.status('MQTT final') == false)
+local eventInstalled = not (script.status('MQTT') == nil or script.status('MQTT') == false)
 
-if eventNotInstalled then
-  logger("Error: The event script 'MQTT' is not installed or enabled. Not starting.", FORCE)
+if eventInstalled and finalInstalled then
+  logger("Error: Use script 'MQTT' or 'MQTT final', not both. Not starting.", FORCE)
+  while true do sleep(1) end
+end
+
+if not eventInstalled and not finalInstalled then
+  logger("Error: The event script 'MQTT' or 'MQTT final' is not installed or enabled. Not starting.", FORCE)
   while true do sleep(1) end
 end
 
 local legacyFirmware = false
 if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version[3]) >= 0 then
-  if finalNotInstalled then
+  if not finalInstalled then
     logger('Warning firmware > 1.15.0: Script MQTT final is not installed, or is disabled. This script improves ramp detection reliability.', FORCE)
     legacyFirmware = true
   end
@@ -196,7 +201,7 @@ if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version
     logger("Error firmware > 1.15.0: Event script 'MQTT' is not set to execute during ramping. Not starting.", FORCE)
     while true do sleep(1) end
   end
-  if not finalNotInstalled then
+  if finalInstalled then
     edr = db:getall([[ SELECT subparams FROM scripting WHERE name = 'MQTT final' ]])
     edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
     if edr ~= '0' then
@@ -206,6 +211,11 @@ if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version
   end
 else
   legacyFirmware = true
+
+  if finalInstalled then
+    logger("Error: The script 'MQTT final' is only for firmware 1.15.0+. Not starting.", FORCE)
+    while true do sleep(1) end
+  end
 end
 
 --[[
@@ -1284,7 +1294,8 @@ local function outstandingPublish()
   end
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
-    if script.status('MQTT') ~= nil then script.disable('MQTT'); script.enable('MQTT') end
+    if eventInstalled then if script.status('MQTT') ~= nil then script.disable('MQTT'); script.enable('MQTT') end end
+    if finalInstalled then if script.status('MQTT final') ~= nil then script.disable('MQTT final'); script.enable('MQTT final') end end
     logger('Published '..#unpublished - failed..' CBus discovery and current level topic'..(#unpublished - failed ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted', FORCE)
     unpublished = {}
   end
@@ -1601,27 +1612,29 @@ local function outstandingCbusMessage()
         local setting = true
         local payload = tonumber(parts[4]) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
         if lighting[parts[2]] then -- Lighting application, so check for ramp
-          logger('Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group)))
-          -- A CBus ramp up and down can annoyingly begin with a zero level, then steadily converge to the target level. This initial
-          -- zero should not be published to MQTT so it is ignored. If an initial zero is not seen then the ramp will be orphaned (and
-          -- ultimately cleaned up/published, albeit a bit late after rampTimeout seconds).
-          if not ramp[alias] then
-            if GetCBusRampRate(net, app, group) > 0 then
-              -- if lastLevel[alias] ~= GetCBusTargetLevel(net, app, group) or not lastLevel[alias] then
-                ramp[alias] = { ts=socket.gettime(), ramp=GetCBusRampRate(net, app, group), target=GetCBusTargetLevel(net, app, group) }
-              -- end
-              if payload == 0 then
-                setting = false
-                if ramp[alias] then logger('Set ramp for '..alias..' and suppress zero send') end
-              else
-                if ramp[alias] then logger('Set ramp for '..alias) end
+          if legacyFirmware then
+            logger('Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group)))
+            -- A CBus ramp up and down can annoyingly begin with a zero level, then steadily converge to the target level. This initial
+            -- zero should not be published to MQTT so it is ignored. If an initial zero is not seen then the ramp will be orphaned (and
+            -- ultimately cleaned up/published, albeit a bit late after rampTimeout seconds).
+            if not ramp[alias] then
+              if GetCBusRampRate(net, app, group) > 0 then
+                -- if lastLevel[alias] ~= GetCBusTargetLevel(net, app, group) or not lastLevel[alias] then
+                  ramp[alias] = { ts=socket.gettime(), ramp=GetCBusRampRate(net, app, group), target=GetCBusTargetLevel(net, app, group) }
+                -- end
+                if payload == 0 then
+                  setting = false
+                  if ramp[alias] then logger('Set ramp for '..alias..' and suppress zero send') end
+                else
+                  if ramp[alias] then logger('Set ramp for '..alias) end
+                end
               end
-            end
-          else
-            if ramp[alias].target ~= GetCBusTargetLevel(net, app, group) then -- Target level has changed so cancel ramp
-              ramp[alias] = nil
-              logger('Cancel ramp for '..alias)
-              if payload == 0 and GetCBusRampRate(net, app, group) > 0 then setting = false end -- Ignore initial zero if ramp on
+            else
+              if ramp[alias].target ~= GetCBusTargetLevel(net, app, group) then -- Target level has changed so cancel ramp
+                ramp[alias] = nil
+                logger('Cancel ramp for '..alias)
+                if payload == 0 and GetCBusRampRate(net, app, group) > 0 then setting = false end -- Ignore initial zero if ramp on
+              end
             end
           end
         else -- Possibly a string payload for user parameter
@@ -1636,11 +1649,20 @@ local function outstandingCbusMessage()
           -- Groups other than lighting are never ramped, so setting is always true
         end
         if setting then
-          if ramp[alias] then
-            if final or payload == ramp[alias].target then
-              ramp[alias] = nil
-              logger('Clear ramp for '..alias)
-              -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
+          if legacyFirmware then
+            if ramp[alias] then
+              if final or payload == ramp[alias].target then
+                ramp[alias] = nil
+                logger('Clear ramp for '..alias)
+                -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
+                publish(tNetCBus(net), app, group, payload)
+                if app ~= 202 then -- Not trigger
+                  local p = payload
+                  if tonumber(payload) ~= nil then p = string.format('%.3f', payload) end
+                  storage.set('pre'..alias, p) -- Save payload as 'previous' for use in the MQTT event-based script
+                end
+              end
+            else
               publish(tNetCBus(net), app, group, payload)
               if app ~= 202 then -- Not trigger
                 local p = payload
