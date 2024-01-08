@@ -207,11 +207,14 @@ if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version
     legacyFirmware = true
   end
 
-  local edr = db:getall([[ SELECT subparams FROM scripting WHERE name = 'MQTT' ]])
-  edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
-  if edr ~= '1' then
-    logger("Error firmware > 1.15.0: Event script 'MQTT' is not set to execute during ramping. Not starting.", FORCE)
-    while true do sleep(1) end
+  local edr
+  if eventInstalled then
+    edr = db:getall([[ SELECT subparams FROM scripting WHERE name = 'MQTT' ]])
+    edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
+    if edr ~= '1' then
+      logger("Error firmware > 1.15.0: Event script 'MQTT' is not set to execute during ramping. Not starting.", FORCE)
+      while true do sleep(1) end
+    end
   end
   if finalInstalled then
     edr = db:getall([[ SELECT subparams FROM scripting WHERE name = 'MQTT final' ]])
