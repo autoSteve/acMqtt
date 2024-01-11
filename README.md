@@ -28,6 +28,8 @@ LUA scripts for the automation controller:
 
 **Note**: Use either event script *MQTT* or *MQTT final*, and not both. The *MQTT send receive* script checks this, and also checks the *Execute during ramping* setting. The resident script will not start if the event script is mis-configured.
 
+**Note**: *MQTT send receive* can examine the keywords *MQTT, ENV, AC* and *AT*, but by default it only utilises *MQTT*. To enable support for ESPHome environment sensors, Panasonic A/C, or Airtopia A/C alter the variables *environmentSupport*, *panasonicSupport* or *airtopiaSupport* near the top of *MQTT send receive* as appropriate.
+
 If you don't care for integrating Philips Hue, Panasonic or Airtopia, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there in 'MQTT send receive' and will just be unused.
 
 **Note**: Automation controller firmware >= 1.10.0 <= 1.14.0 contain a bug that requires *Hue final work-around* to be used. This is fixed in 1.15.0+, so use *HUE final*.

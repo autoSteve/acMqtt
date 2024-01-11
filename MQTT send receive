@@ -6,6 +6,11 @@ local lighting = { ['56'] = true } -- Array of applications that are used for li
 local checkForChanges = true       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
 local checkChanges = 30            -- Interval in seconds to check for changes to object keywords
 
+--[[ SET AS appropriate TO SUIT ENVIRONMENT --]]
+local airtopiaSupport = false      -- Monitor keyword 'AT' for Airtopia devices - set to true if support is desired
+local panasonicSupport = false     -- Monitor keyword 'AC' for Panasonic devices - set to true if support is desired
+local environmentSupport = false   -- Monitor keyword 'ENV' for ESPHome environment sensors - set to true if support is desired
+
 --[[ NOTE: !!!+++BREAKING CHANGE+++!!! Keywords for the lvl= tag have CHANGED. Use '/' instead of '-', and ':' where '/' was previously used. See the README for updated examples. --]]
 
 --[[
@@ -903,38 +908,40 @@ local function publishCurrent()
   end
   if n > 0 then logger('Queued '..n..' objects with keyword MQTT for publication') end
 
-  -- Airtopia
-  atDevices = {}
-  grps = GetCBusByKW('AT', 'or')
-  addAt(grps)
-  local raw = {}
-  local dev
-  for k, v in ipairs(grps) do
-    local tags = v['keywords']
-    dev = ''; local sa = nil
-    for _, tag in ipairs(tags) do
-      local parts = string.split(tag, '=')
-      if parts[1] == 'dev' then
-        dev = parts[2]
-      elseif parts[1] == 'sa' then
-        sa = parts[2]
+  if airtopiaSupport then
+    -- Airtopia
+    atDevices = {}
+    grps = GetCBusByKW('AT', 'or')
+    addAt(grps)
+    local raw = {}
+    local dev
+    for k, v in ipairs(grps) do
+      local tags = v['keywords']
+      dev = ''; local sa = nil
+      for _, tag in ipairs(tags) do
+        local parts = string.split(tag, '=')
+        if parts[1] == 'dev' then
+          dev = parts[2]
+        elseif parts[1] == 'sa' then
+          sa = parts[2]
+        end
+      end
+      if dev ~= '' then
+        if sa ~= nil then raw[dev] = sa end
+      else
+        if not atLogGrp[table.concat(v['address'], '/')] then
+          logger('Error: No device specified for Airtopia group '..table.concat(v['address'], '/'), FORCE)
+          atLogGrp[table.concat(v['address'], '/')] = true
+        end
       end
     end
-    if dev ~= '' then
-      if sa ~= nil then raw[dev] = sa end
-    else
-      if not atLogGrp[table.concat(v['address'], '/')] then
-        logger('Error: No device specified for Airtopia group '..table.concat(v['address'], '/'), FORCE)
-        atLogGrp[table.concat(v['address'], '/')] = true
-      end
+    n = 0
+    for k, v in pairs(raw) do
+      n = n + 1
+      unpublishedAt[n] = {name=k, sa=v}
     end
+    if n > 0 then logger('Queued '..n..' objects with keyword AT for publication') end
   end
-  n = 0
-  for k, v in pairs(raw) do
-    n = n + 1
-    unpublishedAt[n] = {name=k, sa=v}
-  end
-  if n > 0 then logger('Queued '..n..' objects with keyword AT for publication') end
 end
 
 
@@ -1773,10 +1780,11 @@ Main loop
 -- Create/update/delete functions spread evenly over the period 'trackChanges'
 local cud = {
   { func = cudCBusTopics, init = false },
-  { func = cudAc, init = true, script = 'AC' },
-  { func = cudEnv, init = true },
-  { func = cudAt, init = false, script = 'AT' },
 }
+if panasonicSupport then table.insert(cud, { func = cudAc, init = true, script = 'AC' }) end
+if environmentSupport then table.insert(cud, { func = cudEnv, init = true }) end
+if airtopiaSupport then table.insert(cud, { func = cudAt, init = false, script = 'AT' }) end
+
 local i, c
 for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function
 
