@@ -73,7 +73,9 @@ And in addition to the type...
 
 Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
-Using lvl= for select is mandatory. This defines the selection name and its corresponding CBus level for the group. There are three options for lvl=:
+Using lvl= for select is mandatory. This defines the selection name and its corresponding CBus level for the group.
+
+There are three options for lvl=:
 - Using the format: lvl=Option 1:0/Option 2:255, for any name desired and a level number
 - The level numbers: lvl=0/255, which will use the level tag
 - The level tags: lvl=Option 1/Option 2, which will look up the level number

@@ -477,6 +477,39 @@ end
 
 
 --[[
+Get level name and value
+--]]
+local function decodeLevel(alias, level, default)
+  local lvl, net, app, group
+  local parts = string.split(alias, '/'); net = parts[1]; app = parts[2]; group = parts[3]
+  if contains('/', level) then logger('Error: Legacy separator "/" being used for '..alias..'! Use ":" instead', FORCE) return nil, nil end
+  local parts = string.split(level, ':')
+  if #parts == 2 then -- A select option and level
+    lvl = tonumber(parts[2])
+    if lvl < 0 or lvl > 255 then logger('Error: Invalid level for '..alias..', level '..lvl..', ignoring', FORCE) return nil, nil end
+    return parts[1], lvl
+  elseif #parts == 1 and tonumber(parts[1]) then -- Level numbers only
+    lvl = tonumber(parts[1])
+    if lvl < 0 or lvl > 255 then logger('Error: Invalid level for '..alias..', level '..lvl..', ignoring', FORCE) return nil, nil end
+    parts[1] = GetCBusLevelTag(tNetAC(net), app, group, lvl)
+    if parts[1] == nil then
+      if default == nil then
+        logger('Error: No level tag for '..alias..', level '..lvl..' which is required when specifying numeric level only, so ignoring', FORCE) return nil, nil
+      else
+        parts[1] = default
+        logger('Warning: Trigger '..alias..' has no level tag defined for level '..level..', setting to "'..default..'"', FORCE)
+      end
+    end
+    return parts[1], lvl
+  elseif #parts == 1 then -- Level tags only
+    lvl = GetCBusLevelAddress(net, app, group, parts[1])
+    if lvl == nil then logger('Error: Invalid level tag for '..alias..', level '..parts[1]..', so not adding and ignoring', FORCE) return nil end
+    return parts[1], lvl
+  end
+end
+
+
+--[[
 Build and publish a CBus MQTT discovery topic
 --]]
 local function addDiscover(net, app, group, channel, tags, name)
@@ -556,25 +589,15 @@ local function addDiscover(net, app, group, channel, tags, name)
       local options = {}
       selects[aAlias] = {}
       for _, level in ipairs(_L.lvl) do
-        if contains('/', level) then logger('Error: Legacy separator "/" being used for '..aAlias..'! Use ":" instead', FORCE) return nil end
-        local parts = string.split(level, ':')
-        if #parts == 2 then -- A select option and level
-          options[#options + 1] = parts[1]
-          selects[aAlias][parts[1]] = tonumber(parts[2])
-        elseif #parts == 1 and tonumber(parts[1]) then -- Level numbers only
-          parts[2] = parts[1]
-          parts[1] = GetCBusLevelTag(tNetAC(net), app, group, tonumber(parts[2]))
-          if not parts[1] then logger('Error: No level tag for select '..aAlias..', level '..parts[2]..' which is required so ignoring', FORCE) return nil end
-          options[#options + 1] = parts[1]
-          selects[aAlias][parts[1]] = tonumber(parts[2])
-        elseif #parts == 1 then -- Level tags only
-          parts[2] = GetCBusLevelAddress(tNetAC(net), app, group, parts[1])
-          if not parts[2] then logger('Error: Invalid level tag for select '..aAlias..', level '..parts[1]..', so not adding and ignoring', FORCE) return nil end
-          options[#options + 1] = parts[1]
-          selects[aAlias][parts[1]] = tonumber(parts[2])
-        else logger('Error: Invalid lvl= format for select '..aAlias..', so not adding and ignoring', FORCE) return nil
+        local opt, sel = decodeLevel(aAlias, level)
+        if opt ~= nil then
+          options[#options + 1] = opt
+          selects[aAlias][opt] = sel
+          if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = { lvl = sel, sel = opt }
+        else
+          logger('Error: Invalid lvl= for select '..aAlias..', so not adding and ignoring', FORCE) return nil
         end
-        if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = { lvl = tonumber(parts[2]), sel = parts[1] }
+        -- if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = { lvl = tonumber(parts[2]), sel = parts[1] }
       end
       table.sort(selects[aAlias].allLvl, function (left, right) return left.lvl < right.lvl end)
       return {stat_t = mqttReadTopic..alias..'/select', cmd_t = mqttWriteTopic..alias..'/select', options = options,}
@@ -637,22 +660,13 @@ local function addDiscover(net, app, group, channel, tags, name)
       mqttDevices[aAlias].trigger = {}
       mqttDevices[aAlias].type = 'button'
       if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels
-      for _, i in ipairs(_L.lvl) do 
-        tag = GetCBusLevelTag(tNetAC(net), 202, group, tonumber(i))
-        if not tag then
-          if publishNoLevel then
-            if lvl then
-              tag = 'Level '..i logger('Warning: Trigger '..alias..' has no level tag defined for level '..i..', setting to "'..tag..'"', FORCE)
-            end
-          else
-            if lvl then logger('Error: Trigger '..alias..' has no level tag defined for level '..i, FORCE) end
-          end
-        end
+      for _, i in ipairs(_L.lvl) do
+        local tag, lvl = decodeLevel(aAlias, i, publishNoLevel and 'Level '..i or nil)
         if tag then
-          boid = oid..'_'..i
+          boid = oid..'_'..lvl
           action = tag:gsub("%s+", "_"):lower()
           if triggers[group] == nil then triggers[group] = {} end
-          triggers[group][action] = tonumber(i)
+          triggers[group][action] = lvl
           if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
           local entity = prefix..tag
           if _L.sa ~= '' then
@@ -1182,37 +1196,50 @@ local function cudCBusTopics()
     alias = table.concat(v.address, '/')
 
     table.insert(found, alias)
-    local tags = v.keywords
-    table.sort(tags)
-    local curr = table.concat(tags,',')
+    table.sort(v.keywords)
+    local curr = table.concat(v.keywords,',')
     if not mqttDevices[alias] then -- New group
       change = true
       mqttDevices[alias] = {}
       mqttDevices[alias].tags = curr
     else
       if mqttDevices[alias].tags ~= curr then -- Modified group
-        lvl = nil; local i; for i = 1,#tags do local parts = string.split(tags[i], '='); if parts[1] == 'lvl' then lvl = parts[2]; break end end
-        if app == 202 and lvl ~= nil then -- Check for levels being removed
+        lvl = nil; local i; for i = 1,#v.keywords do local parts = string.split(v.keywords[i], '=');
+          if parts[1] == 'lvl' then
+            -- lvl = parts[2];
+            local pp = {} local l local p = string.split(parts[2], '/') for _, l in ipairs(p) do _, l = decodeLevel(alias, l) pp[#pp+1] = l end table.sort(pp) lvl = table.concat(pp,'/')
+            break
+          end
+        end
+        if app == 202 and lvl ~= nil then -- Check for levels being changed
           
           local function difference(a, b)
+            local lvl
             local aa = {}; for _, v in ipairs(a) do aa[v] = true end; for _, v in ipairs(b) do aa[v] = nil end
             local ret = {}; for _, v in ipairs(a) do if aa[v] then ret[#ret+1]=v end end
             return ret
           end
           
           local oldTags = string.split(mqttDevices[alias].tags, ',')
-          local i, olvl = ''; for i = 1,#oldTags do local parts = string.split(oldTags[i], '='); if parts[1] == 'lvl' then olvl = parts[2]; break end end
-          local diff = difference(string.split(olvl, '-'), string.split(lvl, '-'))
+          local i, olvl = ''; for i = 1,#oldTags do local parts = string.split(oldTags[i], '=')
+            if parts[1] == 'lvl' then
+              -- olvl = parts[2]
+              local pp = {} local l local p = string.split(parts[2], '/') for _, l in ipairs(p) do _, l = decodeLevel(alias, l) pp[#pp+1] = l end table.sort(pp) olvl = table.concat(pp,'/')
+              break
+            end
+          end
+          local diff = difference(string.split(olvl, '/'), string.split(lvl, '/'))
           if #diff > 0 then lvlDelete[alias] = diff end
+          if len(string.split(lvl,'/')) > len(string.split(olvl,'/')) then change = true end
         end
+        if app ~= 202 then change = true end
         mqttDevices[alias].tags = curr
-        change = true
       end
     end
     if change then
       if v.name then name = v.name else name = GetCBusGroupTag(net, app, group) end
       n = n + 1
-      unpublished[n] = {net=net, app=app, group=group, channel=channel, tags=tags, name=name}
+      unpublished[n] = {net=net, app=app, group=group, channel=channel, tags=v.keywords, name=name}
       queued[#queued + 1] = alias
     end
   end
@@ -1265,19 +1292,25 @@ local function cudCBusTopics()
     else
       -- Handle trigger level removal
       if lvlDelete[k] ~= nil then
-        for _, lvl in ipairs(lvlDelete[k]) do
-          local parts = string.split(k, '/')
-          local group = tonumber(parts[3])
-          if triggers[group] then
-            local a, t, act; for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
-            trigger = nil
-            for _, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; break end end
-            if trigger then
-              topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
-              client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic '..topic, FORCE)
-              t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
-              if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
-              client:publish(t, '', mqttQoS, RETAIN)
+        local parts = string.split(k, '/')
+        local group = tonumber(parts[3])
+        if triggers[group] then
+          for _, lvl in ipairs(lvlDelete[k]) do
+            local a, i, t, act = nil
+            for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
+            local remove = nil
+            if act then
+              trigger = nil
+              for i, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; remove = i; break end end
+              if trigger then
+                topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
+                client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic for '..topic..' (trigger level '..lvl..')', FORCE)
+                t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
+                if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
+                client:publish(t, '', mqttQoS, RETAIN)
+                triggers[group][act] = nil
+              end
+              if remove then table.remove(v.trigger, remove) end
             end
           end
         end
