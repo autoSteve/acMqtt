@@ -6,7 +6,7 @@ local lighting = { ['56'] = true } -- Array of applications that are used for li
 local checkForChanges = true       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
 local checkChanges = 30            -- Interval in seconds to check for changes to object keywords
 
---[[ SET AS appropriate TO SUIT ENVIRONMENT --]]
+--[[ SET AS APPROPRIATE TO SUIT ENVIRONMENT --]]
 local airtopiaSupport = false      -- Monitor keyword 'AT' for Airtopia devices - set to true if support is desired
 local panasonicSupport = false     -- Monitor keyword 'AC' for Panasonic devices - set to true if support is desired
 local environmentSupport = false   -- Monitor keyword 'ENV' for ESPHome environment sensors - set to true if support is desired
@@ -1357,8 +1357,8 @@ local function outstandingPublish()
   end
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
-    if eventInstalled then if script.status('MQTT') ~= nil then script.disable('MQTT'); script.enable('MQTT') end end
-    if finalInstalled then if script.status('MQTT final') ~= nil then script.disable('MQTT final'); script.enable('MQTT final') end end
+    if eventInstalled then if script.status(eventName) ~= nil then script.disable(eventName); script.enable(eventName) end end
+    if finalInstalled then if script.status(finalName) ~= nil then script.disable(finalName); script.enable(finalName) end end
     logger('Published '..#unpublished - failed..' CBus discovery and current level topic'..(#unpublished - failed ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted', FORCE)
     unpublished = {}
   end
