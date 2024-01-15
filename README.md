@@ -52,11 +52,11 @@ Lighting, measurement, user parameter and trigger control applications are imple
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-A type of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bsensor or button (default if not specified is 'light')
-- Light, cover, select, sensor, switch, binary_sensor and button are self-explanatory, being the Home Assistant equivalents
+A type of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bsensor or button (default if not specified is 'light').
+- Light, cover, select, sensor, switch, binary_sensor and button are self-explanatory, being the Home Assistant equivalents.
 - Using cover assumes that a L5501RBCP blind relay is in "level translation mode" (status updates in HA will be less than perfect, but acceptable). I personally use a select without level translation mode, and level presets for open, closed, and part open at half way, which works well, and is predictable.
-- For fan/fan-pct the Home Assistant object changes, as described below, with one a preset, and the other variable percentage
-- A bsensor is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. Motion detected/Motion not detected
+- The fan keyword is specifically for sweep fan controllers like a L5501RFCP. For fan/fan-pct the Home Assistant object changes, as described below, with one a preset to suit the L5501RFCP, and the other variable percentage.
+- A bsensor is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. Motion detected/Motion not detected.
 
 And in addition to the type...
 - sa=     Suggested area
