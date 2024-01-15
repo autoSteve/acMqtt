@@ -1807,9 +1807,12 @@ local function checkHeartbeat()
     if not stat then
       logger('A fault occurred sending heartbeat. Restarting...', FORCE)
       pcall(function () server:close() end)
-      do return end
+      return false
+    else
+      return true
     end
   end
+  return True
 end
 
 
@@ -1966,5 +1969,5 @@ while true do
   If sending the heartbeat faults, then the loop is exited, which will also re-start this
   script (it being resident/sleep zero).
   --]]
-  checkHeartbeat()
+  if not checkHeartbeat() then do return end end
 end
