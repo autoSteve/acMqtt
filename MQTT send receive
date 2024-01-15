@@ -180,9 +180,16 @@ end
 --[[
 Warn for >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping / missing scripts / wrong version
 --]]
+local eventScripts = db:getall("SELECT name FROM scripting WHERE type = 'event'")
+local eventName, finalName, s = nil, nil, nil
+for _, s in ipairs(eventScripts) do
+  if s.name:lower() == 'mqtt' then eventName = s.name end
+  if s.name:lower() == 'mqtt final' then finalName = s.name end
+end
+
 local version = string.split(io.readfile('/lib/genohm-scada/version'):trim(), '.')
-local finalInstalled = not (script.status('MQTT final') == nil or script.status('MQTT final') == false)
-local eventInstalled = not (script.status('MQTT') == nil or script.status('MQTT') == false)
+local finalInstalled = finalName ~= nil and not (script.status(finalName) == nil or script.status(finalName) == false)
+local eventInstalled = eventName ~= nil and not (script.status(eventName) == nil or script.status(eventName) == false)
 
 if eventInstalled and finalInstalled then
   logger("Error: Use script 'MQTT' or 'MQTT final', not both. Not starting.", FORCE)
@@ -195,12 +202,12 @@ if not eventInstalled and not finalInstalled then
 end
 
 local compatibleEvent = false
-if eventInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall([[ SELECT script FROM scripting WHERE name = 'MQTT' ]] )[1]['script']) end
-if finalInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall([[ SELECT script FROM scripting WHERE name = 'MQTT final' ]] )[1]['script']) end
+if eventInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..eventName.."'")[1]['script']) end
+if finalInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..finalName.."'")[1]['script']) end
 if not compatibleEvent then
   local scriptInUse = ''
-  if finalInstalled then scriptInUse = 'MQTT final' end
-  if eventInstalled then scriptInUse = 'MQTT' end
+  if finalInstalled then scriptInUse = finalName end
+  if eventInstalled then scriptInUse = eventName end
   logger("Error: Incompatible '"..scriptInUse.."' script version detected, so please update it. Not starting.", FORCE)
   while true do sleep(1) end
 end
@@ -214,7 +221,7 @@ if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version
 
   local edr
   if eventInstalled then
-    edr = db:getall([[ SELECT subparams FROM scripting WHERE name = 'MQTT' ]])
+    edr = db:getall("SELECT subparams FROM scripting WHERE name = '"..eventName.."'")
     edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
     if edr ~= '1' then
       logger("Error firmware > 1.15.0: Event script 'MQTT' is not set to execute during ramping. Not starting.", FORCE)
@@ -222,7 +229,7 @@ if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version
     end
   end
   if finalInstalled then
-    edr = db:getall([[ SELECT subparams FROM scripting WHERE name = 'MQTT final' ]])
+    edr = db:getall("SELECT subparams FROM scripting WHERE name = '"..finalName.."'")
     edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
     if edr ~= '0' then
       logger("Error firmware > 1.15.0: Event script 'MQTT final' is set to execute during ramping. Turn this off. Not starting.", FORCE)
