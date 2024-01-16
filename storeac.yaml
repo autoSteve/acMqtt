@@ -38,7 +38,8 @@ uart:
   parity: EVEN
 
 external_components:
-  source: github://DomiStyle/esphome-panasonic-ac
+  source: github://autoSteve/esphome-panasonic-ac
+  refresh: 0s
   components: [panasonic_ac]
 
 mqtt:
