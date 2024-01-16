@@ -1507,12 +1507,21 @@ local function outstandingMqttMessage()
           end
           if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change, and if it is different to the current value
             local set = false
-            local extant = GetUserParam(net, group)
-            local e = tonumber(extant)
-            if e ~= nil then
-              if string.format('%.3f', e) ~= string.format('%.3f', tonumber(payload)) then SetUserParam(net, group, payload); set = true end
+            if payload ~= nil then
+              local extant = GetUserParam(net, group)
+              local e = tonumber(extant)
+              local p = tonumber(payload)
+              if e ~= nil and p ~= nil then
+                if string.format('%.3f', e) ~= string.format('%.3f', p) then SetUserParam(net, group, p); set = true end
+              elseif p ~= nil then
+                if e ~= string.format('%.3f', p) then SetUserParam(net, group, p); set = true end
+              elseif e ~= nil then
+                if string.format('%.3f', e) ~= payload then SetUserParam(net, group, payload); set = true end
+              else
+                if extant ~= payload then SetUserParam(net, group, payload); set = true end
+              end
             else
-              if extant ~= payload then SetUserParam(net, group, payload); set = true end
+              logger('Warning: nil payload for '..alias..', ignoring', FORCE)
             end
             -- Setting CBus here will result in the AC event script requesting publication of the state using publishAc() above.
             -- This is undesired, so ignoreMqtt[alias] is used to ensure that the CBus change received does not publish to MQTT.
