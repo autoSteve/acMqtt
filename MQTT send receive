@@ -2,7 +2,7 @@
 local mqttBroker = '192.168.10.21'
 local mqttUsername = 'mqtt'
 local mqttPassword = 'password'
-local lighting = { ['56'] = true } -- Array of applications that are used for lighting (ramp detection only applies to lighting)
+local lighting = { ['56'] = true, } -- Array of applications that are used for lighting
 local checkForChanges = true       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
 local checkChanges = 30            -- Interval in seconds to check for changes to object keywords
 
@@ -224,7 +224,7 @@ if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version
     edr = db:getall("SELECT subparams FROM scripting WHERE name = '"..eventName.."'")
     edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
     if edr ~= '1' then
-      logger("Error firmware > 1.15.0: Event script 'MQTT' is not set to execute during ramping. Not starting.", FORCE)
+      logger("Error firmware > 1.15.0: Event script 'MQTT' is not set to execute during ramping. Not starting. Consider using 'MQTT final' instead.", FORCE)
       while true do sleep(1) end
     end
   end
@@ -1483,7 +1483,7 @@ local function outstandingMqttMessage()
       end
 
     -- Messages from AC board select/sensor topics
-    elseif parts[2] == 'climate' or parts[2] == 'select' or parts[2] == 'sensor' then
+    elseif panasonicSupport and parts[2] == 'climate' or parts[2] == 'select' or parts[2] == 'sensor' then
       local sel = 'func'
       -- for loop finding items parts[2] or parts[3] matches a 'sense'... is topic important??? Prolly not...
       for _, a in pairs(ac) do
@@ -1538,7 +1538,7 @@ local function outstandingMqttMessage()
       end
     
     -- Messages from AT board cmd topics
-    elseif parts[1] == 'airtopia' and parts[3] == 'cmd' then
+    elseif airtopiaSupport and parts[1] == 'airtopia' and parts[3] == 'cmd' then
       device = parts[2]..'-'..parts[4]
       local net, app, group
       
@@ -1626,12 +1626,12 @@ local function outstandingMqttMessage()
           end
         end
       end
-    elseif parts[1] == 'airtopia' and parts[3] == 'state' then
+    elseif airtopiaSupport and parts[1] == 'airtopia' and parts[3] == 'state' then
       if indexOf(airtopiaStates, parts[4]) == nil then table.insert(airtopiaStates, parts[4]) end
     end
     
     -- Messages from ENV board sensor topics - simpler, only messages inbound
-    if parts[2] == 'sensor' and parts[4] == 'state' then
+    if environmentSupport and parts[2] == 'sensor' and parts[4] == 'state' then
       device = parts[1]..'-'..parts[3]
       if envDevices[device] then
         parts = string.split(envDevices[device], '/')
@@ -1673,9 +1673,9 @@ local function outstandingCbusMessage()
     local parts = string.split(cmd, '/')
     local alias = parts[1]..'/'..parts[2]..'/'..parts[3]
     
-    if ac[alias] then -- AC message to MQTT (no ramping involved for AC groups)
+    if panasonicSupport and ac[alias] then -- AC message to MQTT (no ramping involved for AC groups)
       publishAc(parts[1], parts[2], parts[3], parts[4], ac[alias].select)
-    elseif at[alias] then -- AT message to MQTT (no ramping involved for AT groups)
+    elseif airtopiaSupport and at[alias] then -- AT message to MQTT (no ramping involved for AT groups)
       publishAt(parts[1], parts[2], parts[3], parts[4])
     else -- CBus message to MQTT
       local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
@@ -1771,10 +1771,9 @@ local function checkRampOrphans()
   local k, v; local orphan = {}
   for k, v in pairs(ramp) do
     if socket.gettime() > v.ts + v.ramp + rampTimeout then
-      -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur, but does occasionally)
-      -- Remove the orphan, and publish the final target, which will be zero
-      -- Occurs when a ramp to off does not begin with a zero level during the ramp, or if a ramp to zero starts
-      -- when the group is already at zero.
+      -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur, but does occasionally when set up for firmware < 1.15.0).
+      -- Remove the orphan, and publish the final target, which will be zero.
+      -- Will occur when a ramp to off does not begin with a zero level during the ramp, or if a ramp to zero starts when the group is already at zero.
       table.insert(orphan, k)
       local parts = string.split(k, '/')
       local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
@@ -1958,9 +1957,9 @@ while true do
     -- Subscribe to relevant topics
     client:subscribe(mqttWriteTopic..'#', mqttQoS)
     client:subscribe(mqttDiscoveryTopic..'#', mqttQoS)
-    for k, _ in pairs(acBoards) do client:subscribe(k..'/#', mqttQoS) end
-    for k, _ in pairs(atBoards) do client:subscribe('airtopia/'..k..'/#', mqttQoS) end
-    for k, _ in pairs(envBoards) do client:subscribe(k..'/#', mqttQoS) end
+    if panasonicSupport then for k, _ in pairs(acBoards) do client:subscribe(k..'/#', mqttQoS) end end
+    if airtopiaSupport then for k, _ in pairs(atBoards) do client:subscribe('airtopia/'..k..'/#', mqttQoS) end end
+    if environmentSupport then for k, _ in pairs(envBoards) do client:subscribe(k..'/#', mqttQoS) end end
     -- Connected... Now loop briefly to allow retained value retrieval for subscribed topics because synchronous
     while socket.gettime() - mqttConnected < 0.5 do client:loop(0) end
     -- Full publish CBus topics
