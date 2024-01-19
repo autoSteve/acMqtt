@@ -40,7 +40,7 @@ local mqttJunk = true        -- Whether to publish junk before a blank publish m
 Timing variables. Adjust to taste if you know what you're doing. These provide a good compromise, but your deployment may vary.
 --]]
 local rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
-local socketTimeout = 0.05   -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
+local socketTimeout = 0.1    -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 local mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 local ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
 
@@ -85,6 +85,7 @@ local bSensor = {}           -- Quick lookup to determine whether an object is a
 local binarySensor = {}      -- Quick lookup to determine whether an object is a binary sensor
 local lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
 local userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
+local unitParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 local publishAdj = {}        -- Holds scale and decimals to apply
 local includeUnits = {}      -- Holds table of booleans to add sensor unit (%, $, °C, etc.) to MQTT value
 local unpublished = {}       -- The outstanding set of CBus objects to publish discovery topics for
@@ -375,6 +376,19 @@ local function publishMeasurement(net, app, group, channel, value)
 end
 
 --[[
+Publish unit parameter objects to MQTT 
+--]]
+local function publishUnitParam(net, app, group, channel, value)
+  local units, v
+  local alias = net..'/'..app..'/'..group..'/'..channel
+  if value == nil then logger('Warning: Nil unit parameter value for '..net..'/'..app..'/'..group, FORCE); do return end end
+  local adjust = publishAdj[alias]
+  if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
+  client:publish(mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/state', v, mqttQoS, RETAIN)
+  logger('Publishing unit parameter '..mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..' to '..v)
+end
+
+--[[
 Publish Panasonic ESPHome objects to MQTT 
 --]]
 local function publishAc(net, app, group, level, select)
@@ -525,7 +539,11 @@ local function addDiscover(net, app, group, channel, tags, name)
       logger('Warning: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required so ignoring', FORCE)
       return false
     else
-      name = 'measurement'
+      if app ~= 255 then
+        name = 'Measurement'
+      else
+        name = 'Unit parameter'
+      end
     end
   end
   -- All keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
@@ -575,6 +593,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       if channel ~= nil then payload = { stat_t = mqttReadTopic..alias..'_'..channel..'/state', } alias = alias..'/'..channel else payload = { stat_t = mqttReadTopic..alias..'/state', } end
       if _L.class ~= '' then payload.dev_cla = class end
       if app == 250 then userParameter[alias] = true end
+      if app == 255 then unitParameter[alias] = true end
       if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
       if _L.unit ~= '' then payload.unit_of_meas = _L.unit end
       return payload
@@ -1345,6 +1364,9 @@ local function outstandingPublish()
       if level ~= nil then publishMeasurement(tNetCBus(u.net), u.app, u.group, u.channel, level) end
     -- User parameters
     elseif u.app == 250 then publish(tNetCBus(u.net), u.app, u.group, GetUserParam(u.net, u.group))
+    elseif u.app == 255 then
+      local level = nil; pcall(function () level = GetUnitParameter(u.net, u.group, u.channel) end)
+      if level ~= nil then publishUnitParam(tNetCBus(u.net), u.app, u.group, u.channel, level) end
     -- Trigger control
     elseif u.app == 202 then -- Do nothing
     -- Lighting and other

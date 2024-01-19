@@ -48,7 +48,7 @@ Automation controller object keywords are used to tell the scripts which objects
 Newly added keywords can be regularly detected by both the 'MQTT send receive' and 'HUE send receive' scripts. This is configurable by setting an option that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is thirty seconds, and that is also a configurable variable. Checking for changes adds a low workload to the automation controller, so is recommended.
 
 ### CBus (MQTT send receive)
-Lighting, measurement, user parameter and trigger control applications are implemented.
+Lighting, measurement, user parameter, unit parameter and trigger control applications are implemented. (Unit parameter as a sensor only.)
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
@@ -61,7 +61,7 @@ A type of light, fan, fan_pct, cover, select, sensor, switch, binary_sensor, bse
 And in addition to the type...
 - sa=     Suggested area
 - img=    Image (sensible automated defaults are provided, see below)
-- pn=     Preferred name (defaults to CBus group name)
+- pn=     Preferred name (defaults to CBus group name, however unit parameters have no name, so treat this as mandatory in that special case)
 - class=  Device class to use in Home Assistant (User param/sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
 - dec=    Decimal places (User param/sensor only)
 - unit=   Unit of measurement (User param/sensor only)
