@@ -83,9 +83,10 @@ local cover = {}             -- Quick lookup to determine whether an object is a
 local fan = {}               -- Quick lookup to determine whether an object is a fan (sweep fan)
 local bSensor = {}           -- Quick lookup to determine whether an object is a bsensor (a regular lighting group acting as status)
 local binarySensor = {}      -- Quick lookup to determine whether an object is a binary sensor
+local button = {}            -- Quick lookup to determine whether an object is a binary sensor
 local lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
 local userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
-local unitParameter = {}     -- Quick lookup to determine whether an object is a user parameter
+local unitParameter = {}     -- Quick lookup to determine whether an object is a unit parameter
 local publishAdj = {}        -- Holds scale and decimals to apply
 local includeUnits = {}      -- Holds table of booleans to add sensor unit (%, $, °C, etc.) to MQTT value
 local unpublished = {}       -- The outstanding set of CBus objects to publish discovery topics for
@@ -300,7 +301,7 @@ end
 
 
 --[[
-Publish lighting and user parameter objects to MQTT 
+Publish lighting, user parameter and trigger objects to MQTT 
 --]]
 local function publish(net, app, group, level)
   if level == nil then logger('Warning: Nil CBus level for '..net..'/'..app..'/'..group, FORCE); do return end end
@@ -323,24 +324,27 @@ local function publish(net, app, group, level)
         local l
         for _, l in ipairs(selects[aAlias].allLvl) do
           if tonumber(level) <= l.lvl then
-            if selectExact and tonumber(level) ~= l.lvl then
+            if selectExact and tonumber(level) ~= l.lvl and app ~= 202 then
               -- Current CBus level does not match the select, so optionally adjust the CBus level
               logger('Warning: Forcing level to set for select '..alias..' to nearest level '..l.lvl..' ('..tonumber(level)..' requested, but selectExact=true)', FORCE)
               SetCBusLevel(tNetAC(net), app, group, l.lvl, 0)
               -- Adjusting the level will result in two MQTT publish events, which could be avoided but is not
             end
             client:publish(mqttReadTopic..alias..'/select', l.sel, mqttQoS, RETAIN)
+            client:publish(mqttReadTopic..alias..'/level', l.lvl, mqttQoS, RETAIN)
             logger('Publishing select '..mqttReadTopic..alias..' to '..l.sel..'('..l.lvl..')')
             break
           end
         end
+      elseif button[aAlias] then -- It's a button, so do nothing as it has no state
       else -- It's a bog standard group
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
         if level ~= -1 then client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN) end
         logger('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level)
       end
-    else -- It's a binary sensor
+    else -- It's a binary sensor / trigger
       client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
+      client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
       logger('Publishing state '..mqttReadTopic..alias..' to '..state)
     end
   else -- It's a user parameter
@@ -607,6 +611,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       return {stat_t = mqttReadTopic..alias..'/state', val_tpl = '{% if value | float == 0 %} '..off..' {% else %} '..on..' {% endif %}',}
       end },
     ['button'] = {['getPayload'] = function()
+      button[aAlias] = true
       if lighting[tostring(app)] then lightingButton[aAlias] = true return {cmd_t = mqttWriteTopic..alias..'/press',} else return nil end
       end },
     ['select'] = {['getPayload'] = function()
@@ -1279,7 +1284,7 @@ local function cudCBusTopics()
     if not f then
       table.insert(kill, k)
       local parts = string.split(k, '/')
-      if parts[2] == '202' then
+      if parts[2] == '202' and v.type == 'button' then
         for _, trigger in ipairs(v.trigger) do
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
       	  client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic, FORCE)
@@ -1293,34 +1298,8 @@ local function cudCBusTopics()
           if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
           client:publish(t, '', mqttQoS, RETAIN)
         end
-      else
-        topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
-      	client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic, FORCE)
-      end
-      if parts[2] ~= '202' then
-        local count, topic
-        _, count = k:gsub('/','')
-        if count == 3 then -- Measurement application
-          local t = tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..parts[4]
-          t = t:gsub('/', '_'); t = t:gsub('_', '/', 2) -- Convert the last slash to an underscore
-          topic = mqttReadTopic..t;
-        else
-          topic = mqttReadTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]
-        end
-        if mqttJunk then client:publish(topic..'/state', 'junk', mqttQoS, RETAIN) end
-        client:publish(topic..'/state', '', mqttQoS, RETAIN)
-        if count ~= 3 or bSensor[k] or binarySensor[k] then  -- Level not set for measurement and binary sensors
-          if mqttJunk then client:publish(topic..'/level', 'junk', mqttQoS, RETAIN) end
-          client:publish(topic..'/level', '', mqttQoS, RETAIN)
-        end
-        includeUnits[alias] = nil
-      end
-    else
-      -- Handle trigger level removal
-      if lvlDelete[k] ~= nil then
-        local parts = string.split(k, '/')
-        local group = tonumber(parts[3])
-        if triggers[group] then
+        -- Handle trigger level removal
+        if lvlDelete[k] ~= nil and triggers[group] then
           for _, lvl in ipairs(lvlDelete[k]) do
             local a, i, t, act = nil
             for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
@@ -1340,6 +1319,29 @@ local function cudCBusTopics()
             end
           end
         end
+      else
+        topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
+      	client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic, FORCE)
+        local count
+        _, count = k:gsub('/','')
+        if count == 3 then -- Measurement application
+          local t = tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..parts[4]
+          t = t:gsub('/', '_'); t = t:gsub('_', '/', 2) -- Convert the last slash to an underscore
+          topic = mqttReadTopic..t;
+        else
+          topic = mqttReadTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]
+        end
+        if mqttJunk then client:publish(topic..'/state', 'junk', mqttQoS, RETAIN) end
+        client:publish(topic..'/state', '', mqttQoS, RETAIN)
+        if count ~= 3 or bSensor[k] or binarySensor[k] then  -- Level not set for measurement and binary sensors
+          if mqttJunk then client:publish(topic..'/level', 'junk', mqttQoS, RETAIN) end
+          client:publish(topic..'/level', '', mqttQoS, RETAIN)
+        end
+        if v.type == 'select' then
+          if mqttJunk then client:publish(topic..'/select', 'junk', mqttQoS, RETAIN) end
+          client:publish(topic..'/select', '', mqttQoS, RETAIN)
+        end
+        includeUnits[alias] = nil
       end
     end
   end
@@ -1367,13 +1369,16 @@ local function outstandingPublish()
     elseif u.app == 255 then
       local level = nil; pcall(function () level = GetUnitParameter(u.net, u.group, u.channel) end)
       if level ~= nil then publishUnitParam(tNetCBus(u.net), u.app, u.group, u.channel, level) end
-    -- Trigger control
-    elseif u.app == 202 then -- Do nothing
     -- Lighting and other
     else
       if not lightingButton[alias] then -- Do nothing for lighting buttons
-        local level = nil; pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
-        if level ~= nil then publish(tNetCBus(u.net), u.app, u.group, level) end
+        local level = nil;
+        if u.app == 202 then
+          pcall(function () level = GetTriggerLevel(u.group) end)
+        else
+          pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
+        end
+       if level ~= nil then publish(tNetCBus(u.net), u.app, u.group, level) end
       end
     end
   end
@@ -1433,7 +1438,11 @@ local function outstandingMqttMessage()
         end
         
       elseif parts[6] == 'select' then
-        SetCBusLevel(net, app, group, selects[alias][payload], 0); logger('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias)
+        if app ~= 202 then
+          SetCBusLevel(net, app, group, selects[alias][payload], 0); logger('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias)
+        else
+          SetTriggerLevel(group, selects[alias][payload], 0); logger('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias)
+        end
 
       elseif contains('press', parts[6]) and payload == 'PRESS' then -- Lighting group press
         PulseCBusLevel(net, app, group, 255, 0, 1, 0); logger('Payload is PRESS')
