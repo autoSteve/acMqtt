@@ -598,6 +598,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       if _L.class ~= '' then payload.dev_cla = class end
       if app == 250 then userParameter[alias] = true end
       if app == 255 then unitParameter[alias] = true end
+      payload.value_template = '{{ value | float | round ('..tostring(_L.dec)..') }}'
       if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
       if _L.unit ~= '' then payload.unit_of_meas = _L.unit end
       return payload
