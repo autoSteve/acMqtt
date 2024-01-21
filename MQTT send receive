@@ -2,7 +2,7 @@
 local mqttBroker = '192.168.10.21'
 local mqttUsername = 'mqtt'
 local mqttPassword = 'password'
-local lighting = { ['56'] = true, } -- Array of applications that are used for lighting
+local lighting = { ['56'] = true, } -- Array of applications that are used for lighting (do not remove should lastLevel not be required)
 local checkForChanges = true       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
 local checkChanges = 30            -- Interval in seconds to check for changes to object keywords
 
