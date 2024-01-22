@@ -131,6 +131,7 @@ local function trim(s) if s ~= nil then return s:match "^%s*(.-)%s*$" else retur
 local function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
 local function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
 local function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return i end -- Get number of dictionary members
+local function hasMembers(dict) local k; for k, _ in pairs(dict) do return true end return false end -- Get whether any dictionary members
 local function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end -- Find the index number of an array member
 local function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
   if type(obj) ~= 'table' then return obj end
@@ -1712,8 +1713,7 @@ local function outstandingCbusMessage()
       publishAt(parts[1], parts[2], parts[3], parts[4])
     else -- CBus message to MQTT
       local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
-      if app ~= 228
-        then -- i.e. not measurement application
+      if app ~= 228 then -- i.e. not measurement application
         local setting = true
         local payload = tonumber(parts[4]) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
         if lighting[parts[2]] then -- Lighting application, so check for ramp
@@ -1756,7 +1756,7 @@ local function outstandingCbusMessage()
         if setting then
           if legacyFirmware then
             if ramp[alias] then
-              if final then -- or payload == ramp[alias].target then
+              if final then
                 ramp[alias] = nil
                 logger('Clear ramp for '..alias)
                 -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
@@ -1784,12 +1784,20 @@ local function outstandingCbusMessage()
             end
           end
         end
-      else -- Special case for measurement app
+      elseif app == 255 then -- Special case for unit param
+        publishUnitParam(tNetCBus(tonumber(parts[1])), tonumber(parts[2]), tonumber(parts[3]), tonumber(parts[4]), tonumber(parts[5]))
+        if tonumber(parts[5]) ~= nil then
+          local p = string.format('%.3f', tonumber(parts[5]))
+          storage.set('pre'..parts[1]..'/'..parts[2]..'/'..parts[3]..'/'..parts[4], p)
+        end
+      elseif app == 228 then -- Special case for measurement app
         publishMeasurement(tNetCBus(tonumber(parts[1])), tonumber(parts[2]), tonumber(parts[3]), tonumber(parts[4]), tonumber(parts[5]))
         if tonumber(parts[5]) ~= nil then
           local p = string.format('%.3f', tonumber(parts[5]))
           storage.set('pre'..parts[1]..'/'..parts[2]..'/'..parts[3]..'/'..parts[4], p)
         end
+      else
+        logger('Unsupported application: '..cmd, FORCE)
       end
     end
   end
@@ -1945,12 +1953,12 @@ while true do
       stat, err = pcall(outstandingAtPublish)
       if not stat then logger('Error publishing outstanding Airtopia discovery topics: '..err, FORCE); unpublishedAt = {} end -- Log error and clear the queue, continue
     end
-    if len(ramp) > 0 then
+    if hasMembers(ramp) then
       -- Some scenarios can create ramp orphans
       stat, err = pcall(checkRampOrphans)
       if not stat then logger('Error checking ramp orphans: '..err, FORCE) end -- Log and continue
     end
-    if len(discoveryDelete) > 0 then
+    if hasMembers(discoveryDelete) then
       -- A type has changed for existing topics, so clean up discovery for the old topics
       stat, err = pcall(dupDelete)
       if not stat then logger('Error processing delete discovery duplicates: '..err, FORCE); discoveryDelete = {} end -- Log error and clear the queue, continue
