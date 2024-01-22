@@ -57,7 +57,7 @@ local mqttDiscoveryTopic = 'homeassistant/'
 --[[
 Variables not to be messed with unless you definitely know what you're doing.
 --]]
-local EVENTVERSION = 2       -- MQTT/MQTT final event script compatible version
+local EVENTVERSION = 3       -- MQTT/MQTT final event script compatible version
 local discovery = {}         -- MQTT discovery topics lookup
 local discoveryDelete = {}   -- If duplicate discovery topics are detected on startup then they will be removed
 local atDiscovery = {}       -- AT discovery topics lookup
@@ -87,6 +87,7 @@ local button = {}            -- Quick lookup to determine whether an object is a
 local lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
 local userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 local unitParameter = {}     -- Quick lookup to determine whether an object is a unit parameter
+local storeLevel = {}        -- Instruct MQTT Final/MQTT event script to store the last level for certain object types (fan, fan_pct)
 local publishAdj = {}        -- Holds scale and decimals to apply
 local includeUnits = {}      -- Holds table of booleans to add sensor unit (%, $, °C, etc.) to MQTT value
 local unpublished = {}       -- The outstanding set of CBus objects to publish discovery topics for
@@ -583,13 +584,13 @@ local function addDiscover(net, app, group, channel, tags, name)
       cover[alias] = true
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
       end },
-    ['fan'] = {['getPayload'] = function() return {
+    ['fan'] = {['getPayload'] = function() fan[aAlias] = true storeLevel[aAlias] = true return {
       stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pl_on = 'ON', pl_off = 'OFF', pr_modes = {'low', 'medium', 'high'},
       pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
       pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value == 0 %} OFF {% elif value == 86 %} low {% elif value == 170 %} medium {% elif value == 255 %} high {% endif %}'
     } end },
     ['fan_pct'] = {['getPayload'] = function()
-      dType = 'fan' fan[aAlias] = true
+      dType = 'fan' fan[aAlias] = true storeLevel[aAlias] = true
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF', pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_stat_t = mqttReadTopic..alias..'/level', opt = true,}
       end },
     ['sensor'] = {['getPayload'] = function()
@@ -1383,6 +1384,7 @@ local function outstandingPublish()
       end
     end
   end
+  storage.set('storeLevel', storeLevel)
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
     if eventInstalled then if script.status(eventName) ~= nil then script.disable(eventName); script.enable(eventName) end end
@@ -1694,12 +1696,11 @@ local function outstandingCbusMessage()
 
   local lastLevel = storage.get('lastlvl', {})
   for _, cmd in ipairs(cbusMessages) do
-    if not legacyFirmware then
-      -- Check for final levels
-      if contains('>', cmd) then
-        cmd = cmd:gsub('>', '/')
-        final = true
-      end
+    -- Check for final levels
+    if contains('>', cmd) then
+      cmd = cmd:gsub('>', '/')
+      final = true
+      if logging and lighting[string.split(cmd, '/')[2]] then logger('Final level achieved, '..cmd) end
     end
 
     local parts = string.split(cmd, '/')
@@ -1755,7 +1756,7 @@ local function outstandingCbusMessage()
         if setting then
           if legacyFirmware then
             if ramp[alias] then
-              if final or payload == ramp[alias].target then
+              if final then -- or payload == ramp[alias].target then
                 ramp[alias] = nil
                 logger('Clear ramp for '..alias)
                 -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)

@@ -1,4 +1,12 @@
 --[[
+CHANGE TO SUIT ENVIRONMENT
+--]]
+
+local useLastLevel = false
+local lighting = {['56']=true} -- Array of applications that are used for lighting
+local logging = false
+
+--[[
 Event-based, execute during ramping, name: "MQTT"
 
 Pushes CBus events to MQTT resident scripts via internal sockets and maintains CBus 'lastlevels'
@@ -8,17 +16,17 @@ Tag required objects with the "MQTT" keyword and this script will run whenever o
 Last levels are tracked so that MQTT 'on' events can return a light/fan/blind to the last known set level.
 Only lighting application groups are tracked.
 
-Home Assistant with an MQTT integration and Google assistant only allows for on/off
-("Hey Google, turn on the dunny light"), and not remembering the previous level set, so
-this script, in conjunction with the MQTT send/receive script works around that. Setting
-another level is not affected - just "on" commands.
-
-VERSION: 2
+VERSION: 3
 --]]
 
-local logging = false
--- local lighting = {['56']=true} -- Array of applications that are used for lighting
-local lighting = {} -- Home Assistant now saves previous 'on' levels, so feature is not needed, unless it is desired for some functions
+local storeLevel = storage.get('storeLevel', {})
+local lastLevel, net, app, group, appS
+
+if storeLevel ~= {} or useLastLevel then
+  lastLevel = storage.get('lastlvl', {})
+  local parts = string.split(event.dst, '/')
+  net = tonumber(parts[1]) app = tonumber(parts[2]) group = tonumber(parts[3]) appS = parts[2]
+end
 
 function saveLastLevel()
   -- Get old levels to see if anything changed
@@ -38,6 +46,13 @@ function saveLastLevel()
   end
 end
 
+function setLastLevel(val)
+  if val ~= 0 and val == GetCBusTargetLevel(net, app, group) and val ~= lastLevel[event.dst] then
+    lastLevel[event.dst] = val
+    if logging then log('Set lastLevel to '..val..' for '..event.dst) end
+    saveLastLevel()
+  end
+end
 
 local val = event.getvalue()
 
@@ -54,22 +69,25 @@ end
 
 -- Send an event to publish to broker if changed
 if logging then log('Setting '..event.dst..' to '..comp..', previous='..pre) end
-require('socket').udp():sendto(event.dst.."/"..val, '127.0.0.1', 5432)
-
--- Check whether to set the level as a tracked lastlevel
-if lighting ~= {} then local parts = string.split(event.dst, '/') end
-if parts and lighting[parts[2]] then
-  local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3])
-  lastLevel = storage.get('lastlvl', {})
-  if val ~= 0 and val == GetCBusTargetLevel(net, app, group) then
-    if val ~= lastLevel[event.dst] then
-      lastLevel[event.dst] = val
-      if logging then log('Set lastLevel to '..val..' for '..event.dst) end
-      saveLastLevel()
-    end
+if lighting[appS] then
+  if val == GetCBusTargetLevel(net, app, group) then
+    require('socket').udp():sendto(event.dst..">"..val, '127.0.0.1', 5432)
+  else
+    require('socket').udp():sendto(event.dst.."/"..val, '127.0.0.1', 5432)
   end
 else
-  if storage.get('lastlvl') then
-    storage.delete('lastlvl')
+  require('socket').udp():sendto(event.dst..">"..val, '127.0.0.1', 5432)
+end
+
+-- Check whether to set the level as a tracked lastlevel
+if useLastLevel then
+  if lighting[appS] then setLastLevel(val) end
+else
+  if storeLevel ~= {} then
+    if storeLevel[event.dst] then setLastLevel(val) end
+  else
+    if storage.get('lastlvl') then
+      storage.delete('lastlvl')
+    end
   end
 end
