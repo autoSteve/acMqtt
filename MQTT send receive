@@ -1713,7 +1713,7 @@ local function outstandingCbusMessage()
       publishAt(parts[1], parts[2], parts[3], parts[4])
     else -- CBus message to MQTT
       local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
-      if app ~= 228 then -- i.e. not measurement application
+      if app ~= 228 and app ~= 255 then -- i.e. not measurement application
         local setting = true
         local payload = tonumber(parts[4]) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
         if lighting[parts[2]] then -- Lighting application, so check for ramp
@@ -1796,8 +1796,6 @@ local function outstandingCbusMessage()
           local p = string.format('%.3f', tonumber(parts[5]))
           storage.set('pre'..parts[1]..'/'..parts[2]..'/'..parts[3]..'/'..parts[4], p)
         end
-      else
-        logger('Unsupported application: '..cmd, FORCE)
       end
     end
   end
