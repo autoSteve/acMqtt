@@ -11,6 +11,7 @@ local airtopiaSupport = false      -- Monitor keyword 'AT' for Airtopia devices 
 local panasonicSupport = false     -- Monitor keyword 'AC' for Panasonic devices - set to true if support is desired
 local environmentSupport = false   -- Monitor keyword 'ENV' for ESPHome environment sensors - set to true if support is desired
 
+--[[ NOTE: cbus/read/254 and cbus/write/254 HAVE CHANGED to cbus/read/0 and cbus/write/0 (done for imporoved efficiency). Clean up old topics using MQTT Explorer. --]]
 --[[ NOTE: !!!+++BREAKING CHANGE+++!!! Keywords for the lvl= tag have CHANGED. Use '/' instead of '-', and ':' where '/' was previously used. See the README for updated examples. --]]
 
 --[[
@@ -39,10 +40,10 @@ local mqttJunk = true        -- Whether to publish junk before a blank publish m
 --[[
 Timing variables. Adjust to taste if you know what you're doing. These provide a good compromise, but your deployment may vary.
 --]]
-local rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds
-local socketTimeout = 0.1    -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
+local socketTimeout = 0.2    -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 local mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 local ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
+local rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds (legacy firmware only)
 
 --[[
 Topic prefixes for read/write/publish. The mqttDiscovery topic is recommended to be set to 'homeassistant/'
@@ -66,6 +67,7 @@ local mqttDevices = {}       -- CBus groups to send MQTT topics for
 local ac = {}                -- AC device details
 local acDevices = {}         -- Quick lookup to determine whether an object is an AC device
 local acBoards = {}          -- All physical AC boards (esp32)
+local acSense = {}           -- Quick lookup for AC sensors
 local at = {}                -- AT device details
 local atDevices = {}         -- Quick lookup to determine whether an object is an AT device
 local atBoards = {}          -- All physical AT boards
@@ -100,8 +102,10 @@ local imgDefault = {         -- Defaults for images - Simple image name, or a ta
   ['under floor'] = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
   ['towel rail']  = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
   ['fan']         = {['sweep'] = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
+  ['exhaust']     = 'mdi:fan',
   ['gate']        = {['open'] = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
 }
+local acMsg = {['climate'] = true, ['select'] = true, ['sensor'] = true}
 
 local airtopiaCmds = {'power', 'fan', 'swing', 'mode', 'target_temperature'} -- All command topics (used for clean up)
 local atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
@@ -129,7 +133,6 @@ local function sleep(sec) socket.select(nil, nil, sec) end
 local function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring
 local function trim(s) if s ~= nil then return s:match "^%s*(.-)%s*$" else return nil end end -- Remove leading and trailing spaces
 local function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
-local function tNetAC(net) if net == 254 then return 0 else return net end end -- Translate CBus network numbering to AC
 local function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return i end -- Get number of dictionary members
 local function hasMembers(dict) local k; for k, _ in pairs(dict) do return true end return false end -- Get whether any dictionary members
 local function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end -- Find the index number of an array member
@@ -305,10 +308,9 @@ end
 --[[
 Publish lighting, user parameter and trigger objects to MQTT 
 --]]
-local function publish(net, app, group, level)
+local function publish(alias, net, app, group, level, noPre)
+  if noPre == nil then noPre = false end
   if level == nil then logger('Warning: Nil CBus level for '..net..'/'..app..'/'..group, FORCE); do return end end
-  local alias = net..'/'..app..'/'..group
-  local aAlias = tNetAC(net)..'/'..app..'/'..group
   local state = ''
   if cover[alias] then
     -- For CBus blind controllers report level unless it is 5, which is a preset for stop in level translation mode
@@ -318,18 +320,18 @@ local function publish(net, app, group, level)
     state = (tonumber(level) ~= 0) and 'ON' or 'OFF'
   end
   if not userParameter[alias] then
-    if not binarySensor[aAlias] then
-      if bSensor[aAlias] then -- It's a bSensor
+    if not binarySensor[alias] then
+      if bSensor[alias] then -- It's a bSensor
         client:publish(mqttReadTopic..alias..'/state', level, mqttQoS, RETAIN)
         logger('Publishing state '..mqttReadTopic..alias..' to '..level)
-      elseif selects[aAlias] then -- It's a select
+      elseif selects[alias] then -- It's a select
         local l
-        for _, l in ipairs(selects[aAlias].allLvl) do
+        for _, l in ipairs(selects[alias].allLvl) do
           if tonumber(level) <= l.lvl then
             if selectExact and tonumber(level) ~= l.lvl and app ~= 202 then
               -- Current CBus level does not match the select, so optionally adjust the CBus level
               logger('Warning: Forcing level to set for select '..alias..' to nearest level '..l.lvl..' ('..tonumber(level)..' requested, but selectExact=true)', FORCE)
-              SetCBusLevel(tNetAC(net), app, group, l.lvl, 0)
+              SetCBusLevel(net, app, group, l.lvl, 0)
               -- Adjusting the level will result in two MQTT publish events, which could be avoided but is not
             end
             client:publish(mqttReadTopic..alias..'/select', l.sel, mqttQoS, RETAIN)
@@ -338,7 +340,7 @@ local function publish(net, app, group, level)
             break
           end
         end
-      elseif button[aAlias] then -- It's a button, so do nothing as it has no state
+      elseif button[alias] then -- It's a button, so do nothing as it has no state
       else -- It's a bog standard group
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
         if level ~= -1 then client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN) end
@@ -356,15 +358,22 @@ local function publish(net, app, group, level)
     client:publish(mqttReadTopic..alias..'/state', v, mqttQoS, RETAIN)
     logger('Publishing value '..mqttReadTopic..alias..' to '..v)
   end
+  if not noPre then
+    if app ~= 202 then -- Not trigger
+      local p = level
+      if tonumber(level) ~= nil then p = string.format('%.3f', level) end
+      storage.set('pre'..alias, p) -- Save payload as 'previous' for use in the MQTT event-based script
+    end
+  end
 end
 
 --[[
 Publish measurement application objects to MQTT 
 --]]
-local function publishMeasurement(net, app, group, channel, value)
+local function publishMeasurement(alias, net, app, group, channel, value, noPre)
+  if noPre == nil then noPre = false end
   local units, v
-  local alias = net..'/'..app..'/'..group..'/'..channel
-  if value == nil then logger('Warning: Nil CBus measurement value for '..net..'/'..app..'/'..group, FORCE); do return end end
+  if value == nil then logger('Warning: Nil CBus measurement value for '..alias, FORCE); do return end end
   local adjust = publishAdj[alias]
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
   if includeUnits[alias] then
@@ -377,29 +386,36 @@ local function publishMeasurement(net, app, group, channel, value)
       v = v..' '..units
     end
   end
-  client:publish(mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/state', v, mqttQoS, RETAIN)
-  -- logger('Publishing measurement '..mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..' to '..v)
+  local mAlias = alias:gsub('/', '_'); mAlias = mAlias:gsub('_', '/', 2) -- Convert the last slash to an underscore
+  client:publish(mqttReadTopic..mAlias..'/state', v, mqttQoS, RETAIN)
+  -- logger('Publishing measurement '..mqttReadTopic..mAlias..' to '..v)
+  if not noPre and value ~= nil then
+    storage.set('pre'..alias, string.format('%.3f', value))
+  end
 end
 
 --[[
 Publish unit parameter objects to MQTT 
 --]]
-local function publishUnitParam(net, app, group, channel, value)
+local function publishUnitParam(alias, net, app, group, channel, value, noPre)
+  if noPre == nil then noPre = false end
   local units, v
-  local alias = net..'/'..app..'/'..group..'/'..channel
-  if value == nil then logger('Warning: Nil unit parameter value for '..net..'/'..app..'/'..group, FORCE); do return end end
+  if value == nil then logger('Warning: Nil unit parameter value for '..alias, FORCE); do return end end
   local adjust = publishAdj[alias]
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
-  client:publish(mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/state', v, mqttQoS, RETAIN)
-  logger('Publishing unit parameter '..mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..' to '..v)
+  local mAlias = alias:gsub('/', '_'); mAlias = mAlias:gsub('_', '/', 2) -- Convert the last slash to an underscore
+  client:publish(mqttReadTopic..mAlias..'/state', v, mqttQoS, RETAIN)
+  logger('Publishing unit parameter '..mqttReadTopic..mAlias..' to '..v)
+  if not noPre and value ~= nil then
+    storage.set('pre'..alias, string.format('%.3f', value))
+  end
 end
 
 --[[
 Publish Panasonic ESPHome objects to MQTT 
 --]]
-local function publishAc(net, app, group, level, select)
-  if level == nil then logger('Warning: Nil AC level for '..net..'/'..app..'/'..group, FORCE); do return end end
-  local alias = net..'/'..app..'/'..group
+local function publishAc(alias, level, select)
+  if level == nil then logger('Warning: Nil AC level for '..alias, FORCE); do return end end
   if ac[alias].state ~= level then
     if ignoreMqtt[alias] and (socket.gettime() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
       ignoreMqtt[alias] = nil
@@ -437,9 +453,8 @@ end
 --[[
 Publish Airtopia MODBUS objects to MQTT 
 --]]
-local function publishAt(net, app, group, level)
-  if level == nil then logger('Warning: Nil AT level for '..net..'/'..app..'/'..group, FORCE); do return end end
-  local alias = net..'/'..app..'/'..group
+local function publishAt(alias, level)
+  if level == nil then logger('Warning: Nil AT level for '..alias, FORCE); do return end end
   if at[alias].state ~= level then
     if ignoreMqtt[alias] and (socket.gettime() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
       ignoreMqtt[alias] = nil
@@ -468,7 +483,7 @@ local function publishAt(net, app, group, level)
         -- Publish swingha
         local o = atDevices[prefix..'-vert_swing']
         if o ~= nil then
-          parts = string.split(o, '/'); net = parts[1]; group = parts[3]; 
+          parts = string.split(o, '/'); local net = tonumber(parts[1]); local group = tonumber(parts[3]); 
           local v = bit.lshift(GetUserParam(net, group), 1)
           local topic = 'airtopia/'..prefix..'/state/swingha'
           local s = bit.bor(tonumber(level), v) + 1
@@ -478,7 +493,7 @@ local function publishAt(net, app, group, level)
         -- Publish swingha
         local o = atDevices[prefix..'-horiz_swing']
         if o ~= nil then
-          parts = string.split(o, '/'); net = parts[1]; group = parts[3]; 
+          parts = string.split(o, '/'); local net = tonumber(parts[1]); local group = tonumber(parts[3]); 
           local h = GetUserParam(net, group)
           local topic = 'airtopia/'..prefix..'/state/swingha'
           local v = bit.lshift(tonumber(level), 1)
@@ -506,31 +521,30 @@ end
 --[[
 Get level name and value
 --]]
-local function decodeLevel(alias, level, default)
-  local lvl, net, app, group
-  local parts = string.split(alias, '/'); net = parts[1]; app = parts[2]; group = parts[3]
-  if contains('/', level) then logger('Error: Legacy separator "/" being used for '..alias..'! Use ":" instead', FORCE) return nil, nil end
+local function decodeLevel(net, app, group, level, default)
+  if contains('/', level) then logger('Error: Legacy separator "/" being used for '..net..'/'..app..'/'..group..'! Use ":" instead', FORCE) return nil, nil end
   local parts = string.split(level, ':')
+  local lvl
   if #parts == 2 then -- A select option and level
     lvl = tonumber(parts[2])
-    if lvl < 0 or lvl > 255 then logger('Error: Invalid level for '..alias..', level '..lvl..', ignoring', FORCE) return nil, nil end
+    if lvl < 0 or lvl > 255 then logger('Error: Invalid level for '..net..'/'..app..'/'..group..', level '..lvl..', ignoring', FORCE) return nil, nil end
     return parts[1], lvl
   elseif #parts == 1 and tonumber(parts[1]) then -- Level numbers only
     lvl = tonumber(parts[1])
-    if lvl < 0 or lvl > 255 then logger('Error: Invalid level for '..alias..', level '..lvl..', ignoring', FORCE) return nil, nil end
-    parts[1] = GetCBusLevelTag(tNetAC(net), app, group, lvl)
+    if lvl < 0 or lvl > 255 then logger('Error: Invalid level for '..net..'/'..app..'/'..group..', level '..lvl..', ignoring', FORCE) return nil, nil end
+    parts[1] = GetCBusLevelTag(net, app, group, lvl)
     if parts[1] == nil then
       if default == nil then
-        logger('Error: No level tag for '..alias..', level '..lvl..' which is required when specifying numeric level only, so ignoring', FORCE) return nil, nil
+        logger('Error: No level tag for '..net..'/'..app..'/'..group..', level '..lvl..' which is required when specifying numeric level only, so ignoring', FORCE) return nil, nil
       else
         parts[1] = default
-        logger('Warning: Trigger '..alias..' has no level tag defined for level '..level..', setting to "'..default..'"', FORCE)
+        logger('Warning: Trigger '..net..'/'..app..'/'..group..' has no level tag defined for level '..level..', setting to "'..default..'"', FORCE)
       end
     end
     return parts[1], lvl
   elseif #parts == 1 then -- Level tags only
     lvl = GetCBusLevelAddress(net, app, group, parts[1])
-    if lvl == nil then logger('Error: Invalid level tag for '..alias..', level '..parts[1]..', so not adding and ignoring', FORCE) return nil end
+    if lvl == nil then logger('Error: Invalid level tag for '..net..'/'..app..'/'..group..', level '..parts[1]..', so not adding and ignoring', FORCE) return nil end
     return parts[1], lvl
   end
 end
@@ -571,8 +585,8 @@ local function addDiscover(net, app, group, channel, tags, name)
   local action, boid, dSa, payload, prefix, tag
   
   -- Build an alias to refer to each group
-  local aAlias = tNetAC(net)..'/'..app..'/'..group; if channel ~= nil then aAlias = aAlias..'/'..channel end -- Automation controller numbered networks
-  local alias = net..'/'..app..'/'..group -- CBus numbered networks
+  local alias = net..'/'..app..'/'..group
+  if channel ~= nil then alias = alias..'/'..channel end
 
   local allow = {
     ['light'] = {['getPayload'] = function()
@@ -585,18 +599,18 @@ local function addDiscover(net, app, group, channel, tags, name)
       cover[alias] = true
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
       end },
-    ['fan'] = {['getPayload'] = function() fan[aAlias] = true storeLevel[aAlias] = true return {
+    ['fan'] = {['getPayload'] = function() fan[alias] = true storeLevel[alias] = true return {
       stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pl_on = 'ON', pl_off = 'OFF', pr_modes = {'low', 'medium', 'high'},
       pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
       pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value == 0 %} OFF {% elif value == 86 %} low {% elif value == 170 %} medium {% elif value == 255 %} high {% endif %}'
     } end },
     ['fan_pct'] = {['getPayload'] = function()
-      dType = 'fan' fan[aAlias] = true storeLevel[aAlias] = true
+      dType = 'fan' fan[alias] = true storeLevel[alias] = true
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF', pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_stat_t = mqttReadTopic..alias..'/level', opt = true,}
       end },
     ['sensor'] = {['getPayload'] = function()
       local payload
-      if channel ~= nil then payload = { stat_t = mqttReadTopic..alias..'_'..channel..'/state', } alias = alias..'/'..channel else payload = { stat_t = mqttReadTopic..alias..'/state', } end
+      if channel ~= nil then payload = { stat_t = mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/state', } else payload = { stat_t = mqttReadTopic..alias..'/state', } end
       if _L.class ~= '' then payload.dev_cla = _L.class end
       if app == 250 then userParameter[alias] = true end
       if app == 255 then unitParameter[alias] = true end
@@ -606,34 +620,34 @@ local function addDiscover(net, app, group, channel, tags, name)
       return payload
       end },
     ['binary_sensor'] = {['getPayload'] = function()
-      binarySensor[aAlias] = true
+      binarySensor[alias] = true
       return {stat_t = mqttReadTopic..alias..'/state', pl_on = 'ON', pl_off = 'OFF',}
       end },
     ['bsensor'] = {['getPayload'] = function()
-      bSensor[aAlias] = true dType = 'sensor'
+      bSensor[alias] = true dType = 'sensor'
       return {stat_t = mqttReadTopic..alias..'/state', val_tpl = '{% if value | float == 0 %} '..off..' {% else %} '..on..' {% endif %}',}
       end },
     ['button'] = {['getPayload'] = function()
-      button[aAlias] = true
-      if lighting[tostring(app)] then lightingButton[aAlias] = true return {cmd_t = mqttWriteTopic..alias..'/press',} else return nil end
+      button[alias] = true
+      if lighting[tostring(app)] then lightingButton[alias] = true return {cmd_t = mqttWriteTopic..alias..'/press',} else return nil end
       end },
     ['select'] = {['getPayload'] = function()
-      if #_L.lvl == 0 then logger('Error: lvl= keyword not specified for select at '..aAlias..', which is required so ignoring', FORCE) return nil end
+      if #_L.lvl == 0 then logger('Error: lvl= keyword not specified for select at '..alias..', which is required so ignoring', FORCE) return nil end
       local level
       local options = {}
-      selects[aAlias] = {}
+      selects[alias] = {}
       for _, level in ipairs(_L.lvl) do
-        local opt, sel = decodeLevel(aAlias, level)
+        local opt, sel = decodeLevel(net, app, group, level)
         if opt ~= nil then
           options[#options + 1] = opt
-          selects[aAlias][opt] = sel
-          if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = { lvl = sel, sel = opt }
+          selects[alias][opt] = sel
+          if not selects[alias].allLvl then selects[alias].allLvl = {} end; selects[alias].allLvl[#selects[alias].allLvl + 1] = { lvl = sel, sel = opt }
         else
-          logger('Error: Invalid lvl= for select '..aAlias..', so not adding and ignoring', FORCE) return nil
+          logger('Error: Invalid lvl= for select '..alias..', so not adding and ignoring', FORCE) return nil
         end
-        -- if not selects[aAlias].allLvl then selects[aAlias].allLvl = {} end; selects[aAlias].allLvl[#selects[aAlias].allLvl + 1] = { lvl = tonumber(parts[2]), sel = parts[1] }
+        -- if not selects[alias].allLvl then selects[alias].allLvl = {} end; selects[alias].allLvl[#selects[alias].allLvl + 1] = { lvl = tonumber(parts[2]), sel = parts[1] }
       end
-      table.sort(selects[aAlias].allLvl, function (left, right) return left.lvl < right.lvl end)
+      table.sort(selects[alias].allLvl, function (left, right) return left.lvl < right.lvl end)
       return {stat_t = mqttReadTopic..alias..'/select', cmd_t = mqttWriteTopic..alias..'/select', options = options,}
       end },
   }
@@ -648,7 +662,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       if _L[k] then
         if type(_L[k]) == 'number' then _L[k] = tonumber(v)
         elseif type(_L[k]) == 'table' then
-          if contains('-', v) then logger('Error: Legacy separator "-" being used to separate list members '..aAlias..'! Use "/" instead', FORCE) return false end
+          if contains('-', v) then logger('Error: Legacy separator "-" being used to separate list members '..alias..'! Use "/" instead', FORCE) return false end
           _L[k] = string.split(v, '/')
           local tv for _, tv in ipairs(_L[k]) do tv = trim(tv) end
         else _L[k] = v end
@@ -675,27 +689,27 @@ local function addDiscover(net, app, group, channel, tags, name)
     if _L.img == '' then _L.img = 'mdi:lightbulb' end
   end
 
-  if dType == 'light' and app == 228 then dType = 'sensor'; logger('Warning: publishing '..aAlias..' as a sensor', FORCE) end -- Measurement app sensor with incorrect/missing type
-  if includeUnit then includeUnits[aAlias] = true logger('Including units for '..aAlias) else includeUnits[aAlias] = nil end
+  if dType == 'light' and app == 228 then dType = 'sensor'; logger('Warning: publishing '..alias..' as a sensor', FORCE) end -- Measurement app sensor with incorrect/missing type
+  if includeUnit then includeUnits[alias] = true logger('Including units for '..alias) else includeUnits[alias] = nil end
 
   -- Build an OID (measurement application gets a channel as well), also add to mqttDevices
-  local oid = 'cbus_mqtt_'..net..'_'.. app..'_'..group; if channel ~= nil then oid = oid..'_'..channel end;
-  mqttDevices[aAlias].oid = oid
+  local oid = 'cbus_mqtt_'..tNetCBus(net)..'_'.. app..'_'..group if channel ~= nil then oid = oid..'_'..channel end
+  mqttDevices[alias].oid = oid
 
   -- Handle the typical single device payload build
   payload = allow[dType].getPayload()
 
   if payload ~= nil then
-    mqttDevices[aAlias].type = dType -- If payload recieved than set the mqttDevices type, then move on to publish
+    mqttDevices[alias].type = dType -- If payload recieved than set the mqttDevices type, then move on to publish
   else
     -- Or if a nil payload so far then build and publish the trigger app buttons if applicable on all specific levels and publish as separate devices, and then return
     if dType == 'button' and app == 202 then
       local i
-      mqttDevices[aAlias].trigger = {}
-      mqttDevices[aAlias].type = 'button'
+      mqttDevices[alias].trigger = {}
+      mqttDevices[alias].type = 'button'
       if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels
       for _, i in ipairs(_L.lvl) do
-        local tag, lvl = decodeLevel(aAlias, i, publishNoLevel and 'Level '..i or nil)
+        local tag, lvl = decodeLevel(net, app, group, i, publishNoLevel and 'Level '..i or nil)
         if tag then
           boid = oid..'_'..lvl
           action = tag:gsub("%s+", "_"):lower()
@@ -731,14 +745,15 @@ local function addDiscover(net, app, group, channel, tags, name)
           local j = json.encode(payload)
           if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
           logger('Publishing '..mqttDiscoveryTopic..dType..'/'..boid..'/config as '.._L.pn..' in area '..dSa)
+          client:publish(mqttDiscoveryTopic..dType..'/'..boid..'/config', '', mqttQoS, RETAIN)
           client:publish(mqttDiscoveryTopic..dType..'/'..boid..'/config', j, mqttQoS, RETAIN)
-          table.insert(mqttDevices[aAlias].trigger, boid)
+          table.insert(mqttDevices[alias].trigger, boid)
         end
       end
       return true
 
     elseif dType == 'button' then
-      logger('Warning: MQTT button keyword used for unsupported application group '..aAlias..', so ignoring', FORCE)
+      logger('Warning: MQTT button keyword used for unsupported application group '..alias..', so ignoring', FORCE)
       return false
     end
   end
@@ -775,6 +790,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     local j = json.encode(payload)
     if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
     logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa)
+    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
     return true
   else
@@ -902,13 +918,13 @@ local function addAt(grps, found)
         local sa = atArea[v['dev']]; if sa == nil then sa = '' end
         local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
         local parts = string.split(v['alias'], '/')
-        local net = parts[1]; local app = parts[2]; local group = parts[3]
+        local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3])
         if v['func'] ~= '' then
           if not at[v['alias']] then
             at[v['alias']] = {}; addition = true
             at[v['alias']].name = sao..v['dev']..'-'..v['func']; at[v['alias']].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = v['alias'];
             if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
-            publishAt(net, app, group, GetUserParam(net, group))
+            publishAt(v['alias'], GetUserParam(net, group))
             atLog[v['dev']] = nil
             atLogGrp[v['alias']] = nil
           end
@@ -918,7 +934,7 @@ local function addAt(grps, found)
               at[v['alias']] = {}; addition = true
               at[v['alias']].name = sao..v['dev']..'-'..v['sense']; at[v['alias']].select = 'sense'; at[v['alias']].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = v['alias']
               atBoards[sao..v['dev']]['unit'] = v['unit']
-              publishAt(net, app, group, GetUserParam(net, group))
+              publishAt(v['alias'], GetUserParam(net, group))
               atLog[v['dev']] = nil
               atLogGrp[v['alias']] = nil
             end
@@ -1033,8 +1049,10 @@ local function cudAc(initial)
       	ac[alias].name = dev..'-'..sel; ac[alias].select = 'sel'; acDevices[dev..'-'..sel] = alias; acBoards[dev] = true
       elseif sense ~= '' then
         if not ac[alias] then ac[alias] = {}; addition = true end
-      	ac[alias].name = dev..'-'..sense; ac[alias].select = 'sense'; ac[alias].sense = sense; ac[alias].topic = topic; acDevices[dev..'-'..sense..'-sense'] = alias; acBoards[dev] = true
+      	ac[alias].name = dev..'-'..sense; ac[alias].select = 'sense'; ac[alias].sense = sense; ac[alias].topic = topic; acDevices[dev..'-'..sense..'-sense'] = alias; acBoards[dev] = true; acSense[dev..'-'..sense] = alias
       end
+      ac[alias].net = tonumber(net)
+      ac[alias].group = tonumber(group)
       acLogGrp[alias] = nil
     else
       if not acLogGrp[alias] then logger('Error: No device specified for Panasonic '..alias, FORCE); acLogGrp[alias] = true end
@@ -1193,7 +1211,7 @@ local function cudEnv(initial)
         func = n:lower():gsub("%s+", "_")
       end
       if not env[alias] then env[alias] = {}; addition = true end
-      env[alias].name = dev..'-'..func; envDevices[dev..'-'..func] = alias; envBoards[dev] = true
+      env[alias].name = dev..'-'..func; envDevices[dev..'-'..func] = {net, group, alias}; envBoards[dev] = true
       envLogGrp[alias] = nil
     else
       if not envLogGrp[alias] then logger('Error: No device specified for environment sensor '..alias, FORCE); envLogGrp[alias] = true end
@@ -1241,7 +1259,7 @@ local function cudCBusTopics()
         lvl = nil; local i; for i = 1,#v.keywords do local parts = string.split(v.keywords[i], '=');
           if parts[1] == 'lvl' then
             -- lvl = parts[2];
-            local pp = {} local l local p = string.split(parts[2], '/') for _, l in ipairs(p) do _, l = decodeLevel(alias, l) pp[#pp+1] = l end table.sort(pp) lvl = table.concat(pp,'/')
+            local pp = {} local l local p = string.split(parts[2], '/') for _, l in ipairs(p) do _, l = decodeLevel(net, app, group, l) pp[#pp+1] = l end table.sort(pp) lvl = table.concat(pp,'/')
             break
           end
         end
@@ -1258,7 +1276,7 @@ local function cudCBusTopics()
           local i, olvl = ''; for i = 1,#oldTags do local parts = string.split(oldTags[i], '=')
             if parts[1] == 'lvl' then
               -- olvl = parts[2]
-              local pp = {} local l local p = string.split(parts[2], '/') for _, l in ipairs(p) do _, l = decodeLevel(alias, l) pp[#pp+1] = l end table.sort(pp) olvl = table.concat(pp,'/')
+              local pp = {} local l local p = string.split(parts[2], '/') for _, l in ipairs(p) do _, l = decodeLevel(net, app, group, l) pp[#pp+1] = l end table.sort(pp) olvl = table.concat(pp,'/')
               break
             end
           end
@@ -1297,7 +1315,7 @@ local function cudCBusTopics()
           for tk, tv in pairs(triggers[tonumber(parts[3])]) do
             if t == tv then act = tk break end
           end
-          t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
+          t = mqttWriteTopic..k..'/'..act..'/press'
           if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
           client:publish(t, '', mqttQoS, RETAIN)
         end
@@ -1313,7 +1331,7 @@ local function cudCBusTopics()
               if trigger then
                 topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
                 client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic for '..topic..' (trigger level '..lvl..')', FORCE)
-                t = mqttWriteTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..act..'/press'
+                t = mqttWriteTopic..k..'/'..act..'/press'
                 if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
                 client:publish(t, '', mqttQoS, RETAIN)
                 triggers[group][act] = nil
@@ -1328,11 +1346,11 @@ local function cudCBusTopics()
         local count
         _, count = k:gsub('/','')
         if count == 3 then -- Measurement application
-          local t = tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]..'/'..parts[4]
+          local t = k
           t = t:gsub('/', '_'); t = t:gsub('_', '/', 2) -- Convert the last slash to an underscore
           topic = mqttReadTopic..t;
         else
-          topic = mqttReadTopic..tNetCBus(tonumber(parts[1]))..'/'..parts[2]..'/'..parts[3]
+          topic = mqttReadTopic..k
         end
         if mqttJunk then client:publish(topic..'/state', 'junk', mqttQoS, RETAIN) end
         client:publish(topic..'/state', '', mqttQoS, RETAIN)
@@ -1360,28 +1378,29 @@ local function outstandingPublish()
   local u
   local failed = 0
   for _, u in ipairs(unpublished) do
-    if not addDiscover(tNetCBus(u.net), u.app, u.group, u.channel, u.tags, u.name) then failed = failed + 1 end
+    if not addDiscover(u.net, u.app, u.group, u.channel, u.tags, u.name) then failed = failed + 1 end
     local alias = u.net..'/'..u.app..'/'..u.group
-    -- storage.set('pre'..alias, nil) -- Un-comment to clear out all previous values for testing
     -- Measurement application
     if u.app == 228 then
+      alias = alias..'_'..u.channel
       local level = nil; pcall(function () level = GetCBusMeasurement(u.net, u.group, u.channel) end)
-      if level ~= nil then publishMeasurement(tNetCBus(u.net), u.app, u.group, u.channel, level) end
+      if level ~= nil then publishMeasurement(alias, u.net, u.app, u.group, u.channel, level, true) end
     -- User parameters
-    elseif u.app == 250 then publish(tNetCBus(u.net), u.app, u.group, GetUserParam(u.net, u.group))
+    elseif u.app == 250 then publish(alias, u.net, u.app, u.group, GetUserParam(u.net, u.group), true)
     elseif u.app == 255 then
+      alias = alias..'_'..u.channel
       local level = nil; pcall(function () level = GetUnitParameter(u.net, u.group, u.channel) end)
-      if level ~= nil then publishUnitParam(tNetCBus(u.net), u.app, u.group, u.channel, level) end
+      if level ~= nil then publishUnitParam(alias, u.net, u.app, u.group, u.channel, level, true) end
     -- Lighting and other
     else
-      if not lightingButton[alias] then -- Do nothing for lighting buttons
+      if not lightingButton[u.net..'/'..u.app..'/'..u.group] then -- Do nothing for lighting buttons
         local level = nil;
         if u.app == 202 then
           pcall(function () level = GetTriggerLevel(u.group) end)
         else
           pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
         end
-       if level ~= nil then publish(tNetCBus(u.net), u.app, u.group, level) end
+       if level ~= nil then publish(alias, u.net, u.app, u.group, level, true) end
       end
     end
   end
@@ -1427,7 +1446,7 @@ local function outstandingMqttMessage()
     -- Messages from CBus write topics
     if parts[1] == 'cbus' and parts[2] == 'write' then
 
-      local net = tNetAC(tonumber(parts[3])); local app = tonumber(parts[4]); local group = tonumber(parts[5])
+      local net = tonumber(parts[3]) local app = tonumber(parts[4]) local group = tonumber(parts[5])
       local alias = net..'/'..app..'/'..group
       logger(topic..' to '..payload)
 
@@ -1517,24 +1536,35 @@ local function outstandingMqttMessage()
         end
       end
 
-    -- Messages from AC board select/sensor topics
-    elseif panasonicSupport and parts[2] == 'climate' or parts[2] == 'select' or parts[2] == 'sensor' then
-      local sel = 'func'
-      -- for loop finding items parts[2] or parts[3] matches a 'sense'... is topic important??? Prolly not...
-      for _, a in pairs(ac) do
-        if a.sense and (a.sense == parts[3] or a.sense == parts[4]) and a.topic == parts[2] then
-          sel = 'sense'
-          if a.sense == parts[3] then device = parts[1]..'-'..parts[3]..'-sense'
-          elseif a.sense == parts[4] then device = parts[1]..'-'..parts[4]..'-sense' end
-          break
+      -- Messages from ENV board sensor topics - simpler, only messages inbound
+    elseif environmentSupport and envBoards[parts[1]] and parts[2] == 'sensor' and parts[4] == 'state' then
+      device = parts[1]..'-'..parts[3]
+      if envDevices[device] then
+        local extant = GetUserParam(envDevices[device][1], envDevices[device][2])
+        if type(extant) == 'number' then
+          -- Deal with real number imprecision, assuming three decimal places for change detection
+          if string.format('%.3f', extant) ~= string.format('%.3f', tonumber(payload)) then SetUserParam(envDevices[device][1], envDevices[device][2], payload) end
+        else
+          if extant ~= payload then SetUserParam(net, group, payload) end
         end
+        env[envDevices[device][3]].state = payload
       end
-      if parts[2] == 'select' then sel = 'sel' end
+
+    -- Messages from AC board select/sensor topics
+    elseif panasonicSupport and acBoards[parts[1]] and acMsg[parts[2]] then
+      local sel = 'func'
+      if parts[2] == 'select' then
+        sel = 'sel'
+      else
+        local a = acSense[parts[1]..'-'..parts[3]] if a and ac[a].sense == parts[3] and ac[a].topic == parts[2] then sel = 'sense' device = parts[1]..'-'..parts[3]..'-sense' end
+        if not a then if parts[4] then a = acSense[parts[1]..'-'..parts[4]] end if a and ac[a].sense == parts[4] and ac[a].topic == parts[2] then sel = 'sense' device = parts[1]..'-'..parts[4]..'-sense' end end
+      end
       if sel == 'func' then device = parts[1]..'-'..parts[4] elseif sel == 'select' then device = parts[1]..'-'..parts[3] end
-      local net, app, group
+      local net, group
       if acDevices[device] then
         local alias = acDevices[device]
-        local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
+        net = ac[alias].net
+        group = ac[alias].group
         if (sel == 'func' and parts[5] == 'state') or (sel == 'sel' and parts[4] == 'state') or sel == 'sense' then
           if ignoreCbus[alias] and socket.gettime() - ignoreCbus[alias] > ignoreTimeout then -- Don't worry about older 'ignore' flags
             ignoreCbus[alias] = nil
@@ -1664,24 +1694,6 @@ local function outstandingMqttMessage()
     elseif airtopiaSupport and parts[1] == 'airtopia' and parts[3] == 'state' then
       if indexOf(airtopiaStates, parts[4]) == nil then table.insert(airtopiaStates, parts[4]) end
     end
-    
-    -- Messages from ENV board sensor topics - simpler, only messages inbound
-    if environmentSupport and parts[2] == 'sensor' and parts[4] == 'state' then
-      device = parts[1]..'-'..parts[3]
-      if envDevices[device] then
-        parts = string.split(envDevices[device], '/')
-        local net = parts[1]; local app = parts[2]; local group = parts[3]
-        local alias = net..'/'..app..'/'..group
-        local extant = GetUserParam(net, group)
-        if type(extant) == 'number' then
-          -- Deal with real number imprecision, assuming three decimal places for change detection
-          if string.format('%.3f', extant) ~= string.format('%.3f', tonumber(payload)) then SetUserParam(net, group, payload) end
-        else
-          if extant ~= payload then SetUserParam(net, group, payload) end
-        end
-        env[alias].state = payload
-      end
-    end
     ::next::
   end
   mqttMessages = {}
@@ -1708,11 +1720,11 @@ local function outstandingCbusMessage()
     local alias = parts[1]..'/'..parts[2]..'/'..parts[3]
     
     if panasonicSupport and ac[alias] then -- AC message to MQTT (no ramping involved for AC groups)
-      publishAc(parts[1], parts[2], parts[3], parts[4], ac[alias].select)
+      publishAc(alias, parts[4], ac[alias].select)
     elseif airtopiaSupport and at[alias] then -- AT message to MQTT (no ramping involved for AT groups)
-      publishAt(parts[1], parts[2], parts[3], parts[4])
+      publishAt(alias, parts[4])
     else -- CBus message to MQTT
-      local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
+      local net = tonumber(parts[1]) local app = tonumber(parts[2]) local group = tonumber(parts[3]);
       if app ~= 228 and app ~= 255 then -- i.e. not measurement application
         local setting = true
         local payload = tonumber(parts[4]) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
@@ -1760,42 +1772,21 @@ local function outstandingCbusMessage()
                 ramp[alias] = nil
                 logger('Clear ramp for '..alias)
                 -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
-                publish(tNetCBus(net), app, group, payload)
-                if app ~= 202 then -- Not trigger
-                  local p = payload
-                  if tonumber(payload) ~= nil then p = string.format('%.3f', payload) end
-                  storage.set('pre'..alias, p) -- Save payload as 'previous' for use in the MQTT event-based script
-                end
+                publish(alias, net, app, group, payload)
               end
             else
-              publish(tNetCBus(net), app, group, payload)
-              if app ~= 202 then -- Not trigger
-                local p = payload
-                if tonumber(payload) ~= nil then p = string.format('%.3f', payload) end
-                storage.set('pre'..alias, p) -- Save payload as 'previous' for use in the MQTT event-based script
-              end
+              publish(alias, net, app, group, payload)
             end
           else
-            publish(tNetCBus(net), app, group, payload)
-            if app ~= 202 then -- Not trigger
-              local p = payload
-              if tonumber(payload) ~= nil then p = string.format('%.3f', payload) end
-              storage.set('pre'..alias, p) -- Save payload as 'previous' for use in the MQTT event-based script
-            end
+            publish(alias, net, app, group, payload)
           end
         end
       elseif app == 255 then -- Special case for unit param
-        publishUnitParam(tNetCBus(tonumber(parts[1])), tonumber(parts[2]), tonumber(parts[3]), tonumber(parts[4]), tonumber(parts[5]))
-        if tonumber(parts[5]) ~= nil then
-          local p = string.format('%.3f', tonumber(parts[5]))
-          storage.set('pre'..parts[1]..'/'..parts[2]..'/'..parts[3]..'/'..parts[4], p)
-        end
+        alias = alias..'/'..parts[4]
+        publishUnitParam(alias, net, app, group, tonumber(parts[4]), tonumber(parts[5]))
       elseif app == 228 then -- Special case for measurement app
-        publishMeasurement(tNetCBus(tonumber(parts[1])), tonumber(parts[2]), tonumber(parts[3]), tonumber(parts[4]), tonumber(parts[5]))
-        if tonumber(parts[5]) ~= nil then
-          local p = string.format('%.3f', tonumber(parts[5]))
-          storage.set('pre'..parts[1]..'/'..parts[2]..'/'..parts[3]..'/'..parts[4], p)
-        end
+        alias = alias..'/'..parts[4]
+        publishMeasurement(alias, net, app, group, tonumber(parts[4]), tonumber(parts[5]))
       end
     end
   end
@@ -1815,11 +1806,8 @@ local function checkRampOrphans()
       -- Will occur when a ramp to off does not begin with a zero level during the ramp, or if a ramp to zero starts when the group is already at zero.
       table.insert(orphan, k)
       local parts = string.split(k, '/')
-      local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3]);
-      publish(tNetCBus(net), app, group, v.target)
-      local p = v.target
-      if tonumber(p) ~= nil then p = string.format('%.3f', p) end
-      storage.set('pre'..k, p) -- Save payload as 'previous' for use in the MQTT event-based script
+      local net = tonumber(parts[1]) local app = tonumber(parts[2]) local group = tonumber(parts[3])
+      publish(k, net, app, group, v.target)
     end
   end
   for _, k in ipairs(orphan) do ramp[k] = nil; logger('Removing orphaned ramp for '..k) end
@@ -1859,7 +1847,7 @@ local function checkHeartbeat()
       return true
     end
   end
-  return True
+  return true
 end
 
 
@@ -1951,8 +1939,8 @@ while true do
       stat, err = pcall(outstandingAtPublish)
       if not stat then logger('Error publishing outstanding Airtopia discovery topics: '..err, FORCE); unpublishedAt = {} end -- Log error and clear the queue, continue
     end
-    if hasMembers(ramp) then
-      -- Some scenarios can create ramp orphans
+    if legacyFirmware and hasMembers(ramp) then
+      -- Some scenarios can create ramp orphans when using a legacy firmware setup
       stat, err = pcall(checkRampOrphans)
       if not stat then logger('Error checking ramp orphans: '..err, FORCE) end -- Log and continue
     end
