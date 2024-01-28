@@ -3,7 +3,7 @@ CBus Automation Controller integration: Home Assistant, MQTT, Philips Hue and mo
 
 Functions:
 - Get Home Assistant talking to CBus, with MQTT discovery to eliminate any manual CBus config in HA
-- Return to previously set lighting levels when a 'turn on' command is issued in HA
+- Optionally return to previously set lighting levels when a 'turn on' command is issued (supports very old versions of HA)
 - Optionally include Philips Hue hub devices in CBus scenes, like having 'All Off' from a button or using AC visualisations
 - Optionally Panasonic air conditioners via ESPHome
 - Optionally ESPHome sensors for temperature and relative humidity (example .yaml files are for this.)
@@ -32,15 +32,15 @@ LUA scripts for the automation controller (the script names *MQTT* and *MQTT fin
 
 If you don't care for integrating Philips Hue, Panasonic or Airtopia, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there in 'MQTT send receive' and will just be unused.
 
-**Note**: Automation controller firmware >= 1.10.0 <= 1.14.0 contain a bug that requires *Hue final work-around* to be used. This is fixed in 1.15.0+, so use *HUE final*.
-
 **Note**: A change to the discovery behaviour has been made to accommodate a non-breaking change in HA 2023.8, which will become breaking in 2024.2. CBus devices are now created using a blank entity name to end up with a sole entity for each device, in line with the HA naming standards.
+
+**Note**: For Philips Hue, automation controller firmware >= 1.10.0 <= 1.14.0 contain a bug that requires *Hue final work-around* to be used. This is fixed in 1.15.0+, so use *HUE final*.
 
 ## About errors
 
 If you get errors in the log (error or event log), then feel free to raise an issue and I'll try to help.
 
-Warnings are also thrown for obvious code defects that are encountered. If you get something like 'Warning: Read undeclared global variable "acState"' then *definitely* raise an issue.
+Warnings are also thrown for obvious code defects that are encountered. If you get something like 'Warning: Read undeclared global variable "someVariableName"' then *definitely* raise an issue.
 
 ## Keywords used for Automation Controller objects
 Automation controller object keywords are used to tell the scripts which objects to use, publish, and how they should be used. This varies based on circumstance, as described below.
@@ -89,14 +89,15 @@ CBus fan controller objects can use either 'fan' or 'fan_pct' keywords. The form
 The image keyword img= will default to several different "likely" values based on name or preferred name keywords. If the script gets it wrong, then add an img= keyword, or contact me by raising an issue for cases where it's stupidly wrong or where other defaults would be handy. Default is mdi:lightbulb for lighting groups. Here's the current set...
 
 ```
-declare('imgDefault', { -- Defaults for images - Simple image name, or a set of 'also contains' keywords (which must include an #else entry)
+local imgDefault = { -- Defaults for images - Simple image name, or a table of 'also contains' keywords (which must include an #else entry)
   ['heat']        = 'mdi:radiator',
   ['blind']       = 'mdi:blinds',
   ['under floor'] = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
   ['towel rail']  = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
   ['fan']         = {['sweep'] = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
+  ['exhaust']     = 'mdi:fan',
   ['gate']        = {['open'] = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
-})
+}
 ```
 
 Keyword examples:
@@ -105,14 +106,14 @@ Keyword examples:
 - MQTT, switch, sa=Bathroom 1, img=mdi:radiator, 
 - MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 - MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
-- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=0/137/255, 
-- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed/Half open/Open, 
-- MQTT, select, sa=Bathroom 2, img=mdi:blinds, lvl=Closed:0/Half open:137/Open:255, 
+- MQTT, select, sa=Bathroom 2, lvl=0/137/255, 
+- MQTT, select, sa=Bathroom 2, lvl=Closed/Half open/Open, 
+- MQTT, select, sa=Bathroom 2, lvl=Closed:0/Half open:137/Open:255, 
 - MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
 - MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
 - MQTT, button, sa=Entry / Egress, lvl=0/1/2/5/127, pn=Inside      *(a trigger control group with various levels)*
+- MQTT, button, sa=Outside, img=mdi:gate-open,      *(a lighting group button to open a gate)*
 - MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
-- MQTT, button, sa=Outside, img=mdi:gate-open,    *(a lighting group button to open a gate)*
 
 For the bsensor example of a carport motion sensor, set up a CBus group address on the PIR unit to trigger on movement with a short timer like 5s in a block entry and then add the MQTT keywords to that group.
 
