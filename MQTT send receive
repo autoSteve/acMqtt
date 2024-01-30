@@ -11,7 +11,7 @@ local airtopiaSupport = false      -- Monitor keyword 'AT' for Airtopia devices 
 local panasonicSupport = false     -- Monitor keyword 'AC' for Panasonic devices - set to true if support is desired
 local environmentSupport = false   -- Monitor keyword 'ENV' for ESPHome environment sensors - set to true if support is desired
 
---[[ NOTE: cbus/read/254 and cbus/write/254 HAVE CHANGED to cbus/read/0 and cbus/write/0 (done for imporoved efficiency). Clean up old topics using MQTT Explorer. --]]
+--[[ NOTE: cbus/read/254 and cbus/write/254 HAVE CHANGED to cbus/read/0 and cbus/write/0 (done for improved efficiency). Clean up old topics using MQTT Explorer. --]]
 --[[ NOTE: !!!+++BREAKING CHANGE+++!!! Keywords for the lvl= tag have CHANGED. Use '/' instead of '-', and ':' where '/' was previously used. See the README for updated examples. --]]
 
 --[[
@@ -61,6 +61,7 @@ Variables not to be messed with unless you definitely know what you're doing.
 local EVENTVERSION = 3       -- MQTT/MQTT final event script compatible version
 local discovery = {}         -- MQTT discovery topics lookup
 local discoveryDelete = {}   -- If duplicate discovery topics are detected on startup then they will be removed
+local discoveryName = {}     -- Device names (used for rename detection)
 local atDiscovery = {}       -- AT discovery topics lookup
 local atDiscoveryDelete = {} -- If duplicate discovery topics are detected on startup then they will be removed
 local mqttDevices = {}       -- CBus groups to send MQTT topics for
@@ -85,7 +86,7 @@ local cover = {}             -- Quick lookup to determine whether an object is a
 local fan = {}               -- Quick lookup to determine whether an object is a fan (sweep fan)
 local bSensor = {}           -- Quick lookup to determine whether an object is a bsensor (a regular lighting group acting as status)
 local binarySensor = {}      -- Quick lookup to determine whether an object is a binary sensor
-local button = {}            -- Quick lookup to determine whether an object is a binary sensor
+local button = {}            -- Quick lookup to determine whether an object is a button
 local lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
 local userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 local unitParameter = {}     -- Quick lookup to determine whether an object is a unit parameter
@@ -136,6 +137,7 @@ local function tNetCBus(net) if net == 0 then return 254 else return net end end
 local function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return i end -- Get number of dictionary members
 local function hasMembers(dict) local k; for k, _ in pairs(dict) do return true end return false end -- Get whether any dictionary members
 local function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end -- Find the index number of an array member
+local function lastSlashToUnderscore(alias) local cnt alias, cnt = alias:gsub('/', '_') return alias:gsub('_', '/', cnt-1) end -- Convert the last slash character to an underscore
 local function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
   if type(obj) ~= 'table' then return obj end
   if seen and seen[obj] then return seen[obj] end
@@ -253,6 +255,7 @@ else
   end
 end
 
+
 --[[
 UDP listener - receive messages from CBus level change event scripts
 --]]
@@ -296,6 +299,7 @@ client.ON_MESSAGE = function(mid, topic, payload)
           discoveryDelete[parts[3]..'/'..parts[2]] = true
         else
           discovery[parts[3]] = parts[2] -- Table of CBus addresses with type as the value
+          discoveryName[parts[3]] = payload.dev.name -- Used for rename detection
         end
       end
     end
@@ -386,7 +390,7 @@ local function publishMeasurement(alias, net, app, group, channel, value, noPre)
       v = v..' '..units
     end
   end
-  local mAlias = alias:gsub('/', '_'); mAlias = mAlias:gsub('_', '/', 2) -- Convert the last slash to an underscore
+  local mAlias = lastSlashToUnderscore(alias)
   client:publish(mqttReadTopic..mAlias..'/state', v, mqttQoS, RETAIN)
   -- logger('Publishing measurement '..mqttReadTopic..mAlias..' to '..v)
   if not noPre and value ~= nil then
@@ -403,7 +407,7 @@ local function publishUnitParam(alias, net, app, group, channel, value, noPre)
   if value == nil then logger('Warning: Nil unit parameter value for '..alias, FORCE); do return end end
   local adjust = publishAdj[alias]
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
-  local mAlias = alias:gsub('/', '_'); mAlias = mAlias:gsub('_', '/', 2) -- Convert the last slash to an underscore
+  local mAlias = lastSlashToUnderscore(alias)
   client:publish(mqttReadTopic..mAlias..'/state', v, mqttQoS, RETAIN)
   logger('Publishing unit parameter '..mqttReadTopic..mAlias..' to '..v)
   if not noPre and value ~= nil then
@@ -695,12 +699,59 @@ local function addDiscover(net, app, group, channel, tags, name)
   -- Build an OID (measurement application gets a channel as well), also add to mqttDevices
   local oid = 'cbus_mqtt_'..tNetCBus(net)..'_'.. app..'_'..group if channel ~= nil then oid = oid..'_'..channel end
   mqttDevices[alias].oid = oid
+  mqttDevices[alias].net = net
+  mqttDevices[alias].app = app
+  mqttDevices[alias].group = group
+  if channel then mqttDevices[alias].channel = channel end
+
+  local function getEntity(entity)
+    if _L.sa ~= '' then
+      local startIdx, endIdx
+      repeat
+        startIdx, endIdx = entity:find(_L.sa, 1, true)
+        if startIdx and startIdx == 1 then
+          entity = entity:sub(endIdx + 1):match'^%s*(.*)'
+        end
+      until not startIdx or startIdx > 1
+    end
+    return entity
+  end
+
+  local function addCommonPayload(payload, oid, entity)
+    -- Add payload common to all
+    payload.name = ''
+    payload.obj_id = oid
+    payload.uniq_id = oid
+    payload.avty_t = mqttCbus..'status'
+    payload.dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
+    if _L.img ~= '' then payload.ic = _L.img end
+    return payload
+  end
+
+  local function removeOld(dType, oid)
+    -- If dType has changed for an existing discovery topic then remove the previous topic
+    local oldDiscovery = discovery[oid]
+    if oldDiscovery ~= nil and oldDiscovery ~= dType then
+      client:publish(mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config', '', mqttQoS, RETAIN)
+      logger('Removed discovery topic '..mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config')
+    end
+    discovery[oid] = dType
+  end
+
+  local function publish(payload, oid, entity)
+    -- Publish to MQTT broker
+    local j = json.encode(payload)
+    if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
+    logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa)
+    if discoveryName[oid] ~= nil and discoveryName[oid] ~= entity then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end
+    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
+  end
 
   -- Handle the typical single device payload build
   payload = allow[dType].getPayload()
 
   if payload ~= nil then
-    mqttDevices[alias].type = dType -- If payload recieved than set the mqttDevices type, then move on to publish
+    mqttDevices[alias].type = dType -- If payload recieved then set the mqttDevices type, then move on to publish
   else
     -- Or if a nil payload so far then build and publish the trigger app buttons if applicable on all specific levels and publish as separate devices, and then return
     if dType == 'button' and app == 202 then
@@ -712,46 +763,18 @@ local function addDiscover(net, app, group, channel, tags, name)
         local tag, lvl = decodeLevel(net, app, group, i, publishNoLevel and 'Level '..i or nil)
         if tag then
           boid = oid..'_'..lvl
-          action = tag:gsub("%s+", "_"):lower()
+          table.insert(mqttDevices[alias].trigger, boid)
+          action = tag:gsub("%s+", "_"):lower() -- Replace spaces with underscores
           if triggers[group] == nil then triggers[group] = {} end
           triggers[group][action] = lvl
           if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
-          local entity = prefix..tag
-          if _L.sa ~= '' then
-            local startIdx, endIdx
-            repeat
-              startIdx, endIdx = entity:find(_L.sa, 1, true)
-              if startIdx and startIdx == 1 then
-                entity = entity:sub(endIdx + 1):match'^%s*(.*)'
-              end
-            until not startIdx or startIdx > 1
-          end
-          payload = {
-            name = '',
-            obj_id = boid,
-            uniq_id = boid,
-            cmd_t = mqttWriteTopic..alias..'/'..action..'/press',
-            dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' },
-          }
-          if _L.img ~= '' then payload.ic = _L.img end
-          local oldDiscovery = discovery[boid]
-          discovery[boid] = dType
-          -- If dType has changed for an existing discovery topic then remove the previous topic
-          if oldDiscovery ~= nil and oldDiscovery ~= dType then
-            client:publish(mqttDiscoveryTopic..oldDiscovery..'/'..boid..'/config', '', mqttQoS, RETAIN)
-            logger('Removed discovery topic'..mqttDiscoveryTopic..oldDiscovery..'/'..boid..'/config')
-          end
-          -- Publish to MQTT broker
-          local j = json.encode(payload)
-          if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
-          logger('Publishing '..mqttDiscoveryTopic..dType..'/'..boid..'/config as '.._L.pn..' in area '..dSa)
-          client:publish(mqttDiscoveryTopic..dType..'/'..boid..'/config', '', mqttQoS, RETAIN)
-          client:publish(mqttDiscoveryTopic..dType..'/'..boid..'/config', j, mqttQoS, RETAIN)
-          table.insert(mqttDevices[alias].trigger, boid)
+          local entity = getEntity(prefix..tag)
+          payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity)
+          removeOld(dType, boid)
+          publish(payload, boid, entity)
         end
       end
       return true
-
     elseif dType == 'button' then
       logger('Warning: MQTT button keyword used for unsupported application group '..alias..', so ignoring', FORCE)
       return false
@@ -759,39 +782,10 @@ local function addDiscover(net, app, group, channel, tags, name)
   end
 
   if payload ~= nil then
-    -- Add payload common to all
-    local entity = _L.pn
-    if _L.sa ~= '' then
-      local startIdx, endIdx
-      repeat
-        startIdx, endIdx = entity:find(_L.sa, 1, true)
-        if startIdx and startIdx == 1 then
-          entity = entity:sub(endIdx + 1):match'^%s*(.*)'
-        end
-      until not startIdx or startIdx > 1
-    end 
-    payload.name = ''
-    payload.obj_id = oid
-    payload.uniq_id = oid
-    payload.avty_t = mqttCbus..'status'
-    payload.dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
-    if _L.img ~= '' then payload.ic = _L.img end
-
-    local oldDiscovery = discovery[oid]
-    discovery[oid] = dType
-
-    -- If dType has changed for an existing discovery topic then remove the previous topic
-    if oldDiscovery ~= nil and oldDiscovery ~= dType then
-      client:publish(mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config', '', mqttQoS, RETAIN)
-      logger('Removed discovery topic '..mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config')
-    end
-
-    -- Publish to MQTT broker
-    local j = json.encode(payload)
-    if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
-    logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa)
-    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
-    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
+    local entity = getEntity(_L.pn)
+    payload = addCommonPayload(payload, oid, entity)
+    removeOld(dType, oid)
+    publish(payload, oid, entity)
     return true
   else
     logger('Warning: a publish payload for '..name..' could not be built, so not published', FORCE)
@@ -1230,6 +1224,7 @@ local function cudEnv(initial)
   end
 end
 
+
 --[[
 Create / update / delete CBus MQTT discovery topics
 --]]
@@ -1258,7 +1253,6 @@ local function cudCBusTopics()
       if mqttDevices[alias].tags ~= curr then -- Modified group
         lvl = nil; local i; for i = 1,#v.keywords do local parts = string.split(v.keywords[i], '=');
           if parts[1] == 'lvl' then
-            -- lvl = parts[2];
             local pp = {} local l local p = string.split(parts[2], '/') for _, l in ipairs(p) do _, l = decodeLevel(net, app, group, l) pp[#pp+1] = l end table.sort(pp) lvl = table.concat(pp,'/')
             break
           end
@@ -1275,7 +1269,6 @@ local function cudCBusTopics()
           local oldTags = string.split(mqttDevices[alias].tags, ',')
           local i, olvl = ''; for i = 1,#oldTags do local parts = string.split(oldTags[i], '=')
             if parts[1] == 'lvl' then
-              -- olvl = parts[2]
               local pp = {} local l local p = string.split(parts[2], '/') for _, l in ipairs(p) do _, l = decodeLevel(net, app, group, l) pp[#pp+1] = l end table.sort(pp) olvl = table.concat(pp,'/')
               break
             end
@@ -1302,9 +1295,10 @@ local function cudCBusTopics()
   for k, v in pairs(mqttDevices) do
     local topic, oid, trigger
     local f = false; for _, vv in ipairs(found) do if k == vv then f = true; break end end
+    local parts = string.split(k, '/')
+    local group = tonumber(parts[3])
     if not f then
       table.insert(kill, k)
-      local parts = string.split(k, '/')
       if parts[2] == '202' and v.type == 'button' then
         for _, trigger in ipairs(v.trigger) do
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
@@ -1312,33 +1306,12 @@ local function cudCBusTopics()
           local t = tonumber(string.match(trigger, '_(%w+)$'))
           local act
           local tk, tv
-          for tk, tv in pairs(triggers[tonumber(parts[3])]) do
+          for tk, tv in pairs(triggers[group]) do
             if t == tv then act = tk break end
           end
           t = mqttWriteTopic..k..'/'..act..'/press'
           if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
           client:publish(t, '', mqttQoS, RETAIN)
-        end
-        -- Handle trigger level removal
-        if lvlDelete[k] ~= nil and triggers[group] then
-          for _, lvl in ipairs(lvlDelete[k]) do
-            local a, i, t, act = nil
-            for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
-            local remove = nil
-            if act then
-              trigger = nil
-              for i, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; remove = i; break end end
-              if trigger then
-                topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
-                client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic for '..topic..' (trigger level '..lvl..')', FORCE)
-                t = mqttWriteTopic..k..'/'..act..'/press'
-                if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
-                client:publish(t, '', mqttQoS, RETAIN)
-                triggers[group][act] = nil
-              end
-              if remove then table.remove(v.trigger, remove) end
-            end
-          end
         end
       else
         topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
@@ -1364,6 +1337,28 @@ local function cudCBusTopics()
         end
         includeUnits[alias] = nil
       end
+    else
+      -- Handle trigger level removal
+      if lvlDelete[k] ~= nil and triggers[group] then
+        for _, lvl in ipairs(lvlDelete[k]) do
+          local a, i, t, act = nil
+          for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
+          local remove = nil
+          if act then
+            trigger = nil
+            for i, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; remove = i; break end end
+            if trigger then
+              topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
+              client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic for '..topic..' (trigger level '..lvl..')', FORCE)
+              t = mqttWriteTopic..k..'/'..act..'/press'
+              if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
+              client:publish(t, '', mqttQoS, RETAIN)
+              triggers[group][act] = nil
+            end
+            if remove then table.remove(v.trigger, remove) end
+          end
+        end
+      end
     end
   end
   for _, k in ipairs(kill) do mqttDevices[k] = nil end
@@ -1382,13 +1377,13 @@ local function outstandingPublish()
     local alias = u.net..'/'..u.app..'/'..u.group
     -- Measurement application
     if u.app == 228 then
-      alias = alias..'_'..u.channel
+      alias = alias..'/'..u.channel
       local level = nil; pcall(function () level = GetCBusMeasurement(u.net, u.group, u.channel) end)
       if level ~= nil then publishMeasurement(alias, u.net, u.app, u.group, u.channel, level, true) end
     -- User parameters
     elseif u.app == 250 then publish(alias, u.net, u.app, u.group, GetUserParam(u.net, u.group), true)
     elseif u.app == 255 then
-      alias = alias..'_'..u.channel
+      alias = alias..'/'..u.channel
       local level = nil; pcall(function () level = GetUnitParameter(u.net, u.group, u.channel) end)
       if level ~= nil then publishUnitParam(alias, u.net, u.app, u.group, u.channel, level, true) end
     -- Lighting and other
