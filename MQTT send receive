@@ -299,7 +299,8 @@ client.ON_MESSAGE = function(mid, topic, payload)
           discoveryDelete[parts[3]..'/'..parts[2]] = true
         else
           discovery[parts[3]] = parts[2] -- Table of CBus addresses with type as the value
-          discoveryName[parts[3]] = payload.dev.name -- Used for rename detection
+          local p = json.decode(payload)
+          discoveryName[parts[3]] = p['dev']['name'] -- Used for rename detection
         end
       end
     end
@@ -657,12 +658,11 @@ local function addDiscover(net, app, group, channel, tags, name)
   }
 
   -- Extract MQTT topic settings
-  for _, t in ipairs(tags) do
-    local tp = string.split(t, '=')
-    local k = trim(tp[1]):lower()
+  for k, t in pairs(tags) do
+    local k = trim(k):lower()
     if k == 'includeunit' then includeUnit = true end
-    if tp[2] then
-      local v = trim(tp[2])
+    if t ~= -1 then
+      local v = trim(t)
       if _L[k] then
         if type(_L[k]) == 'number' then _L[k] = tonumber(v)
         elseif type(_L[k]) == 'table' then
@@ -743,7 +743,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     local j = json.encode(payload)
     if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
     logger('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa)
-    if discoveryName[oid] ~= nil and discoveryName[oid] ~= entity then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end
+    if discoveryName[oid] ~= nil and discoveryName[oid] ~= entity then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
   end
 
@@ -862,32 +862,29 @@ local atLogGrp = {}
 local function addAt(grps, found)
   local atArea = {}
   local atDevs = {}
-  local k, v
+  local alias, k, v
   local addition = false
   local scan = {}
   local found = {}
-  for k, v in pairs(grps) do
-    local net = v.address[1]; local app = v.address[2]; local group = v.address[3]
+  for alias, v in pairs(grps) do
     local pn = v.name
-    local alias = table.concat(v.address, '/')
     local unit = 'A'
     local scale = 1
     local decimals = 2
 
-    local dev = ''; local func = ''; local sense = ''; local sa = ''; local tags = v.keywords
-    for _, t in ipairs(tags) do
-      tp = string.split(t, '=')
-      tp[1] = trim(tp[1]):lower()
-      if tp[2] then
-        tp[2] = trim(tp[2])
-        if tp[1] == 'dev' then dev = tp[2]; atDevs[dev] = true -- Device
-        elseif tp[1] == 'func' then func = tp[2] -- Function
-        elseif tp[1] == 'sense' then sense = tp[2] -- Sensor
-        elseif tp[1] == 'dec' then decimals = tonumber(tp[2])
-        elseif tp[1] == 'scale' then scale = tonumber(tp[2])
-        elseif tp[1] == 'unit' then unit = tp[2]
-        elseif tp[1] == 'sa' then
-          sa = tp[2] -- Suggested area
+    local dev = ''; local func = ''; local sense = ''; local sa = ''
+    for k, t in pairs(v.tags) do
+      k = trim(k):lower()
+      if t ~= -1 then
+        t = trim(t)
+        if k == 'dev' then dev = t; atDevs[dev] = true -- Device
+        elseif k == 'func' then func = t -- Function
+        elseif k == 'sense' then sense = t -- Sensor
+        elseif k == 'dec' then decimals = tonumber(t)
+        elseif k == 'scale' then scale = tonumber(t)
+        elseif k == 'unit' then unit = t
+        elseif k == 'sa' then
+          sa = t -- Suggested area
           if atArea[dev] == nil then
             atArea[dev] = sa  -- The suggested area found is noted as being applicable for all user params of the device; only one is needed
             atLog[dev] = nil
@@ -898,52 +895,71 @@ local function addAt(grps, found)
     if sense ~= '' then
       if scale ~= 1 or decimals ~= 2 then publishAdj[alias] = { dec=decimals, scale=scale } end
     end
-    scan[#scan+1] = {alias=alias, dev=dev, func=func, sense=sense, unit=unit}
+    scan[alias] = {dev=dev, func=func, sense=sense, unit=unit, net=v.net, app=v.app, group=v.group}
   end
 
-  for _, v in ipairs(scan) do
+  for alias, v in pairs(scan) do
     if v['dev'] ~= '' then
       if atLog[v['dev']] == nil and atArea[v['dev']] == nil then
         logger('Error: No suggested area set for Airtopia device '..v['dev']..'. At least one user parameter needs "sa="', FORCE)
         atLog[v['dev']] = true -- Logged for the device, so do not log any further related user param issues for the device
         goto nextAt
       end
-      if at[v['alias']] == nil and atArea[v['dev']] ~= nil then
+      if at[alias] == nil and atArea[v['dev']] ~= nil then
         local sa = atArea[v['dev']]; if sa == nil then sa = '' end
         local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
-        local parts = string.split(v['alias'], '/')
-        local net = tonumber(parts[1]); local app = tonumber(parts[2]); local group = tonumber(parts[3])
         if v['func'] ~= '' then
-          if not at[v['alias']] then
-            at[v['alias']] = {}; addition = true
-            at[v['alias']].name = sao..v['dev']..'-'..v['func']; at[v['alias']].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = v['alias'];
-            if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=v['alias'], dev=v['dev'], sa=sa} end
-            publishAt(v['alias'], GetUserParam(net, group))
+          if not at[alias] then
+            at[alias] = {}; addition = true
+            at[alias].name = sao..v['dev']..'-'..v['func']; at[alias].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = alias;
+            if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=alias, dev=v['dev'], sa=sa} end
+            publishAt(alias, GetUserParam(v.net, v.group))
             atLog[v['dev']] = nil
-            atLogGrp[v['alias']] = nil
+            atLogGrp[alias] = nil
           end
         elseif sense ~= '' then
-          if not at[v['alias']] then
+          if not at[alias] then
             if atBoards[sao..v['dev']] ~= nil then
-              at[v['alias']] = {}; addition = true
-              at[v['alias']].name = sao..v['dev']..'-'..v['sense']; at[v['alias']].select = 'sense'; at[v['alias']].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = v['alias']
+              at[alias] = {}; addition = true
+              at[alias].name = sao..v['dev']..'-'..v['sense']; at[alias].select = 'sense'; at[alias].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = alias
               atBoards[sao..v['dev']]['unit'] = v['unit']
-              publishAt(v['alias'], GetUserParam(net, group))
+              publishAt(alias, GetUserParam(v.net, v.group))
               atLog[v['dev']] = nil
-              atLogGrp[v['alias']] = nil
+              atLogGrp[alias] = nil
             end
           end
         end
       end
     else
-      if not atLogGrp[v['alias']] then logger('Error: No device specified for Airtopia group '..v['alias'], FORCE); atLogGrp[v['alias']] = true end
+      if not atLogGrp[alias] then logger('Error: No device specified for Airtopia group '..alias, FORCE); atLogGrp[alias] = true end
     end
     ::nextAt::
-    if at[v['alias']] ~= nil and atArea[v['dev']] ~= nil then
-      table.insert(found, v['alias']) -- Valid, having a sa=, so found (otherwise removed elsewhere if an existing device)
+    if at[alias] ~= nil and atArea[v['dev']] ~= nil then
+      table.insert(found, alias) -- Valid, having a sa=, so found (otherwise removed elsewhere if an existing device)
     end
   end
   return addition, found
+end
+
+
+--[[
+Get applicable groups and keywords
+--]]
+local function getGroups(kw)
+  local grps = {}
+  for _, t in ipairs(db:getall("SELECT o.address, o.tagcache, o.name FROM objects AS o JOIN objecttags AS ot ON o.id=ot.object WHERE ot.tag='"..kw.."'")) do
+    local alias = knxlib.decodega(t.address)
+    local parts = alias:split('/')
+    grps[alias] = { ['tags'] = {}, ['name'] = t.name, ['keywords'] = t.tagcache:gsub(', ',','), ['net'] = tonumber(parts[1]), ['app'] = tonumber(parts[2]), ['group'] = tonumber(parts[3]), ['channel'] = tonumber(parts[4]), }
+    local tags = {}
+    local tg
+    for _, tg in ipairs(grps[alias].keywords:split(',')) do
+      parts = tg:split('=')
+      if parts[2] then tags[parts[1]] = parts[2] else tags[parts[1]] = -1 end
+    end
+    grps[alias].tags = tags
+  end
+  return grps
 end
 
 
@@ -953,43 +969,40 @@ Queue up initial discovery and current state CBus objects, plus Airtopia if used
 local function publishCurrent()
   -- CBus
   mqttDevices = {}
-  local grps = GetCBusByKW('MQTT', 'or')
+  local grps = getGroups('MQTT')
   local n = 0
-  local i, k, v
-  for _, v in pairs(grps) do
+  local i, k, v, alias
+  for alias, v in pairs(grps) do
     n = n + 1
-    local alias = table.concat(v.address, '/')
-    table.sort(v.keywords)
-    local name; if v.name then name = v.name else name = GetCBusGroupTag(v.address[1], v.address[2], v.address[3]) end
-    unpublished[n] = {net=v.address[1], app=v.address[2], group=v.address[3], channel=v.address[4], tags=v.keywords, name=name}
-    if not mqttDevices[alias] then mqttDevices[alias] = {}; mqttDevices[alias].tags = table.concat(v.keywords,',') end
+    local name; if v.name then name = v.name else name = GetCBusGroupTag(v.net, v.app, v.group) end
+    unpublished[n] = {net=v.net, app=v.app, group=v.group, channel=v.channel, tags=v.tags, name=name}
+    if not mqttDevices[alias] then mqttDevices[alias] = {}; mqttDevices[alias].tags = v.tags; mqttDevices[alias].keywords = v.keywords end
   end
   if n > 0 then logger('Queued '..n..' objects with keyword MQTT for publication') end
 
   if airtopiaSupport then
     -- Airtopia
     atDevices = {}
-    grps = GetCBusByKW('AT', 'or')
+    grps = getGroups('AT')
     addAt(grps)
     local raw = {}
     local dev
-    for k, v in ipairs(grps) do
-      local tags = v['keywords']
-      dev = ''; local sa = nil
-      for _, tag in ipairs(tags) do
-        local parts = string.split(tag, '=')
-        if parts[1] == 'dev' then
-          dev = parts[2]
-        elseif parts[1] == 'sa' then
-          sa = parts[2]
+    for alias, v in pairs(grps) do
+      dev = ''; local sa = nil; local vv
+      for tag, vv in pairs(v.tags) do
+        tag = trim(tag):lower()
+        if tag == 'dev' then
+          dev = vv
+        elseif tag == 'sa' then
+          sa = vv
         end
       end
       if dev ~= '' then
         if sa ~= nil then raw[dev] = sa end
       else
-        if not atLogGrp[table.concat(v['address'], '/')] then
-          logger('Error: No device specified for Airtopia group '..table.concat(v['address'], '/'), FORCE)
-          atLogGrp[table.concat(v['address'], '/')] = true
+        if not atLogGrp[alias] then
+          logger('Error: No device specified for Airtopia group '..alias, FORCE)
+          atLogGrp[alias] = true
         end
       end
     end
@@ -1008,29 +1021,26 @@ Create / update / delete AC devices
 --]]
 local acLogGrp = {}
 local function cudAc(initial)
-  local grps = GetCBusByKW('AC', 'or')
+  local grps = getGroups('AC')
   local found = {}
   local addition = false
-  local k, v
+  local alias, k, v
 
-  for k, v in pairs(grps) do
-    local net = v.address[1]; local app = v.address[2]; local group = v.address[3]
+  for alias, v in pairs(grps) do
     local pn = v.name
-    local alias = table.concat(v.address, '/')
 
     table.insert(found, alias)
 
     local dev=''; local func = ''; local sel = ''; local sense = ''; local topic = 'sensor'; local tags = v.keywords
-    for _, t in ipairs(tags) do
-      local tp = string.split(t, '=')
-      tp[1] = trim(tp[1])
-      if tp[2] then
-        tp[2] = trim(tp[2])
-        if tp[1] == 'dev' then dev = tp[2] -- Device
-        elseif tp[1] == 'func' then func = tp[2] -- Function
-        elseif tp[1] == 'sel' then sel = tp[2] -- Select
-        elseif tp[1] == 'sense' then sense = tp[2] -- Sensor
-        elseif tp[1] == 'topic' then topic = tp[2] -- Topic for sensor
+    for k, t in pairs(v.tags) do
+      k = trim(k):lower()
+      if t ~= -1 then
+        t = trim(t)
+        if k == 'dev' then dev = t -- Device
+        elseif k == 'func' then func = t -- Function
+        elseif k == 'sel' then sel = t -- Select
+        elseif k == 'sense' then sense = t -- Sensor
+        elseif k == 'topic' then topic = t -- Topic for sensor
         end
       end
     end
@@ -1045,8 +1055,8 @@ local function cudAc(initial)
         if not ac[alias] then ac[alias] = {}; addition = true end
       	ac[alias].name = dev..'-'..sense; ac[alias].select = 'sense'; ac[alias].sense = sense; ac[alias].topic = topic; acDevices[dev..'-'..sense..'-sense'] = alias; acBoards[dev] = true; acSense[dev..'-'..sense] = alias
       end
-      ac[alias].net = tonumber(net)
-      ac[alias].group = tonumber(group)
+      ac[alias].net = v.net
+      ac[alias].group = v.group
       acLogGrp[alias] = nil
     else
       if not acLogGrp[alias] then logger('Error: No device specified for Panasonic '..alias, FORCE); acLogGrp[alias] = true end
@@ -1118,7 +1128,7 @@ end
 Create / update / delete Airtopia devices
 --]]
 local function cudAt(initial)
-  local grps = GetCBusByKW('AT', 'or')
+  local grps = getGroups('AT')
   local boards = copy(atBoards)
   local k, v, topic
   unpublishedAt = {}
@@ -1176,36 +1186,32 @@ Create / update / delete ENV (environment) devices
 --]]
 local envLogGrp = {}
 local function cudEnv(initial)
-  local grps = GetCBusByKW('ENV', 'or')
+  local grps = getGroups('ENV')
   local found = {}
   local addition = false
-  local k, v
+  local alias, k, v
 
-  for k, v in pairs(grps) do
-    local net = v.address[1]; local app = v.address[2]; local group = v.address[3]
-    local alias = table.concat(v.address, '/')
-
+  for alias, v in pairs(grps) do
     table.insert(found, alias)
 
-    local dev=''; local func = ''; local sel = ''; local tags = v.keywords
-    for _, t in ipairs(tags) do
-      local tp = string.split(t, '=')
-      tp[1] = trim(tp[1])
-      if tp[2] then
-        tp[2] = trim(tp[2])
-        if tp[1] == 'dev' then dev = tp[2] -- Device
-        elseif tp[1] == 'func' then func = tp[2] -- Function
+    local dev=''; local func = ''; local sel = ''
+    for k, t in pairs(v.tags) do
+      k = trim(k):lower()
+      if t ~= -1 then
+        t = trim(t)
+        if k == 'dev' then dev = t -- Device
+        elseif k == 'func' then func = t -- Function
         end
       end
     end
     if dev ~= '' then
       if func == '' then
         local n
-        if v.name then n = v.name else n = GetCBusGroupTag(net, app, group) end
+        if v.name then n = v.name else n = GetCBusGroupTag(v.net, v.app, v.group) end
         func = n:lower():gsub("%s+", "_")
       end
       if not env[alias] then env[alias] = {}; addition = true end
-      env[alias].name = dev..'-'..func; envDevices[dev..'-'..func] = {net, group, alias}; envBoards[dev] = true
+      env[alias].name = dev..'-'..func; envDevices[dev..'-'..func] = {v.net, v.group, alias}; envBoards[dev] = true
       envLogGrp[alias] = nil
     else
       if not envLogGrp[alias] then logger('Error: No device specified for environment sensor '..alias, FORCE); envLogGrp[alias] = true end
@@ -1229,62 +1235,61 @@ end
 Create / update / delete CBus MQTT discovery topics
 --]]
 local function cudCBusTopics()
-  local grps = GetCBusByKW('MQTT', 'or')
+  local function difference(a, b)
+    local aa = {}; for _, v in ipairs(a) do aa[v] = true end; for _, v in ipairs(b) do aa[v] = nil end
+    local ret = {}; for _, v in ipairs(a) do if aa[v] then ret[#ret+1]=v end end
+    return ret
+  end
+
+  local nClock = socket.gettime()
+  local grps = getGroups('MQTT')
   local found = {}
   local lvlDelete = {}
   local n = 0
   unpublished = {}
   local queued = {}
-  local k, v, alias, lvl, name
+  local k, v, alias, lvl, olvl, name
 
-  for k, v in pairs(grps) do
+  for alias, v in pairs(grps) do
     local change = false
-    local net = v.address[1]; local app = v.address[2]; local group = v.address[3]; local channel = nil; if v.address[4] then channel = v.address[4] end
-    alias = table.concat(v.address, '/')
 
     table.insert(found, alias)
-    table.sort(v.keywords)
-    local curr = table.concat(v.keywords,',')
+    local curr = v.keywords
     if not mqttDevices[alias] then -- New group
       change = true
       mqttDevices[alias] = {}
-      mqttDevices[alias].tags = curr
+      mqttDevices[alias].keywords = curr
     else
-      if mqttDevices[alias].tags ~= curr then -- Modified group
-        lvl = nil; local i; for i = 1,#v.keywords do local parts = string.split(v.keywords[i], '=');
-          if parts[1] == 'lvl' then
-            local pp = {} local l local p = string.split(parts[2], '/') for _, l in ipairs(p) do _, l = decodeLevel(net, app, group, l) pp[#pp+1] = l end table.sort(pp) lvl = table.concat(pp,'/')
-            break
+      if mqttDevices[alias].keywords ~= curr then -- Modified group
+        if v.app == 202 then
+          lvl = nil
+          if v.tags.lvl then
+            lvl = {} local l local p = string.split(v.tags.lvl, '/')
+            for _, l in ipairs(p) do _, lvl[#lvl+1] = decodeLevel(v.net, v.app, v.group, l) end
           end
-        end
-        if app == 202 and lvl ~= nil then -- Check for levels being changed
-          
-          local function difference(a, b)
-            local lvl
-            local aa = {}; for _, v in ipairs(a) do aa[v] = true end; for _, v in ipairs(b) do aa[v] = nil end
-            local ret = {}; for _, v in ipairs(a) do if aa[v] then ret[#ret+1]=v end end
-            return ret
-          end
-          
-          local oldTags = string.split(mqttDevices[alias].tags, ',')
-          local i, olvl = ''; for i = 1,#oldTags do local parts = string.split(oldTags[i], '=')
-            if parts[1] == 'lvl' then
-              local pp = {} local l local p = string.split(parts[2], '/') for _, l in ipairs(p) do _, l = decodeLevel(net, app, group, l) pp[#pp+1] = l end table.sort(pp) olvl = table.concat(pp,'/')
-              break
+          if lvl ~= nil then -- Check for levels being changed
+            olvl = {}
+            if mqttDevices[alias].tags.lvl then
+              olvl = {} local l local p = string.split(mqttDevices[alias].tags.lvl, '/')
+              for _, l in ipairs(p) do _, olvl[#olvl+1] = decodeLevel(v.net, v.app, v.group, l) end
             end
+            local diff = difference(olvl, lvl)
+            if #diff > 0 then lvlDelete[alias] = diff end
+            if len(lvl) > len(olvl) then change = true end
+          else
+            change = true
           end
-          local diff = difference(string.split(olvl, '/'), string.split(lvl, '/'))
-          if #diff > 0 then lvlDelete[alias] = diff end
-          if len(string.split(lvl,'/')) > len(string.split(olvl,'/')) then change = true end
+        else
+          change = true
         end
-        if app ~= 202 then change = true end
-        mqttDevices[alias].tags = curr
+        mqttDevices[alias].tags = v.tags
+        mqttDevices[alias].keywords = v.keywords
       end
     end
     if change then
-      if v.name then name = v.name else name = GetCBusGroupTag(net, app, group) end
+      if v.name then name = v.name else name = GetCBusGroupTag(v.net, v.app, v.group) end
       n = n + 1
-      unpublished[n] = {net=net, app=app, group=group, channel=channel, tags=v.keywords, name=name}
+      unpublished[n] = {net=v.net, app=v.app, group=v.group, channel=v.channel, tags=v.tags, name=name}
       queued[#queued + 1] = alias
     end
   end
@@ -1292,24 +1297,22 @@ local function cudCBusTopics()
 
   -- Handle deletions
   local kill = {}
-  for k, v in pairs(mqttDevices) do
+  for alias, v in pairs(mqttDevices) do
     local topic, oid, trigger
-    local f = false; for _, vv in ipairs(found) do if k == vv then f = true; break end end
-    local parts = string.split(k, '/')
-    local group = tonumber(parts[3])
+    local f = false; for _, vv in ipairs(found) do if alias == vv then f = true; break end end
     if not f then
-      table.insert(kill, k)
-      if parts[2] == '202' and v.type == 'button' then
+      table.insert(kill, alias)
+      if v.app == 202 and v.type == 'button' then
         for _, trigger in ipairs(v.trigger) do
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
       	  client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic, FORCE)
           local t = tonumber(string.match(trigger, '_(%w+)$'))
           local act
           local tk, tv
-          for tk, tv in pairs(triggers[group]) do
+          for tk, tv in pairs(triggers[v.group]) do
             if t == tv then act = tk break end
           end
-          t = mqttWriteTopic..k..'/'..act..'/press'
+          t = mqttWriteTopic..alias..'/'..act..'/press'
           if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
           client:publish(t, '', mqttQoS, RETAIN)
         end
@@ -1317,17 +1320,15 @@ local function cudCBusTopics()
         topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
       	client:publish(topic, '', mqttQoS, RETAIN); logger('Removed discovery topic '..topic, FORCE)
         local count
-        _, count = k:gsub('/','')
+        _, count = alias:gsub('/','')
         if count == 3 then -- Measurement application
-          local t = k
-          t = t:gsub('/', '_'); t = t:gsub('_', '/', 2) -- Convert the last slash to an underscore
-          topic = mqttReadTopic..t;
+          topic = mqttReadTopic..lastSlashToUnderscore(alias)
         else
-          topic = mqttReadTopic..k
+          topic = mqttReadTopic..alias
         end
         if mqttJunk then client:publish(topic..'/state', 'junk', mqttQoS, RETAIN) end
         client:publish(topic..'/state', '', mqttQoS, RETAIN)
-        if count ~= 3 or bSensor[k] or binarySensor[k] then  -- Level not set for measurement and binary sensors
+        if count ~= 3 or bSensor[alias] or binarySensor[alias] then  -- Level not set for measurement and binary sensors
           if mqttJunk then client:publish(topic..'/level', 'junk', mqttQoS, RETAIN) end
           client:publish(topic..'/level', '', mqttQoS, RETAIN)
         end
@@ -1339,21 +1340,21 @@ local function cudCBusTopics()
       end
     else
       -- Handle trigger level removal
-      if lvlDelete[k] ~= nil and triggers[group] then
-        for _, lvl in ipairs(lvlDelete[k]) do
+      if lvlDelete[alias] ~= nil and triggers[v.group] then
+        for _, lvl in ipairs(lvlDelete[alias]) do
           local a, i, t, act = nil
-          for a, t in pairs(triggers[group]) do if t == tonumber(lvl) then act = a; break end end
+          for a, t in pairs(triggers[v.group]) do if t == lvl then act = a; break end end
           local remove = nil
           if act then
             trigger = nil
-            for i, t in ipairs(v.trigger) do if lvl == string.match(t, '_(%w+)$') then trigger = t; remove = i; break end end
+            for i, t in ipairs(v.trigger) do if lvl == tonumber(string.match(t, '_(%w+)$')) then trigger = t; remove = i; break end end
             if trigger then
               topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
               client:publish(topic, '', mqttQoS, RETAIN); logger('Remove discovery topic for '..topic..' (trigger level '..lvl..')', FORCE)
-              t = mqttWriteTopic..k..'/'..act..'/press'
+              t = mqttWriteTopic..alias..'/'..act..'/press'
               if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
               client:publish(t, '', mqttQoS, RETAIN)
-              triggers[group][act] = nil
+              triggers[v.group][act] = nil
             end
             if remove then table.remove(v.trigger, remove) end
           end
@@ -1362,6 +1363,7 @@ local function cudCBusTopics()
     end
   end
   for _, k in ipairs(kill) do mqttDevices[k] = nil end
+  if logging then log('cudCBusTopics() completed in '..string.format('%.3f', socket.gettime()-nClock)..' seconds') end
 end
 
 
