@@ -19,11 +19,11 @@ Only lighting application groups are tracked.
 VERSION: 3
 --]]
 
-local storeLevel = storage.get('storeLevel', {})
+local storeLevel = storage.get('storeLevel')
 local lastLevel = {}
 local net, app, group, appS
 
-if storeLevel ~= {} or useLastLevel then
+if storeLevel ~= nil or useLastLevel then
   local parts = string.split(event.dst, '/')
   net = tonumber(parts[1]) app = tonumber(parts[2]) group = tonumber(parts[3]) appS = parts[2]
   if lighting[appS] then lastLevel = storage.get('lastlvl', {}) end
@@ -67,7 +67,7 @@ if lighting[appS] then
   if useLastLevel then
     setLastLevel(val)
   else
-    if storeLevel ~= {} then
+    if storeLevel ~= nil then
       if storeLevel[event.dst] then setLastLevel(val) end
     else
       if storage.get('lastlvl') then
