@@ -68,7 +68,7 @@ local minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brigh
 local retryDelay = 10        -- If there's an error getting resources using REST then delay and try again (tolerate bridge restarts)
 local rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
 local pendingTimeout = 30    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream updates are quite delayed from lights)
-local sendHeartbeat = 5      -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
+local sendHeartbeat = 30     -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 local heartbeatConditions = { ['max'] = 120, ['storageExists'] = 'hueactive' }  -- At most two minutes without a heartbeat or else restart, but only if hueactive exists
 
 local huePort = 5435         -- Listening port to receive messages from 'HUE' and 'HUE final' scripts
@@ -588,11 +588,19 @@ local function outstandingBridgeMessage()
         -- Dimmable
         if pendingEndRamp[alias] then
           local pendingDone = false
-          if pendingEndRamp[alias].target == 0 and not hueDeviceStatus[id].on and (hueDeviceStatus[id].brightness == minHueBri or hueDeviceStatus[id].brightness == 0) then pendingDone = true end
-          if pendingEndRamp[alias].target > 0 and hueDeviceStatus[id].on then
-            if pendingEndRamp[alias].target == level then pendingDone = true end
-            if pendingEndRamp[alias].target == 255 and level == 254 then pendingDone = true end
+          if pendingEndRamp[alias].lastTested == nil then pendingEndRamp[alias].lastTested = level end
+          if pendingEndRamp[alias].target == 0 then
+            if not hueDeviceStatus[id].on and (hueDeviceStatus[id].brightness == minHueBri or hueDeviceStatus[id].brightness == 0) then pendingDone = true end
+            if level > pendingEndRamp[alias].lastTested then pendingDone = true end
           end
+          if pendingEndRamp[alias].target > 0 then
+            if hueDeviceStatus[id].on then
+              if pendingEndRamp[alias].target == level then pendingDone = true end
+              if pendingEndRamp[alias].target == 255 and level == 254 then pendingDone = true end
+            end
+            if level < pendingEndRamp[alias].lastTested then pendingDone = true end
+          end
+          pendingEndRamp[alias].lastTested = level
           if pendingDone then
             logger('Cleared pending end ramp for '..alias)
             pendingEndRamp[alias] = nil
@@ -602,9 +610,8 @@ local function outstandingBridgeMessage()
             local i; for i=#cbusMessages,1,-1 do if cbusMessages[i].find(alias) then table.remove(cbusMessages, i); purged = true end end
             if purged then logger('Removed queued messages for '..alias) end
             --]]
-          else
-            goto exit
           end
+          goto next
         end
         if not ramp[alias] and not pendingEndRamp[alias] then
           lvl = nil; local stat, err = pcall(function () lvl = GetCBusLevel(net, app, group) end); if lvl == 255 then lvl = 254 end -- Max Hue level is 254
