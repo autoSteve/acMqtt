@@ -67,7 +67,7 @@ local ignoreTimeout = 8      -- Timeout for stale ignore messages in seconds (ei
 local minHueBri = 0.39       -- Transitioning a Hue light arrives at a low brightness level, with the lamp then turned off 
 local retryDelay = 10        -- If there's an error getting resources using REST then delay and try again (tolerate bridge restarts)
 local rampTimeout = 3        -- Time beyond ramp to declare an orphan in seconds
-local pendingTimeout = 30    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream updates are quite delayed from lights)
+local pendingTimeout = 10    -- Time beyond pending end ramp to declare an orphan in seconds (occasionally the eventstream updates are quite delayed from lights)
 local sendHeartbeat = 30     -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 local heartbeatConditions = { ['max'] = 120, ['storageExists'] = 'hueactive' }  -- At most two minutes without a heartbeat or else restart, but only if hueactive exists
 
@@ -330,7 +330,7 @@ local function cudHue(initial)
         if addition then
           if initial then
             local level = nil; pcall(function () level = GetCBusLevel(net, app, group) end); if not level then level = -1 end
-            local hueLevel = hueDeviceStatus[hueV1Ids[pn]].level; hueLevel = (hueLevel == 254 and 255) or hueLevel
+            local hueLevel = CBusPctToLevel(math.floor(math.round(hueDeviceStatus[hueV1Ids[pn]].brightness)))
             if not ramp[alias] then -- Do not mess with the CBusLevel during ramping
               if level ~= hueLevel and hueDeviceStatus[hueV1Ids[pn]].on then
                 logger('Adjusting '..alias..' to match Hue, on=true, level='..level..', hueLevel='..hueLevel)
@@ -460,10 +460,10 @@ local function outstandingCbusMessage()
 
     if ramp[alias] and f[2] then -- End of ramp/target level message
       local expectingMore = true
-      if ramp[alias].target == 0 and not hueDeviceStatus[hueV1Ids[hue[alias].name]].on and hueDeviceStatus[hueV1Ids[hue[alias].name]].brightness == minHueBri then expectingMore = false end
+      if ramp[alias].target == 0 and not hueDeviceStatus[hueV1Ids[hue[alias].name]].on and (hueDeviceStatus[hueV1Ids[hue[alias].name]].brightness == minHueBri or hueDeviceStatus[hueV1Ids[hue[alias].name]].brightness == 0) and payload == ramp[alias].target then expectingMore = false end
       if ramp[alias].target > 0 and hueDeviceStatus[hueV1Ids[hue[alias].name]].on then
-        if hueDeviceStatus[hueV1Ids[hue[alias].name]].level == ramp[alias].target then expectingMore = false end
-        if ramp[alias].target == 255 and hueDeviceStatus[hueV1Ids[hue[alias].name]].level == 254 then expectingMore = false end
+        if hueDeviceStatus[hueV1Ids[hue[alias].name]].on and hueDeviceStatus[hueV1Ids[hue[alias].name]].level == ramp[alias].target and payload == ramp[alias].target then expectingMore = false end
+        if ramp[alias].target == 255 and hueDeviceStatus[hueV1Ids[hue[alias].name]].on and hueDeviceStatus[hueV1Ids[hue[alias].name]].level == 254 and payload == ramp[alias].target then expectingMore = false end
       end
       if expectingMore then
         logger('Clear ramp for '..alias..' (setting pending end ramp to wait for lamp status at target level)')
@@ -476,7 +476,7 @@ local function outstandingCbusMessage()
       ramp[alias] = nil
       local p = payload
       if tonumber(payload) then p = string.format('%.3f', payload) end
-      storage.set(sKey, p) logger('Previous for '..alias..' has been saved in outstandingCbus target level as '..p) -- Save 'previous' for use in the HUE event-based script
+      storage.set(sKey, p) logger('Previous for '..alias..' has been saved in outstandingCbus (final) target level as '..p) -- Save 'previous' for use in the HUE event-based script
       goto next
     end
     
@@ -546,6 +546,7 @@ local function outstandingCbusMessage()
       if setRamp then
         publishHue(alias, (ramp[alias] and ramp[alias].target) or payload, (ramp[alias] and ramp[alias].transitionTime) or nil, prev)
       end
+      if ramp[alias] ~= nil then ramp[alias].previous = payload end
       local p = payload
       if tonumber(payload) then p = string.format('%.3f', payload) end
       storage.set(sKey, p) logger('Previous for '..alias..' has been saved in outstandingCbus setting as '..p) -- Save 'previous' for use in the HUE event-based script
@@ -568,51 +569,41 @@ local function outstandingBridgeMessage()
     local forceBridge = false
     local lvl
 
-    if not alias then goto next end
+    if alias == nil then goto next end
 
     local sKey = 'pre'..alias
     local parts = string.split(alias, '/')
     local net = parts[1]; local app = parts[2]; local group = parts[3]
-    logger('Message received for '..id..'('..net..'/'..app..'/'..group..')')
+    logger('Message received for '..id..' ('..net..'/'..app..'/'..group..')')
     
     if hueDeviceStatus[id].brightness ~= nil then
       if hue[alias].dimmable == nil then hue[alias].dimmable = true end
       if hueDeviceStatus[id].on and hueDeviceStatus[id].level ~= lastLevel[alias] then lastLevel[alias] = hueDeviceStatus[id].level end
-      level = (hueDeviceStatus[id].on and lastLevel[alias]) or 0 -- was hueDeviceStatus[id].level
+      level = (hueDeviceStatus[id].on and lastLevel[alias]) or 0
     else
       level = (hueDeviceStatus[id].on and 255) or 0
+    end
+    if hue[alias].dimmable and pendingEndRamp[alias] then
+      local pendingDone = false
+      if pendingEndRamp[alias].target == 0 then
+        if not hueDeviceStatus[id].on and (hueDeviceStatus[id].brightness == minHueBri or hueDeviceStatus[id].brightness == 0) then pendingDone = true end
+      end
+      if pendingEndRamp[alias].target > 0 then
+        if hueDeviceStatus[id].on then
+          if pendingEndRamp[alias].target == level then pendingDone = true end
+          if pendingEndRamp[alias].target == 255 and level == 254 then pendingDone = true end
+        end
+      end
+      if pendingDone then
+        logger('Cleared pending end ramp for '..alias)
+        pendingEndRamp[alias] = nil
+        ignoreCbus[alias] = nil
+      end
+      goto next
     end
     if not ignoreCbus[alias] then -- Only set the CBus status/level if this script did not initiate the change
       local p = nil
       if hue[alias].dimmable then
-        -- Dimmable
-        if pendingEndRamp[alias] then
-          local pendingDone = false
-          if pendingEndRamp[alias].lastTested == nil then pendingEndRamp[alias].lastTested = level end
-          if pendingEndRamp[alias].target == 0 then
-            if not hueDeviceStatus[id].on and (hueDeviceStatus[id].brightness == minHueBri or hueDeviceStatus[id].brightness == 0) then pendingDone = true end
-            if level > pendingEndRamp[alias].lastTested then pendingDone = true end
-          end
-          if pendingEndRamp[alias].target > 0 then
-            if hueDeviceStatus[id].on then
-              if pendingEndRamp[alias].target == level then pendingDone = true end
-              if pendingEndRamp[alias].target == 255 and level == 254 then pendingDone = true end
-            end
-            if level < pendingEndRamp[alias].lastTested then pendingDone = true end
-          end
-          pendingEndRamp[alias].lastTested = level
-          if pendingDone then
-            logger('Cleared pending end ramp for '..alias)
-            pendingEndRamp[alias] = nil
-            -- Purge any queued CBus messages for alias that may have arrived simultaneously
-            --[[
-            local purged = false
-            local i; for i=#cbusMessages,1,-1 do if cbusMessages[i].find(alias) then table.remove(cbusMessages, i); purged = true end end
-            if purged then logger('Removed queued messages for '..alias) end
-            --]]
-          end
-          goto next
-        end
         if not ramp[alias] and not pendingEndRamp[alias] then
           lvl = nil; local stat, err = pcall(function () lvl = GetCBusLevel(net, app, group) end); if lvl == 255 then lvl = 254 end -- Max Hue level is 254
           if lvl ~= level then
@@ -644,6 +635,19 @@ local function outstandingBridgeMessage()
     else
       ignoreCbus[alias] = nil
       logger('Ignoring CBus publish for '..alias)
+
+      if ramp[alias] then -- Check for early termination of ramp (usually because a very small level change)
+        local expectingMore = true
+        if ramp[alias].target == 0 and not hueDeviceStatus[hueV1Ids[hue[alias].name]].on and (hueDeviceStatus[hueV1Ids[hue[alias].name]].brightness == minHueBri or hueDeviceStatus[hueV1Ids[hue[alias].name]].brightness == 0) and ramp[alias].previous == ramp[alias].target then expectingMore = false end
+        if ramp[alias].target > 0 and hueDeviceStatus[hueV1Ids[hue[alias].name]].on then
+          if hueDeviceStatus[hueV1Ids[hue[alias].name]].level == ramp[alias].target and ramp[alias].previous == ramp[alias].target then expectingMore = false end
+          if ramp[alias].target == 255 and hueDeviceStatus[hueV1Ids[hue[alias].name]].level == 254 and ramp[alias].previous == ramp[alias].target then expectingMore = false end
+        end
+        if not expectingMore then
+          logger('Clear ramp early for '..alias..' (lamp at target level)') -- Transition complete, so no more Hue updates will arrive
+          ramp[alias] = nil
+        end
+      end
     end
     ::next::
   end
@@ -696,12 +700,13 @@ local function updateMessage(msg)
         local nonTarget = false
         local id = d.id_v1
         if bridgeMessage[id] == nil then bridgeMessage[id] = {id = id, on = nil, bri = nil, lvl = nil, nonTarget = nonTarget} end
-        local on = nil; if d.on ~= nil then on = d.on.on; update = true end
         local bri = nil; local lvl = nil;
+        local on = nil; if d.on ~= nil then on = d.on.on; if not on then lvl = 0 bri = 0 end update = true end
         if d.dimming then
           update = true
           bri = d.dimming.brightness
-          lvl = math.floor(bri * 254 / 100 + 0.5)
+          lvl = math.floor(bri * 255 / 100 + 0.5)
+          lvl = (lvl == 255 and 254) or lvl
           local alias = hueDeviceStatus[id].alias
           local target = nil
           if ramp[alias] then target = ramp[alias].target end
@@ -720,6 +725,7 @@ local function updateMessage(msg)
           end
           if update then
             if on ~= nil then bridgeMessage[id].on = on end
+            if lvl ~= nil then if lvl == 0 then bridgeMessage[id].on = false else bridgeMessage[id].on = true end end
             if lvl ~= nil then bridgeMessage[id].bri = bri; bridgeMessage[id].lvl = lvl end
             bridgeMessage[id].nonTarget = nonTarget
           end
