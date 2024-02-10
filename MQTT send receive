@@ -299,8 +299,7 @@ client.ON_MESSAGE = function(mid, topic, payload)
           discoveryDelete[parts[3]..'/'..parts[2]] = true
         else
           discovery[parts[3]] = parts[2] -- Table of CBus addresses with type as the value
-          local p = json.decode(payload)
-          discoveryName[parts[3]] = p['dev']['name'] -- Used for rename detection
+          discoveryName[parts[3]] = json.decode(payload)['dev']['name'] -- Used for rename detection
         end
       end
     end
@@ -358,8 +357,7 @@ local function publish(alias, net, app, group, level, noPre)
     end
   else -- It's a user parameter
     local v
-    local adjust = publishAdj[alias]
-    if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', level * adjust.scale)) else v = level end
+    if publishAdj[alias] then v = tonumber(string.format('%.'..publishAdj[alias].dec..'f', level * publishAdj[alias].scale)) else v = level end
     client:publish(mqttReadTopic..alias..'/state', v, mqttQoS, RETAIN)
     if logging then log('Publishing value '..mqttReadTopic..alias..' to '..v) end
   end
@@ -377,14 +375,14 @@ Publish measurement application objects to MQTT
 --]]
 local function publishMeasurement(alias, net, app, group, channel, value, noPre)
   if noPre == nil then noPre = false end
-  local units, v
   if value == nil then log('Warning: Nil CBus measurement value for '..alias); do return end end
+  local units, v
   local adjust = publishAdj[alias]
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
   if includeUnits[alias] then
     _, units = GetCBusMeasurement(net, group, channel)
     if units == '$' then
-      v = units..tostring(v)
+      v = units..v
     elseif units == '%' then
       v = v..units
     else
@@ -404,9 +402,9 @@ Publish unit parameter objects to MQTT
 --]]
 local function publishUnitParam(alias, net, app, group, channel, value, noPre)
   if noPre == nil then noPre = false end
-  local v
   if value == nil then log('Warning: Nil unit parameter value for '..alias); do return end end
   local adjust = publishAdj[alias]
+  local v
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
   local mAlias = lastSlashToUnderscore(alias)
   client:publish(mqttReadTopic..mAlias..'/state', v, mqttQoS, RETAIN)
@@ -428,16 +426,15 @@ local function publishAc(alias, level, select)
     end
     if not ignoreMqtt[alias] then
       local parts = string.split(ac[alias].name, '-')
-      local board = parts[1]
       local topic = ''
       if select == 'func' then
-        topic = board..'/climate/panasonic/'..parts[2]..'/command'
+        topic = parts[1]..'/climate/panasonic/'..parts[2]..'/command'
       elseif select == 'sel' then
-        topic = board..'/select/'..parts[2]..'/command'
+        topic = parts[1]..'/select/'..parts[2]..'/command'
       elseif select == 'sense' then
         if logging then log('Warning: Not publishing sensor change for alias='..alias) end
       else
-        log('Invalid AC command for alias='..alias..', select='..tostring(select))
+        log('Invalid AC command for alias='..alias..', select='..select)
       end
       if topic ~= '' then client:publish(topic, level, mqttQoS, NORETAIN) end
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
@@ -467,8 +464,7 @@ local function publishAt(alias, level)
     end
     if not ignoreMqtt[alias] then
       local parts = string.split(at[alias].name, '-')
-      local board = parts[1]
-      local topic = 'airtopia/'..board..'/state/'..parts[2]
+      local topic = 'airtopia/'..parts[1]..'/state/'..parts[2]
       local adjust = publishAdj[alias]
       if adjust then level = tonumber(string.format('%.'..adjust.dec..'f', level * adjust.scale)) end
       client:publish(topic, level, mqttQoS, RETAIN)
@@ -508,7 +504,7 @@ local function publishAt(alias, level)
       elseif st == 'fan' then
         -- Publish fanha
         local fanv = atfans[level+1]
-        local topic = 'airtopia/'..board..'/state/fanha'
+        local topic = 'airtopia/'..parts[1]..'/state/fanha'
         client:publish(topic, fanv, mqttQoS, RETAIN)
       end
     else
@@ -619,7 +615,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       if _L.class ~= '' then payload.dev_cla = _L.class end
       if app == 250 then userParameter[alias] = true end
       if app == 255 then unitParameter[alias] = true end
-      payload.value_template = '{{ value | float | round ('..tostring(_L.dec)..') }}'
+      payload.value_template = '{{ value | float | round ('.._L.dec..') }}'
       if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
       if _L.unit ~= '' and not includeUnit then payload.unit_of_meas = _L.unit else payload.unit_of_meas = '' end
       return payload
@@ -630,7 +626,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       end },
     ['bsensor'] = {['getPayload'] = function()
       bSensor[alias] = true dType = 'sensor'
-      return {stat_t = mqttReadTopic..alias..'/state', val_tpl = '{% if value | float == 0 %} '..off..' {% else %} '..on..' {% endif %}',}
+      return {stat_t = mqttReadTopic..alias..'/state', val_tpl = '{% if value | float == 0 %} '.._L.off..' {% else %} '.._L.on..' {% endif %}',}
       end },
     ['button'] = {['getPayload'] = function()
       button[alias] = true
@@ -941,11 +937,11 @@ end
 
 
 --[[
-Get applicable groups and keywords
+Get applicable groups and keywords GETALLTAGS!!!!!
 --]]
 local function getGroups(kw)
   local grps = {}
-  for _, t in ipairs(db:getall("SELECT o.address, o.tagcache, o.name FROM objects AS o JOIN objecttags AS ot ON o.id=ot.object WHERE ot.tag='"..kw.."'")) do
+  for _, t in ipairs(db:getall("SELECT o.address, o.tagcache, o.name FROM objects AS o JOIN objecttags AS ot ON o.id=ot.object WHERE ot.tag='"..kw.."'")) do -- SELECT IN A LIST, TABLE HAS kw AS INDEX!!!!! DO ONE FOR EVERY kw
     local alias = knxlib.decodega(t.address)
     local parts = alias:split('/')
     grps[alias] = { ['tags'] = {}, ['name'] = t.name, ['keywords'] = t.tagcache:gsub(', ',','), ['net'] = tonumber(parts[1]), ['app'] = tonumber(parts[2]), ['group'] = tonumber(parts[3]), ['channel'] = tonumber(parts[4]), }
@@ -1528,6 +1524,7 @@ local function outstandingMqttMessage()
             if parts[2] ~= nil then ramp = tonumber(parts[2]) else ramp = 0 end
             SetCBusLevel(net, app, group, toSet, ramp)
           end
+          goto next
         end
       end
 
@@ -1725,7 +1722,7 @@ local function outstandingCbusMessage()
         local payload = tonumber(parts[4]) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
         if lighting[parts[2]] then -- Lighting application, so check for ramp
           if legacyFirmware then
-            if logging then log('Alias: '..alias..', payload: '..tostring(payload)..', ramp rate: '..tostring(GetCBusRampRate(net, app, group))..', target level: '..tostring(GetCBusTargetLevel(net, app, group))) end
+            if logging then log('Alias: '..alias..', payload: '..payload..', ramp rate: '..GetCBusRampRate(net, app, group)..', target level: '..GetCBusTargetLevel(net, app, group)) end
             -- A CBus ramp up and down can annoyingly begin with a zero level, then steadily converge to the target level. This initial
             -- zero should not be published to MQTT so it is ignored. If an initial zero is not seen then the ramp will be orphaned (and
             -- ultimately cleaned up/published, albeit a bit late after rampTimeout seconds).
@@ -1985,6 +1982,7 @@ while true do
     -- Connected... Now loop briefly to allow retained value retrieval for subscribed topics because synchronous
     while socket.gettime() - mqttConnected < 0.5 do client:loop(0) end
     -- Full publish CBus topics
+    -- NEED GETALLTAGS GERE
     stat, err = pcall(publishCurrent)
     if not stat then log('Error publishing current values: '..err) end -- Log and continue
   else
