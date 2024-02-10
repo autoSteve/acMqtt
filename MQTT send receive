@@ -771,10 +771,9 @@ local function addDiscover(net, app, group, channel, tags, name)
           publish(payload, boid, entity)
         end
       end
-      return true
+      return
     elseif dType == 'button' then
-      log('Warning: MQTT button keyword used for unsupported application group '..alias..', so ignoring')
-      return false
+      error('Warning: MQTT button keyword used for unsupported application group '..alias..', so ignoring')
     end
   end
 
@@ -783,9 +782,9 @@ local function addDiscover(net, app, group, channel, tags, name)
     payload = addCommonPayload(payload, oid, entity)
     removeOld(dType, oid)
     publish(payload, oid, entity)
-    return true
+    return
   else
-    log('Warning: a publish payload for '..name..' could not be built, so not published')
+    error('Warning: a publish payload for '..name..' could not be built, so not published')
   end
 end
 
@@ -1370,7 +1369,11 @@ local function outstandingPublish()
   local u
   local failed = 0
   for _, u in ipairs(unpublished) do
-    if not addDiscover(u.net, u.app, u.group, u.channel, u.tags, u.name) then failed = failed + 1 end
+    local stat, msg = pcall(addDiscover, u.net, u.app, u.group, u.channel, u.tags, u.name)
+    if not stat then
+      failed = failed + 1
+      log(msg)
+    end
     local alias = u.net..'/'..u.app..'/'..u.group
     -- Measurement application
     if u.app == 228 then
@@ -1401,7 +1404,7 @@ local function outstandingPublish()
     -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
     if eventInstalled then if script.status(eventName) ~= nil then script.disable(eventName); script.enable(eventName) end end
     if finalInstalled then if script.status(finalName) ~= nil then script.disable(finalName); script.enable(finalName) end end
-    log('Published '..#unpublished - failed..' CBus discovery and current level topic'..(#unpublished - failed ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
+    log('Published '..#unpublished - failed..' CBus discovery and current level topic'..(#unpublished - failed ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds'..(failed ~= 0 and ' ('..failed..' failed)' or '')..', event scripts restarted')
     unpublished = {}
   end
 end
