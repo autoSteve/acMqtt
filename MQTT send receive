@@ -668,6 +668,7 @@ local function addDiscover(net, app, group, channel, tags, name)
         else _L[k] = v end
       end
     else
+      if k == 'binarysensor' then k = 'binary_sensor' end -- Synonym
       if allow[k] then dType = k end
     end
     -- Any other unrecognised keywords that may be set are ignored, as they likely have an unrelated use
