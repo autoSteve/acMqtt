@@ -168,7 +168,7 @@ Panasonic keyword examples:
 
 See https://github.com/DomiStyle/esphome-panasonic-ac for ESP32 hardware/wiring hints.
 
-### Airtopia Air Conditioner Controllers (IR blaster)
+### Airtopia Air Conditioner Controllers (MQTT send receive, an ancient IR blaster)
 
 For Airtopia devices, add the keyword 'AT' to user parameters, plus...
 
@@ -206,11 +206,22 @@ The 'HUE send receive' script communicates directly with the bridge via its REST
 If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. After connection the cbus read/homeassistant topics should show all objects having the right keywords.
 
 ### Home Assistant configuration.yaml example:
-Sets up the MQTT connection, plus includes many domains for Google Home (adjust as needed for Alexa, etc.)
+Sets up the MQTT connection, plus includes many domains for Google Home (adjust as needed for Alexa, etc.). Note that this is for *my* server, on network 192.168.10.0, and I use a reverse proxy. Yours will be different.
 ~~~
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Text to speech
+tts:
+  - platform: google_translate
+
+http:
+#  server_host: 0.0.0.0
+  use_x_forwarded_for: true
+  trusted_proxies:
+  - 192.168.10.0/24
+
 mqtt:
-  client_id: haos
-  keepalive: 20
 
 cloud:
   google_actions:
@@ -232,4 +243,8 @@ cloud:
         - sensor
         - switch
         - vacuum
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
 ~~~
