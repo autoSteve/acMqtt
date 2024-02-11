@@ -14,7 +14,7 @@ The pieces of the puzzle include:
 - Home Assistant plug-ins: 'Mosquitto broker', and file editor is also handy.
 - LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2).
 
-LUA scripts for the automation controller (all script names are NOT case sensitive, but must be called these names - some scripts are re-started based on name):
+LUA scripts for the automation controller (all script names are NOT case sensitive, but must be called these names - some scripts are automatically re-started based on name):
 - *MQTT send receive*: resident, zero sleep
 - *MQTT*: event-based, execute during ramping, trigger on keyword 'MQTT' (*use for firmware older than 1.15.0*)
 - *MQTT final*: event-based, DO NOT execute during ramping, trigger on keyword 'MQTT' (*use for firmware 1.15.0+*)
