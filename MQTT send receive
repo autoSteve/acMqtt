@@ -26,6 +26,7 @@ Documentation available at https://github.com/autoSteve/acMqtt
 General configuration variables follow. Change as required, but probably no need to.
 --]]
 local logging = false        -- Enable detailed logging
+local logms = false          -- Display timestamp duration of certain operations
 
 local sendHeartbeat = 30     -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 local heartbeatConditions = { ['max'] = 120, } -- At most 120 seconds without a heartbeat or else get restarted
@@ -181,10 +182,12 @@ end
 Warn for >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping / missing scripts / wrong version
 --]]
 local eventScripts = db:getall("SELECT name FROM scripting WHERE type = 'event'")
-local eventName, finalName, s = nil, nil, nil
+local eventName, finalName, acName, atName, s = nil, nil, nil, nil, nil
 for _, s in ipairs(eventScripts) do
   if s.name:lower() == 'mqtt' then eventName = s.name end
   if s.name:lower() == 'mqtt final' then finalName = s.name end
+  if s.name:lower() == 'ac' then acName = s.name end
+  if s.name:lower() == 'at' then atName = s.name end
 end
 
 local finalInstalled = finalName ~= nil and not (script.status(finalName) == nil or script.status(finalName) == false)
@@ -860,6 +863,8 @@ local function addAt(grps, found)
   local addition = false
   local scan = {}
   local found = {}
+  local stat, err
+
   for alias, v in pairs(grps) do
     local pn = v.name
     local unit = 'A'
@@ -907,7 +912,7 @@ local function addAt(grps, found)
             at[alias] = {}; addition = true
             at[alias].name = sao..v['dev']..'-'..v['func']; at[alias].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = alias;
             if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=alias, dev=v['dev'], sa=sa} end
-            publishAt(alias, GetUserParam(v.net, v.group))
+            stat, err = pcall(publishAt, alias, GetUserParam(v.net, v.group)) if not stat then log(err) end
             atLog[v['dev']] = nil
             atLogGrp[alias] = nil
           end
@@ -917,7 +922,7 @@ local function addAt(grps, found)
               at[alias] = {}; addition = true
               at[alias].name = sao..v['dev']..'-'..v['sense']; at[alias].select = 'sense'; at[alias].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = alias
               atBoards[sao..v['dev']]['unit'] = v['unit']
-              publishAt(alias, GetUserParam(v.net, v.group))
+              stat, err = pcall(publishAt, alias, GetUserParam(v.net, v.group)) if not stat then log(err) end
               atLog[v['dev']] = nil
               atLogGrp[alias] = nil
             end
@@ -937,11 +942,11 @@ end
 
 
 --[[
-Get applicable groups and keywords GETALLTAGS!!!!!
+Get applicable groups and keywords
 --]]
 local function getGroups(kw)
   local grps = {}
-  for _, t in ipairs(db:getall("SELECT o.address, o.tagcache, o.name FROM objects AS o JOIN objecttags AS ot ON o.id=ot.object WHERE ot.tag='"..kw.."'")) do -- SELECT IN A LIST, TABLE HAS kw AS INDEX!!!!! DO ONE FOR EVERY kw
+  for _, t in ipairs(db:getall("SELECT o.address, o.tagcache, o.name FROM objects AS o JOIN objecttags AS ot ON o.id=ot.object WHERE ot.tag='"..kw.."'")) do
     local alias = knxlib.decodega(t.address)
     local parts = alias:split('/')
     grps[alias] = { ['tags'] = {}, ['name'] = t.name, ['keywords'] = t.tagcache:gsub(', ',','), ['net'] = tonumber(parts[1]), ['app'] = tonumber(parts[2]), ['group'] = tonumber(parts[3]), ['channel'] = tonumber(parts[4]), }
@@ -1014,10 +1019,12 @@ end
 Create / update / delete AC devices
 --]]
 local acLogGrp = {}
-local function cudAc(initial)
+local function cudAc()
+  local nClock = socket.gettime()
   local grps = getGroups('AC')
   local found = {}
   local addition = false
+  local count = 0
   local alias, k, v
 
   for alias, v in pairs(grps) do
@@ -1052,6 +1059,7 @@ local function cudAc(initial)
       ac[alias].net = v.net
       ac[alias].group = v.group
       acLogGrp[alias] = nil
+      count = count + 1
     else
       if not acLogGrp[alias] then log('Error: No device specified for Panasonic '..alias); acLogGrp[alias] = true end
     end
@@ -1064,10 +1072,12 @@ local function cudAc(initial)
   end
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
   if addition then
-    if not initial then
+    if acName then
+      log('Added '..count..' Panasonic A/C object'..(count ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..', event script \''..acName..'\' restarted')
       -- Ensure that newly tagged/removed groups with the AC keyword send updates.
-      log('AC object keywords added, restarting event script')
-      script.disable('AC'); script.enable('AC')
+      script.disable(acName); script.enable(acName)
+    else
+      error('Panasonic A/C event script \'AC\' not found')
     end
     for k, _ in pairs(acBoards) do client:subscribe(k..'/#', 2) end
   end
@@ -1121,7 +1131,7 @@ end
 --[[
 Create / update / delete Airtopia devices
 --]]
-local function cudAt(initial)
+local function cudAt()
   local grps = getGroups('AT')
   local boards = copy(atBoards)
   local k, v, topic
@@ -1167,10 +1177,12 @@ local function cudAt(initial)
   end
       
   if addition then
-    if not initial then
+    if atName then
       -- Ensure that newly tagged/removed groups with the AT keyword send updates.
       log('AT object keywords added, restarting event script')
-      script.disable('AT'); script.enable('AT')
+      script.disable(atName); script.enable(atName)
+    else
+      error('Airtopia event script \'AT\' not found')
     end
   end
 end
@@ -1179,10 +1191,12 @@ end
 Create / update / delete ENV (environment) devices
 --]]
 local envLogGrp = {}
-local function cudEnv(initial)
+local function cudEnv()
+  local nClock = socket.gettime()
   local grps = getGroups('ENV')
   local found = {}
   local addition = false
+  local count = 0
   local alias, k, v
 
   for alias, v in pairs(grps) do
@@ -1210,6 +1224,7 @@ local function cudEnv(initial)
     else
       if not envLogGrp[alias] then log('Error: No device specified for environment sensor '..alias); envLogGrp[alias] = true end
     end
+    count = count + 1
   end
     
   -- Handle deletions
@@ -1219,7 +1234,7 @@ local function cudEnv(initial)
   end
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
   if addition then
-    if not initial then log('ENV object keyword added') end
+    log('Added '..count..' environment sensor object'..(count ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or ''))
     for k, _ in pairs(envBoards) do client:subscribe(k..'/#', 2) end
   end
 end
@@ -1368,24 +1383,26 @@ local function outstandingPublish()
   local nClock = socket.gettime()
   local u
   local failed = 0
+  local stat, err
+
   for _, u in ipairs(unpublished) do
-    local stat, msg = pcall(addDiscover, u.net, u.app, u.group, u.channel, u.tags, u.name)
+    stat, err = pcall(addDiscover, u.net, u.app, u.group, u.channel, u.tags, u.name)
     if not stat then
       failed = failed + 1
-      log(msg)
+      log(err)
     end
     local alias = u.net..'/'..u.app..'/'..u.group
     -- Measurement application
     if u.app == 228 then
       alias = alias..'/'..u.channel
       local level = nil; pcall(function () level = GetCBusMeasurement(u.net, u.group, u.channel) end)
-      if level ~= nil then publishMeasurement(alias, u.net, u.app, u.group, u.channel, level, true) end
+      if level ~= nil then stat, err = pcall(publishMeasurement, alias, u.net, u.app, u.group, u.channel, level, true) if not stat then log(err) end end
     -- User parameters
-    elseif u.app == 250 then publish(alias, u.net, u.app, u.group, GetUserParam(u.net, u.group), true)
+    elseif u.app == 250 then stat, err = pcall(publish, alias, u.net, u.app, u.group, GetUserParam(u.net, u.group), true) if not stat then log(err) end
     elseif u.app == 255 then
       alias = alias..'/'..u.channel
       local level = nil; pcall(function () level = GetUnitParameter(u.net, u.group, u.channel) end)
-      if level ~= nil then publishUnitParam(alias, u.net, u.app, u.group, u.channel, level, true) end
+      if level ~= nil then stat, err = pcall(publishUnitParam, alias, u.net, u.app, u.group, u.channel, level, true) if not stat then log(err) end end
     -- Lighting and other
     else
       if not lightingButton[u.net..'/'..u.app..'/'..u.group] then -- Do nothing for lighting buttons
@@ -1395,16 +1412,18 @@ local function outstandingPublish()
         else
           pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
         end
-       if level ~= nil then publish(alias, u.net, u.app, u.group, level, true) end
+       if level ~= nil then stat, err = pcall(publish, alias, u.net, u.app, u.group, level, true) if not stat then log(err) end end
       end
     end
   end
   storage.set('storeLevel', storeLevel)
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
-    if eventInstalled then if script.status(eventName) ~= nil then script.disable(eventName); script.enable(eventName) end end
-    if finalInstalled then if script.status(finalName) ~= nil then script.disable(finalName); script.enable(finalName) end end
-    log('Published '..#unpublished - failed..' CBus discovery and current level topic'..(#unpublished - failed ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds'..(failed ~= 0 and ' ('..failed..' failed)' or '')..', event scripts restarted')
+    local scriptName
+    if eventInstalled then if script.status(eventName) ~= nil then scriptName = eventName end end
+    if finalInstalled then if script.status(finalName) ~= nil then scriptName = finalName end end
+    script.disable(scriptName); script.enable(scriptName)
+    log('Published '..#unpublished - failed..' CBus discovery and current level topic'..(#unpublished - failed ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..(failed ~= 0 and ' ('..failed..' failed)' or '')..', event script \''..scriptName..'\' restarted')
     unpublished = {}
   end
 end
@@ -1416,14 +1435,27 @@ Publish queued Airtopia topics
 local function outstandingAtPublish()
   local nClock = socket.gettime()
   local u
-  for _, u in ipairs(unpublishedAt) do addAtDiscover(u['name'], u['sa'], nil) end
-  if #unpublishedAt > 0 then
-    -- Ensure that newly tagged/removed groups with the AT keyword send updates
-    if script.status('AT') ~= nil then script.disable('AT'); script.enable('AT') end
-    log('Published '..#unpublishedAt..' Airtopia discovery and current level topic'..(#unpublishedAt ~= 1 and 's' or '')..' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds, event scripts restarted')
-    unpublishedAt = {}
+  local failed = 0
+  local stat, err
+
+  for _, u in ipairs(unpublishedAt) do
+    stat, err = pcall(addAtDiscover, u['name'], u['sa'], nil)
+    if not stat then
+      failed = failed + 1
+      log(err)
+    end
   end
-  publishAtState()
+  if #unpublishedAt > 0 then
+    if atName then
+      -- Ensure that newly tagged/removed groups with the AT keyword send updates
+      if script.status(atName) ~= nil then script.disable(atName); script.enable(atName) end
+      log('Published '..#unpublishedAt..' Airtopia discovery and current level topic'..(#unpublishedAt ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..(failed ~= 0 and ' ('..failed..' failed)' or '')..', event script \''..atName..'\' restarted')
+      unpublishedAt = {}
+    else
+      error('Airtopia event script \'AT\' not found')
+    end
+  end
+  stat, err = pcall(publishAtState) if not stat then log(err) end
 end
 
 
@@ -1702,6 +1734,7 @@ Publish the next queued messages for MQTT
 local function outstandingCbusMessage()
   local cmd
   local final = false
+  local stat, err
 
   local lastLevel = storage.get('lastlvl', {})
   for _, cmd in ipairs(cbusMessages) do
@@ -1716,9 +1749,11 @@ local function outstandingCbusMessage()
     local alias = parts[1]..'/'..parts[2]..'/'..parts[3]
     
     if panasonicSupport and ac[alias] then -- AC message to MQTT (no ramping involved for AC groups)
-      publishAc(alias, parts[4], ac[alias].select)
+      stat, err = pcall(publishAc, alias, parts[4], ac[alias].select)
+      if not stat then log(err) end
     elseif airtopiaSupport and at[alias] then -- AT message to MQTT (no ramping involved for AT groups)
-      publishAt(alias, parts[4])
+      stat, err = pcall(publishAt, alias, parts[4])
+      if not stat then log(err) end
     else -- CBus message to MQTT
       local net = tonumber(parts[1]) local app = tonumber(parts[2]) local group = tonumber(parts[3]);
       if app ~= 228 and app ~= 255 then -- i.e. not measurement application
@@ -1762,27 +1797,31 @@ local function outstandingCbusMessage()
           -- Groups other than lighting are never ramped, so setting is always true
         end
         if setting then
+          local stat, err
           if legacyFirmware then
             if ramp[alias] then
               if final then
                 ramp[alias] = nil
                 if logging then log('Clear ramp for '..alias) end
                 -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
-                publish(alias, net, app, group, payload)
+                stat, err = pcall(publish, alias, net, app, group, payload)
+                if not stat then log(err) end
               end
             else
-              publish(alias, net, app, group, payload)
+              stat, err = pcall(publish, alias, net, app, group, payload)
+              if not stat then log(err) end
             end
           else
-            publish(alias, net, app, group, payload)
+            stat, err = pcall(publish, alias, net, app, group, payload)
+            if not stat then log(err) end
           end
         end
       elseif app == 255 then -- Special case for unit param
         alias = alias..'/'..parts[4]
-        publishUnitParam(alias, net, app, group, tonumber(parts[4]), tonumber(parts[5]))
+        stat, err = pcall(publishUnitParam, alias, net, app, group, tonumber(parts[4]), tonumber(parts[5]))
       elseif app == 228 then -- Special case for measurement app
         alias = alias..'/'..parts[4]
-        publishMeasurement(alias, net, app, group, tonumber(parts[4]), tonumber(parts[5]))
+        stat, err = pcall(publishMeasurement, alias, net, app, group, tonumber(parts[4]), tonumber(parts[5]))
       end
     end
   end
@@ -1851,19 +1890,16 @@ end
 Main loop
 --]]
 
--- Create/update/delete functions spread evenly over the period 'trackChanges'
+-- Create/update/delete functions spread evenly over the period 'checkChanges'
 local cud = {
-  { func = cudCBusTopics, init = false },
+  { name = 'CBus', func = cudCBusTopics, init = false },
 }
-if panasonicSupport then table.insert(cud, { func = cudAc, init = true, script = 'AC' }) end
-if environmentSupport then table.insert(cud, { func = cudEnv, init = true }) end
-if airtopiaSupport then table.insert(cud, { func = cudAt, init = false, script = 'AT' }) end
+if environmentSupport then table.insert(cud, { name = 'environment sensor', func = cudEnv, init = true }) end
+if panasonicSupport then table.insert(cud, { name = 'Panasonic', func = cudAc, init = true }) end
+if airtopiaSupport then table.insert(cud, { nname = 'Airtopia', func = cudAt, init = false }) end
 
 local i, c
 for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function
-
--- Initial load of devices excluding CBus, suppressing MQTT re-subscribe
-for _, c in ipairs(cud) do if c.init then c.func(true); if c.script and script.status(c.script) ~= nil then script.disable(c.script); script.enable(c.script) end end end
 
 local function validateIncoming(cmd) -- Reject any weird socket messages received
   if contains('>', cmd) then
@@ -1918,22 +1954,22 @@ while true do
     if #mqttMessages > 0 then
       -- Send outstanding messages to CBus
       stat, err = pcall(outstandingMqttMessage)
-      if not stat then log('Error processing outstanding MQTT messages: '..err); mqttMessages = {} end -- Log error and clear the queue
+      if not stat then log('Error processing outstanding MQTT messages: '..err) mqttMessages = {} end -- Log error and clear the queue
     end
     if #cbusMessages > 0 then
       -- Send outstanding messages to MQTT
       stat, err = pcall(outstandingCbusMessage)
-      if not stat then log('Error processing outstanding CBus messages: '..err); cbusMessages = {} end -- Log error and clear the queue, continue
+      if not stat then log('Error processing outstanding CBus messages: '..err) cbusMessages = {} end -- Log error and clear the queue, continue
     end
     if #unpublished > 0 then
       -- Publish outstanding CBus discovery topics
       stat, err = pcall(outstandingPublish)
-      if not stat then log('Error publishing outstanding CBus discovery topics: '..err); unpublished = {} end -- Log error and clear the queue, continue
+      if not stat then log('Error publishing outstanding CBus discovery topics: '..err) unpublished = {} end -- Log error and clear the queue, continue
     end
     if #unpublishedAt > 0 then
       -- Publish outstanding Airtopia discovery topics
       stat, err = pcall(outstandingAtPublish)
-      if not stat then log('Error publishing outstanding Airtopia discovery topics: '..err); unpublishedAt = {} end -- Log error and clear the queue, continue
+      if not stat then log('Error publishing outstanding Airtopia discovery topics: '..err) unpublishedAt = {} end -- Log error and clear the queue, continue
     end
     if legacyFirmware and hasMembers(ramp) then
       -- Some scenarios can create ramp orphans when using a legacy firmware setup
@@ -1943,12 +1979,11 @@ while true do
     if hasMembers(discoveryDelete) then
       -- A type has changed for existing topics, so clean up discovery for the old topics
       stat, err = pcall(dupDelete)
-      if not stat then log('Error processing delete discovery duplicates: '..err); discoveryDelete = {} end -- Log error and clear the queue, continue
+      if not stat then log('Error processing delete discovery duplicates: '..err) discoveryDelete = {} end -- Log error and clear the queue, continue
     end
     if checkForChanges then
       -- Periodically create/update/delete device items that change
-      stat, err = pcall(function () for _, c in ipairs(cud) do if socket.gettime() - c.t >=checkChanges then c.t = socket.gettime(); c.func() end end end)
-      if not stat then log('Error checking create/update/delete: '..err) end -- Log and continue
+      for _, c in ipairs(cud) do if socket.gettime() - c.t >=checkChanges then c.t = socket.gettime() local stat, err = pcall(c.func) if not stat then log('Error calling '..c.name..' create/update/delete function: '..err) end end end
     end
   elseif mqttStatus == 2 or not mqttStatus then
     -- MQTT is disconnected, so attempt a connection, waiting. If fail to connect then retry.
@@ -1986,9 +2021,10 @@ while true do
     -- Connected... Now loop briefly to allow retained value retrieval for subscribed topics because synchronous
     while socket.gettime() - mqttConnected < 0.5 do client:loop(0) end
     -- Full publish CBus topics
-    -- NEED GETALLTAGS GERE
     stat, err = pcall(publishCurrent)
     if not stat then log('Error publishing current values: '..err) end -- Log and continue
+    -- Initial load of devices excluding CBus/Airtopia
+    for _, c in ipairs(cud) do if c.init then local stat, err = pcall(c.func) if not stat then log('Error calling '..c.name..' create/update/delete function: '..err) end end end
   else
     log('Error: Invalid mqttStatus: '..mqttStatus)
     pcall(function () server:close() end)
