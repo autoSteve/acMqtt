@@ -29,7 +29,7 @@ local logging = false        -- Enable detailed logging
 local logms = false          -- Display timestamp duration of certain operations
 
 local sendHeartbeat = 30     -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
-local heartbeatConditions = { ['max'] = 120, } -- At most 120 seconds without a heartbeat or else get restarted
+local heartbeatConditions = { max = 120, } -- At most 120 seconds without a heartbeat or else get restarted
 local publishNoLevel = false -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
 local selectExact = true     -- For select, if a CBus level other than in the select levels is set then adjust the CBus level to the next higher select level
 local blindKey               -- If blind fully open is desirable instead of lastlevel, then change to a string contained in every blind object (e.g. 'Blind'), case sensitive
@@ -98,15 +98,15 @@ local unpublishedAt = {}     -- The outstanding set of CBus Airtopia objects to 
 local mqttStatus = 2         -- The status of the MQTT connection. Initially disconnected, which will cause an immediate connection. 1=connected, 2=disconnected
 local mqttConnected = 0      -- Timestamp of MQTT connection
 local imgDefault = {         -- Defaults for images - Simple image name, or a table of 'also contains' keywords (which must include an #else entry)
-  ['heat']        = 'mdi:radiator',
-  ['blind']       = 'mdi:blinds',
-  ['under floor'] = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
-  ['towel rail']  = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
-  ['fan']         = {['sweep'] = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
-  ['exhaust']     = 'mdi:fan',
-  ['gate']        = {['open'] = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
+  heat            = 'mdi:radiator',
+  blind           = 'mdi:blinds',
+  ['under floor'] = {enable = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
+  ['towel rail']  = {enable = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
+  fan             = {sweep = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
+  exhaust         = 'mdi:fan',
+  gate            = {open = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
 }
-local acMsg = {['climate'] = true, ['select'] = true, ['sensor'] = true}
+local acMsg = {climate = true, select = true, sensor = true}
 
 local airtopiaCmds = {'power', 'fan', 'swing', 'mode', 'target_temperature'} -- All command topics (used for clean up)
 local atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
@@ -121,9 +121,9 @@ local started = socket.gettime()
 local heartbeat = started
 
 -- Runtime global variable checking. Globals must be explicitly declared, which will catch variable name typos
-local declaredNames = {['vprint'] = true, ['vprinthex'] = true, ['maxgroup'] = true, ['mosquitto'] = true, ['rr'] = true, ['_'] = true, }
+local declaredNames = {vprint = true, vprinthex = true, maxgroup = true, mosquitto = true, rr = true, _ = true, }
 local function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
-local exclude = {['ngx'] = true, }
+local exclude = {ngx = true, }
 setmetatable(_G, {
   __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n..'"') end rawset(t, n, v) end,
   __index = function (_, n) if not exclude[n] and not declaredNames[n] then log('Warning: Read undeclared global variable "'..n..'"') end return nil end,
@@ -179,7 +179,7 @@ end
 
 
 --[[
-Warn for >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping / missing scripts / wrong version
+Warn for firmware >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping / missing scripts / wrong version
 --]]
 local eventScripts = db:getall("SELECT name FROM scripting WHERE type = 'event'")
 local eventName, finalName, acName, atName, s = nil, nil, nil, nil, nil
@@ -199,8 +199,8 @@ if not eventInstalled and not finalInstalled then
 end
 
 local compatibleEvent = false
-if eventInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..eventName.."'")[1]['script']) end
-if finalInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..finalName.."'")[1]['script']) end
+if eventInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..eventName.."'")[1].script) end
+if finalInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..finalName.."'")[1].script) end
 if not compatibleEvent then
   local scriptInUse = ''
   if finalInstalled then scriptInUse = finalName end
@@ -226,7 +226,7 @@ if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version
   local edr
   if eventInstalled then
     edr = db:getall("SELECT subparams FROM scripting WHERE name = '"..eventName.."'")
-    edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
+    edr = edr[1] if edr ~= nil then edr = edr.subparams end
     if edr ~= '1' then
       log("Error firmware > 1.15.0: Event script 'MQTT' is not set to execute during ramping. Not starting. Consider using 'MQTT final' instead.")
       while true do sleep(1) end
@@ -234,7 +234,7 @@ if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version
   end
   if finalInstalled then
     edr = db:getall("SELECT subparams FROM scripting WHERE name = '"..finalName.."'")
-    edr = edr[1] if edr ~= nil then edr = edr['subparams'] end
+    edr = edr[1] if edr ~= nil then edr = edr.subparams end
     if edr ~= '0' then
       log("Error firmware > 1.15.0: Event script 'MQTT final' is set to execute during ramping. Turn this off. Not starting.")
       while true do sleep(1) end
@@ -302,7 +302,7 @@ client.ON_MESSAGE = function(mid, topic, payload)
           discoveryDelete[parts[3]..'/'..parts[2]] = true
         else
           discovery[parts[3]] = parts[2] -- Table of CBus addresses with type as the value
-          discoveryName[parts[3]] = json.decode(payload)['dev']['name'] -- Used for rename detection
+          discoveryName[parts[3]] = json.decode(payload).dev.name -- Used for rename detection
         end
       end
     end
@@ -570,49 +570,49 @@ local function addDiscover(net, app, group, channel, tags, name)
       end
     end
   end
-  -- All keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
+    -- All keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
   local _L = {
-    ['pn'] = name,      -- Preferred name
-    ['sa'] = '',        -- Suggested area
-    ['img'] = '',       -- Image
-    ['unit'] = '',      -- Units
-    ['class'] = '',     -- HomeAssistant class
-    ['dec'] = 2,        -- Decimal places
-    ['scale'] = 1,      -- Scale (multiplier or divider)
-    ['on'] = 'On',      -- bsensor 'on' string
-    ['off'] = 'Off',    -- bsensor 'off' string
-    ['lvl'] = {},       -- Levels
+    pn = name,      -- Preferred name
+    sa = '',        -- Suggested area
+    img = '',       -- Image
+    unit = '',      -- Units
+    class = '',     -- HomeAssistant class
+    dec = 2,        -- Decimal places
+    scale = 1,      -- Scale (multiplier or divider)
+    on = 'On',      -- bsensor 'on' string
+    off = 'Off',    -- bsensor 'off' string
+    lvl = {},       -- Levels
   }
   local dType = 'light' -- Use light as default HomeAssistant type if not specified
   local includeUnit = false
   local lvl = false
-  local action, boid, dSa, payload, prefix, tag
+  local action, boid, dSa, payload, prefix, tag, k, t
   
   -- Build an alias to refer to each group
   local alias = net..'/'..app..'/'..group
   if channel ~= nil then alias = alias..'/'..channel end
 
   local allow = {
-    ['light'] = {['getPayload'] = function()
+    light = {getPayload = function()
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', bri_stat_t = mqttReadTopic..alias..'/level', bri_cmd_t = mqttWriteTopic..alias..'/ramp', pl_off = 'OFF', on_cmd_type = 'brightness',}
       end },
-    ['switch'] = {['getPayload'] = function()
+    switch = {getPayload = function()
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF',}
       end },
-    ['cover'] = {['getPayload'] = function()
+    cover = {getPayload = function()
       cover[alias] = true
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
       end },
-    ['fan'] = {['getPayload'] = function() fan[alias] = true storeLevel[alias] = true return {
+    fan = {getPayload = function() fan[alias] = true storeLevel[alias] = true return {
       stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pl_on = 'ON', pl_off = 'OFF', pr_modes = {'low', 'medium', 'high'},
       pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
       pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value == 0 %} OFF {% elif value == 86 %} low {% elif value == 170 %} medium {% elif value == 255 %} high {% endif %}'
     } end },
-    ['fan_pct'] = {['getPayload'] = function()
+    fan_pct = {getPayload = function()
       dType = 'fan' fan[alias] = true storeLevel[alias] = true
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF', pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_stat_t = mqttReadTopic..alias..'/level', opt = true,}
       end },
-    ['sensor'] = {['getPayload'] = function()
+    sensor = {getPayload = function()
       local payload
       if channel ~= nil then payload = { stat_t = mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/state', } else payload = { stat_t = mqttReadTopic..alias..'/state', } end
       if _L.class ~= '' then payload.dev_cla = _L.class end
@@ -623,19 +623,19 @@ local function addDiscover(net, app, group, channel, tags, name)
       if _L.unit ~= '' and not includeUnit then payload.unit_of_meas = _L.unit else payload.unit_of_meas = '' end
       return payload
       end },
-    ['binary_sensor'] = {['getPayload'] = function()
+    binary_sensor = {getPayload = function()
       binarySensor[alias] = true
       return {stat_t = mqttReadTopic..alias..'/state', pl_on = 'ON', pl_off = 'OFF',}
       end },
-    ['bsensor'] = {['getPayload'] = function()
+    bsensor = {getPayload = function()
       bSensor[alias] = true dType = 'sensor'
       return {stat_t = mqttReadTopic..alias..'/state', val_tpl = '{% if value | float == 0 %} '.._L.off..' {% else %} '.._L.on..' {% endif %}',}
       end },
-    ['button'] = {['getPayload'] = function()
+    button = {getPayload = function()
       button[alias] = true
       if lighting[tostring(app)] then lightingButton[alias] = true return {cmd_t = mqttWriteTopic..alias..'/press',} else return nil end
       end },
-    ['select'] = {['getPayload'] = function()
+    select = {getPayload = function()
       if #_L.lvl == 0 then log('Error: lvl= keyword not specified for select at '..alias..', which is required so ignoring') return nil end
       local level
       local options = {}
@@ -658,7 +658,7 @@ local function addDiscover(net, app, group, channel, tags, name)
 
   -- Extract MQTT topic settings
   for k, t in pairs(tags) do
-    local k = trim(k):lower()
+    if k ~= 'FAN' then k = trim(k):lower() end
     if k == 'includeunit' then includeUnit = true end
     if t ~= -1 then
       local v = trim(t)
@@ -672,6 +672,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       end
     else
       if k == 'binarysensor' then k = 'binary_sensor' end -- Synonym
+      if k == 'fanpct' then k = 'fan_pct' end -- Synonym
       if allow[k] then dType = k end
     end
     -- Any other unrecognised keywords that may be set are ignored, as they likely have an unrelated use
@@ -758,7 +759,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       local i
       mqttDevices[alias].trigger = {}
       mqttDevices[alias].type = 'button'
-      if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels
+      if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels, which is most inefficient!
       for _, i in ipairs(_L.lvl) do
         local tag, lvl = decodeLevel(net, app, group, i, publishNoLevel and 'Level '..i or nil)
         if tag then
@@ -898,32 +899,32 @@ local function addAt(grps, found)
   end
 
   for alias, v in pairs(scan) do
-    if v['dev'] ~= '' then
-      if atLog[v['dev']] == nil and atArea[v['dev']] == nil then
-        log('Error: No suggested area set for Airtopia device '..v['dev']..'. At least one user parameter needs "sa="')
-        atLog[v['dev']] = true -- Logged for the device, so do not log any further related user param issues for the device
+    if v.dev ~= '' then
+      if atLog[v.dev] == nil and atArea[v.dev] == nil then
+        log('Error: No suggested area set for Airtopia device '..v.dev..'. At least one user parameter needs "sa="')
+        atLog[v.dev] = true -- Logged for the device, so do not log any further related user param issues for the device
         goto nextAt
       end
-      if at[alias] == nil and atArea[v['dev']] ~= nil then
-        local sa = atArea[v['dev']]; if sa == nil then sa = '' end
+      if at[alias] == nil and atArea[v.dev] ~= nil then
+        local sa = atArea[v.dev]; if sa == nil then sa = '' end
         local sao = ''; if sa ~= '' then sao = string.lower(sa:gsub("% ", "_"))..'_' end
-        if v['func'] ~= '' then
+        if v.func ~= '' then
           if not at[alias] then
             at[alias] = {}; addition = true
-            at[alias].name = sao..v['dev']..'-'..v['func']; at[alias].select = 'func'; atDevices[sao..v['dev']..'-'..v['func']] = alias;
-            if atBoards[sao..v['dev']] == nil and v['func'] == 'power' then atBoards[sao..v['dev']] = {alias=alias, dev=v['dev'], sa=sa} end
+            at[alias].name = sao..v.dev..'-'..v.func; at[alias].select = 'func'; atDevices[sao..v.dev..'-'..v.func] = alias;
+            if atBoards[sao..v.dev] == nil and v.func == 'power' then atBoards[sao..v.dev] = {alias=alias, dev=v.dev, sa=sa} end
             stat, err = pcall(publishAt, alias, GetUserParam(v.net, v.group)) if not stat then log(err) end
-            atLog[v['dev']] = nil
+            atLog[v.dev] = nil
             atLogGrp[alias] = nil
           end
         elseif sense ~= '' then
           if not at[alias] then
-            if atBoards[sao..v['dev']] ~= nil then
+            if atBoards[sao..v.dev] ~= nil then
               at[alias] = {}; addition = true
-              at[alias].name = sao..v['dev']..'-'..v['sense']; at[alias].select = 'sense'; at[alias].sense = v['sense']; atDevices[sao..v['dev']..'-'..v['sense']] = alias
-              atBoards[sao..v['dev']]['unit'] = v['unit']
+              at[alias].name = sao..v.dev..'-'..v.sense; at[alias].select = 'sense'; at[alias].sense = v.sense; atDevices[sao..v.dev..'-'..v.sense] = alias
+              atBoards[sao..v.dev].unit = v.unit
               stat, err = pcall(publishAt, alias, GetUserParam(v.net, v.group)) if not stat then log(err) end
-              atLog[v['dev']] = nil
+              atLog[v.dev] = nil
               atLogGrp[alias] = nil
             end
           end
@@ -933,7 +934,7 @@ local function addAt(grps, found)
       if not atLogGrp[alias] then log('Error: No device specified for Airtopia group '..alias); atLogGrp[alias] = true end
     end
     ::nextAt::
-    if at[alias] ~= nil and atArea[v['dev']] ~= nil then
+    if at[alias] ~= nil and atArea[v.dev] ~= nil then
       table.insert(found, alias) -- Valid, having a sa=, so found (otherwise removed elsewhere if an existing device)
     end
   end
@@ -949,12 +950,12 @@ local function getGroups(kw)
   for _, t in ipairs(db:getall("SELECT o.address, o.tagcache, o.name FROM objects AS o JOIN objecttags AS ot ON o.id=ot.object WHERE ot.tag='"..kw.."'")) do
     local alias = knxlib.decodega(t.address)
     local parts = alias:split('/')
-    grps[alias] = { ['tags'] = {}, ['name'] = t.name, ['keywords'] = t.tagcache:gsub(', ',','), ['net'] = tonumber(parts[1]), ['app'] = tonumber(parts[2]), ['group'] = tonumber(parts[3]), ['channel'] = tonumber(parts[4]), }
+    grps[alias] = { tags = {}, name = t.name, keywords = t.tagcache:gsub(', ',','), net = tonumber(parts[1]), app = tonumber(parts[2]), group = tonumber(parts[3]), channel = tonumber(parts[4]), }
     local tags = {}
     local tg
     for _, tg in ipairs(grps[alias].keywords:split(',')) do
       parts = tg:split('=')
-      if parts[2] then tags[parts[1]] = parts[2] else tags[parts[1]] = -1 end
+      if parts[2] then tags[trim(parts[1])] = trim(parts[2]) else tags[trim(parts[1])] = -1 end
     end
     grps[alias].tags = tags
   end
@@ -989,7 +990,6 @@ local function publishCurrent()
     for alias, v in pairs(grps) do
       dev = ''; local sa = nil; local vv
       for tag, vv in pairs(v.tags) do
-        tag = trim(tag):lower()
         if tag == 'dev' then
           dev = vv
         elseif tag == 'sa' then
@@ -1034,7 +1034,6 @@ local function cudAc()
 
     local dev=''; local func = ''; local sel = ''; local sense = ''; local topic = 'sensor'; local tags = v.keywords
     for k, t in pairs(v.tags) do
-      k = trim(k):lower()
       if t ~= -1 then
         t = trim(t)
         if k == 'dev' then dev = t -- Device
@@ -1166,9 +1165,9 @@ local function cudAt()
   local n = 0
   for k, v in pairs(atBoards) do
     if boards[k] == nil then
-      if v['sa'] ~= nil then
+      if v.sa ~= nil then
         n = n + 1
-        unpublishedAt[n] = {name=v['dev'], sa=v['sa'], unit=v['unit']}
+        unpublishedAt[n] = {name=v.dev, sa=v.sa, unit=v.unit}
         addition = true
       else
         log('Error publishing Airtopia '..k..'. No suggested area given')
@@ -1204,7 +1203,6 @@ local function cudEnv()
 
     local dev=''; local func = ''; local sel = ''
     for k, t in pairs(v.tags) do
-      k = trim(k):lower()
       if t ~= -1 then
         t = trim(t)
         if k == 'dev' then dev = t -- Device
@@ -1439,7 +1437,7 @@ local function outstandingAtPublish()
   local stat, err
 
   for _, u in ipairs(unpublishedAt) do
-    stat, err = pcall(addAtDiscover, u['name'], u['sa'], nil)
+    stat, err = pcall(addAtDiscover, u.name, u.sa, nil)
     if not stat then
       failed = failed + 1
       log(err)
@@ -1649,20 +1647,20 @@ local function outstandingMqttMessage()
           i = indexOf(atmodes, payload)
           if i ~= nil then
             local set = false
-            local pwrgrp = tonumber(string.split(atBoards[parts[2]]['alias'], '/')[3]) -- Get the power user parameter
+            local pwrgrp = tonumber(string.split(atBoards[parts[2]].alias, '/')[3]) -- Get the power user parameter
             local extant = GetUserParam(net, pwrgrp)
             local pld = nil
             if payload ~= 'off' then
               pub(alias, i)
-              pub(atBoards[parts[2]]['alias'], 1) -- Power on
+              pub(atBoards[parts[2]].alias, 1) -- Power on
               if extant ~= 1 then set = true; pld = 1 end
             else
-              pub(atBoards[parts[2]]['alias'], 0) -- Power off
+              pub(atBoards[parts[2]].alias, 0) -- Power off
               if extant ~= 0 then set = true; pld = 0 end
             end
             if set and pld ~= nil then
               -- Send to CBus, ensuring MQTT ignore is set...
-              local alias = atBoards[parts[2]]['alias']
+              local alias = atBoards[parts[2]].alias
               ignoreMqtt[alias] = socket.gettime(); if logging then log('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..pld) end
               SetUserParam(net, pwrgrp, pld)
             end
