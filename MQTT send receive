@@ -349,9 +349,11 @@ local function publish(alias, net, app, group, level, noPre)
         end
       elseif button[alias] then -- It's a button, so do nothing as it has no state
       else -- It's a bog standard group
+        local v
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
-        if level ~= -1 then client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN) end
-        if logging then log('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level) end
+        if publishAdj[alias] then v = tonumber(string.format('%.'..publishAdj[alias].dec..'f', level * publishAdj[alias].scale)) else v = level end
+        if level ~= -1 then client:publish(mqttReadTopic..alias..'/level', v, mqttQoS, RETAIN) end
+        if logging then log('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..v) end
       end
     else -- It's a binary sensor / trigger
       client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
