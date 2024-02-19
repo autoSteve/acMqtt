@@ -631,7 +631,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       end },
     bsensor = {getPayload = function()
       bSensor[alias] = true dType = 'sensor'
-      return {stat_t = mqttReadTopic..alias..'/state', val_tpl = '{% if value | float == 0 %} '.._L.off..' {% else %} '.._L.on..' {% endif %}',}
+      return {stat_t = mqttReadTopic..alias..'/level', val_tpl = '{% if value | float == 0 %} '.._L.off..' {% else %} '.._L.on..' {% endif %}',}
       end },
     button = {getPayload = function()
       button[alias] = true
