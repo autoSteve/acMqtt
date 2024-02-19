@@ -361,7 +361,7 @@ local function publish(alias, net, app, group, level, noPre)
   else -- It's a user parameter
     local v
     if publishAdj[alias] then v = tonumber(string.format('%.'..publishAdj[alias].dec..'f', level * publishAdj[alias].scale)) else v = level end
-    client:publish(mqttReadTopic..alias..'/state', v, mqttQoS, RETAIN)
+    client:publish(mqttReadTopic..alias..'/level', v, mqttQoS, RETAIN)
     if logging then log('Publishing value '..mqttReadTopic..alias..' to '..v) end
   end
   if not noPre then
@@ -393,7 +393,7 @@ local function publishMeasurement(alias, net, app, group, channel, value, noPre)
     end
   end
   local mAlias = lastSlashToUnderscore(alias)
-  client:publish(mqttReadTopic..mAlias..'/state', v, mqttQoS, RETAIN)
+  client:publish(mqttReadTopic..mAlias..'/level', v, mqttQoS, RETAIN)
   -- if logging then log('Publishing measurement '..mqttReadTopic..mAlias..' to '..v) end
   if not noPre and value ~= nil then
     storage.set('pre'..alias, string.format('%.3f', value))
@@ -410,7 +410,7 @@ local function publishUnitParam(alias, net, app, group, channel, value, noPre)
   local v
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
   local mAlias = lastSlashToUnderscore(alias)
-  client:publish(mqttReadTopic..mAlias..'/state', v, mqttQoS, RETAIN)
+  client:publish(mqttReadTopic..mAlias..'/level', v, mqttQoS, RETAIN)
   if logging then log('Publishing unit parameter '..mqttReadTopic..mAlias..' to '..v) end
   if not noPre and value ~= nil then
     storage.set('pre'..alias, string.format('%.3f', value))
@@ -610,11 +610,11 @@ local function addDiscover(net, app, group, channel, tags, name)
     } end },
     fan_pct = {getPayload = function()
       dType = 'fan' fan[alias] = true storeLevel[alias] = true
-      return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF', pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_stat_t = mqttReadTopic..alias..'/level', opt = true,}
+      return {stat_t = mqttReadTopic..alias..'/level', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF', pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_stat_t = mqttReadTopic..alias..'/level', opt = true,}
       end },
     sensor = {getPayload = function()
       local payload
-      if channel ~= nil then payload = { stat_t = mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/state', } else payload = { stat_t = mqttReadTopic..alias..'/state', } end
+      if channel ~= nil then payload = { stat_t = mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/level', } else payload = { stat_t = mqttReadTopic..alias..'/level', } end
       if _L.class ~= '' then payload.dev_cla = _L.class end
       if app == 250 then userParameter[alias] = true end
       if app == 255 then unitParameter[alias] = true end
@@ -1335,10 +1335,8 @@ local function cudCBusTopics()
         end
         if mqttJunk then client:publish(topic..'/state', 'junk', mqttQoS, RETAIN) end
         client:publish(topic..'/state', '', mqttQoS, RETAIN)
-        if count ~= 3 or bSensor[alias] or binarySensor[alias] then  -- Level not set for measurement and binary sensors
-          if mqttJunk then client:publish(topic..'/level', 'junk', mqttQoS, RETAIN) end
-          client:publish(topic..'/level', '', mqttQoS, RETAIN)
-        end
+        if mqttJunk then client:publish(topic..'/level', 'junk', mqttQoS, RETAIN) end
+        client:publish(topic..'/level', '', mqttQoS, RETAIN)
         if v.type == 'select' then
           if mqttJunk then client:publish(topic..'/select', 'junk', mqttQoS, RETAIN) end
           client:publish(topic..'/select', '', mqttQoS, RETAIN)
