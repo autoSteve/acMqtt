@@ -587,6 +587,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   }
   local dType = 'light' -- Use light as default HomeAssistant type if not specified
   local includeUnit = false
+  local forceDecimals = false
   local lvl = false
   local action, boid, dSa, payload, prefix, tag, k, t
   
@@ -617,6 +618,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     sensor = {getPayload = function()
       local payload
       if channel ~= nil then payload = { stat_t = mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/level', } else payload = { stat_t = mqttReadTopic..alias..'/level', } end
+      if lighting[tostring(app)] and not forceDecimals then _L.dec = 0 end
       if _L.class ~= '' then payload.dev_cla = _L.class end
       if app == 250 then userParameter[alias] = true end
       if app == 255 then unitParameter[alias] = true end
@@ -662,6 +664,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   for k, t in pairs(tags) do
     if k ~= 'FAN' then k = trim(k):lower() end
     if k == 'includeunit' then includeUnit = true end
+    if k == 'dec' then forceDecimals = true end
     if t ~= -1 then
       local v = trim(t)
       if _L[k] then
@@ -1730,9 +1733,7 @@ end
 Publish the next queued messages for MQTT
 --]]
 local function outstandingCbusMessage()
-  local cmd
-  local final = false
-  local stat, err
+  local cmd, stat, err, parts, alias, final
 
   local lastLevel = storage.get('lastlvl', {})
   for _, cmd in ipairs(cbusMessages) do
@@ -1740,12 +1741,15 @@ local function outstandingCbusMessage()
     if contains('>', cmd) then
       cmd = cmd:gsub('>', '/')
       final = true
-      if logging and lighting[string.split(cmd, '/')[2]] then log('Final level achieved, '..cmd) end
+      parts = string.split(cmd, '/')
+      alias = parts[1]..'/'..parts[2]..'/'..parts[3]
+      if logging and lighting[parts[2]] then log('Final level achieved, '..cmd) end
+    else
+      final = false
+      parts = string.split(cmd, '/')
+      alias = parts[1]..'/'..parts[2]..'/'..parts[3]
     end
 
-    local parts = string.split(cmd, '/')
-    local alias = parts[1]..'/'..parts[2]..'/'..parts[3]
-    
     if panasonicSupport and ac[alias] then -- AC message to MQTT (no ramping involved for AC groups)
       stat, err = pcall(publishAc, alias, parts[4], ac[alias].select)
       if not stat then log(err) end
