@@ -533,15 +533,16 @@ local function decodeLevel(net, app, group, level, default)
   local lvl = -1
   if #parts == 2 then -- A select option and level
     lvl = tonumber(parts[2])
-    if lvl == nil or lvl < 0 or lvl > 255 then log('Error: Invalid level for '..net..'/'..app..'/'..group..', level "'..parts[2]..'" is probably not numeric or outside acceptable range') return nil, nil end
+    if lvl == nil then log('Error: Invalid lvl= for '..net..'/'..app..'/'..group..', level "'..parts[2]..'" is probably not numeric') return nil, nil end
+    if lvl < 0 or lvl > 255  then log('Error: Invalid lvl= for '..net..'/'..app..'/'..group..', level "'..parts[2]..'" is outside acceptable range') return nil, nil end
     return parts[1], lvl
   elseif #parts == 1 and tonumber(parts[1]) then -- Level numbers only
     lvl = tonumber(parts[1])
-    if lvl < 0 or lvl > 255 then log('Error: Invalid level for '..net..'/'..app..'/'..group..', level '..lvl..' is outside acceptable range') return nil, nil end
+    if lvl < 0 or lvl > 255 then log('Error: Invalid lvl= for '..net..'/'..app..'/'..group..', level '..lvl..' is outside acceptable range') return nil, nil end
     parts[1] = GetCBusLevelTag(net, app, group, lvl)
     if parts[1] == nil then
       if default == nil then
-        log('Error: No level tag for '..net..'/'..app..'/'..group..', level '..lvl..' which is required when specifying numeric level only') return nil, nil
+        log('Error: No level tag for '..net..'/'..app..'/'..group..', level '..lvl..' which is required when specifying numeric only for lvl=') return nil, nil
       else
         parts[1] = default
         log('Warning: Trigger '..net..'/'..app..'/'..group..' has no level tag defined for level '..level..', setting to "'..default..'"')
@@ -550,7 +551,7 @@ local function decodeLevel(net, app, group, level, default)
     return parts[1], lvl
   elseif #parts == 1 then -- Level tags only
     lvl = GetCBusLevelAddress(net, app, group, parts[1])
-    if lvl == nil then log('Error: Invalid level tag for '..net..'/'..app..'/'..group..', level '..parts[1]..', so not adding and ignoring') return nil end
+    if lvl == nil then log('Error: Invalid lvl= for '..net..'/'..app..'/'..group..', level '..parts[1]) return nil end
     return parts[1], lvl
   end
 end
@@ -636,7 +637,7 @@ local function addDiscover(net, app, group, channel, tags, name)
             if count == 0 then tpl = '{% if value | float == '..lvl..' %}'..tag else tpl = tpl..'{% elif value | float == '..lvl..' %}'..tag end
             count = count + 1
           else
-            log('Error: Invalid lvl= for sensor '..alias..', so not adding and ignoring') return nil
+            return nil
           end
         end
         payload.val_tpl = tpl..'{% else %}Unknown{% endif %}'
@@ -658,7 +659,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       if lighting[tostring(app)] then lightingButton[alias] = true return {cmd_t = mqttWriteTopic..alias..'/press',} else return nil end
       end },
     select = {getPayload = function()
-      if #_L.lvl == 0 then log('Error: lvl= keyword not specified for select at '..alias..', which is required so ignoring') return nil end
+      if #_L.lvl == 0 then log('Error: lvl= keyword not specified for select at '..alias..', which is required') return nil end
       local level
       local options = {}
       selects[alias] = {}
@@ -669,9 +670,8 @@ local function addDiscover(net, app, group, channel, tags, name)
           selects[alias][opt] = sel
           if not selects[alias].allLvl then selects[alias].allLvl = {} end; selects[alias].allLvl[#selects[alias].allLvl + 1] = { lvl = sel, sel = opt }
         else
-          log('Error: Invalid lvl= for select '..alias..', so not adding and ignoring') return nil
+          return nil
         end
-        -- if not selects[alias].allLvl then selects[alias].allLvl = {} end; selects[alias].allLvl[#selects[alias].allLvl + 1] = { lvl = tonumber(parts[2]), sel = parts[1] }
       end
       table.sort(selects[alias].allLvl, function (left, right) return left.lvl < right.lvl end)
       return {stat_t = mqttReadTopic..alias..'/select', cmd_t = mqttWriteTopic..alias..'/select', options = options,}
@@ -686,7 +686,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     if t ~= -1 then
       local v = trim(t)
       if _L[k] then
-        if type(_L[k]) == 'number' then _L[k] = tonumber(v)
+        if type(_L[k]) == 'number' then _L[k] = tonumber(v) if _L[k] == nil then error('Error: Bad numeric value for '..alias..', keyword "'..k..'="') end
         elseif type(_L[k]) == 'table' then
           if contains('-', v) then error('Error: Legacy separator "-" being used to separate list members '..alias..'! Use "/" instead') end
           _L[k] = string.split(v, '/')
@@ -697,10 +697,10 @@ local function addDiscover(net, app, group, channel, tags, name)
       if k == 'binarysensor' then k = 'binary_sensor' end -- Synonym
       if k == 'fanpct' then k = 'fan_pct' end -- Synonym
       if allow[k] then
-        if dType == nil then dType = k else error('Error: More than one type keyword used for '..alias..', so ignoring') end
+        if dType == nil then dType = k else error('Error: More than one "type" keyword used for '..alias) end
       end
     end
-    -- Any other unrecognised keywords that may be set are ignored, as they likely have an unrelated use
+    -- Any other unrecognised keywords that may be set are ignored, as they likely have an unrelated use (but could be typos; no simple way to check)
   end
   if dType == nil then dType = 'light' end -- Use light as default HomeAssistant type if not specified
   
