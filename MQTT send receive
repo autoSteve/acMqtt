@@ -617,14 +617,34 @@ local function addDiscover(net, app, group, channel, tags, name)
       end },
     sensor = {getPayload = function()
       local payload
+      local str = false
       if channel ~= nil then payload = { stat_t = mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/level', } else payload = { stat_t = mqttReadTopic..alias..'/level', } end
       if lighting[tostring(app)] and not forceDecimals then _L.dec = 0 end
       if _L.class ~= '' then payload.dev_cla = _L.class end
       if app == 250 then userParameter[alias] = true end
       if app == 255 then unitParameter[alias] = true end
-      payload.value_template = '{{ value | float | round ('.._L.dec..') }}'
+      if #_L.lvl == 0 then
+        if app == 250 then _, _ = pcall(function () if tonumber(GetUserParam(net, group)) ~= nil then payload.val_tpl = '{{ value | float | round ('.._L.dec..') }}' end end)
+        else payload.val_tpl = '{{ value | float | round ('.._L.dec..') }}'
+        end
+        if not payload.val_tpl then str = true end
+      else
+        str = true
+        local count = 0
+        local tpl
+        for _, level in ipairs(_L.lvl) do
+          local tag, lvl = decodeLevel(net, app, group, level)
+          if tag ~= nil then
+            if count == 0 then tpl = '{% if value | float == '..lvl..' %}'..tag else tpl = tpl..'{% elif value | float == '..lvl..' %}'..tag end
+            count = count + 1
+          else
+            log('Error: Invalid lvl= for select '..alias..', so not adding and ignoring') return nil
+          end
+        end
+        payload.val_tpl = tpl..'{% else %}Unknown{% endif %}'
+      end
       if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
-      if _L.unit ~= '' and not includeUnit then payload.unit_of_meas = _L.unit else payload.unit_of_meas = '' end
+      if _L.unit ~= '' and not includeUnit then payload.unit_of_meas = _L.unit else if not str then payload.unit_of_meas = '' end end
       return payload
       end },
     binary_sensor = {getPayload = function()
@@ -1400,6 +1420,7 @@ local function outstandingPublish()
       if level ~= nil then stat, err = pcall(publishMeasurement, alias, u.net, u.app, u.group, u.channel, level, true) if not stat then log(err) end end
     -- User parameters
     elseif u.app == 250 then stat, err = pcall(publish, alias, u.net, u.app, u.group, GetUserParam(u.net, u.group), true) if not stat then log(err) end
+    -- Unit parameters
     elseif u.app == 255 then
       alias = alias..'/'..u.channel
       local level = nil; pcall(function () level = GetUnitParameter(u.net, u.group, u.channel) end)

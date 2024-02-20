@@ -66,7 +66,7 @@ And in addition to the type...
 - dec=    Decimal places (User param/sensor only)
 - unit=   Unit of measurement (User param/sensor only)
 - scale=  Multiplier / divider (User param/sensor only)
-- lvl=    List of applicable levels, separated by "/" (Trigger button and select only)
+- lvl=    List of applicable levels, separated by "/" (Trigger button, select and lighting sensors only)
 - on=     Preferred value shown in HA for a 'bsensor' ON value (bsensor only)
 - off=    Preferred value shown in HA for a 'bsensor' OFF value (bsensor only)
 - Plus the keyword includeunits for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, not the unit= keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without includeunits is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
@@ -81,6 +81,8 @@ There are three options for lvl=:
 - The level tags: lvl=Option 1/Option 2, which will look up the level number
 
 And futher for select only, if it is desirable to allow CBus levels other than the specific select levels to be set then alter the selectExact variable in the 'MQTT send receive' script, otherwise that script will force the level to be set to the nearest select level.
+
+A special case exists to use lvl= with a lighting group sensor. This is where it is preferred to present the CBus level display text instead of the group level (or any display text by using the format lvl=State zero:0/State one:1, which will not look up the level tag).
 
 For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
 
@@ -114,10 +116,11 @@ Keyword examples:
 - MQTT, button, sa=Entry / Egress, lvl=0/1/2/5/127, pn=Inside      *(a trigger control group with various levels)*
 - MQTT, button, sa=Outside, img=mdi:gate-open,      *(a lighting group button to open a gate)*
 - MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
+- MQTT, sensor, sa=Family room, pn=Alarm state, lvl=Disarmed:0/Armed:1,       *(a lighting group sensor to display alarm state)*
 
 For the bsensor example of a carport motion sensor, set up a CBus group address on the PIR unit to trigger on movement with a short timer like 5s in a block entry and then add the MQTT keywords to that group.
 
-For some PIR sensors, like the 5753PEIRL the light level may be broadcast periodically to a group address. Getting this into HomeAssistant is then trivial with keywords like these:
+For some PIR sensors, like the 5753PEIRL the light level may be broadcast periodically to a group address. Getting this into HomeAssistant as a percentage is then trivial with keywords like these:
 
 - MQTT, sensor, sa=Carport, pn=Carport Light Level, unit=%, dec=0, scale=0.390625,
 
