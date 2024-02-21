@@ -563,7 +563,7 @@ Build and publish a CBus MQTT discovery topic
 local function addDiscover(net, app, group, channel, tags, name)
   if not name then -- Need a name from tag lookup for everything but measurement app
     if channel == nil then
-      error('Error: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required so ignoring')
+      error('Error: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required')
     else
       if app ~= 255 then
         name = 'Measurement'
@@ -1097,6 +1097,7 @@ local function cudAc()
   end
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
   if addition then
+    for k, _ in pairs(acBoards) do client:subscribe(k..'/#', 2) end
     if acName then
       log('Added '..count..' Panasonic A/C object'..(count ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..', event script \''..acName..'\' restarted')
       -- Ensure that newly tagged/removed groups with the AC keyword send updates.
@@ -1104,7 +1105,6 @@ local function cudAc()
     else
       error('Panasonic A/C event script \'AC\' not found')
     end
-    for k, _ in pairs(acBoards) do client:subscribe(k..'/#', 2) end
   end
 end
 
@@ -1258,8 +1258,8 @@ local function cudEnv()
   end
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
   if addition then
-    log('Added '..count..' environment sensor object'..(count ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or ''))
     for k, _ in pairs(envBoards) do client:subscribe(k..'/#', 2) end
+    log('Added '..count..' environment sensor object'..(count ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or ''))
   end
 end
 
@@ -1435,7 +1435,7 @@ local function outstandingPublish()
         else
           pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
         end
-       if level ~= nil then stat, err = pcall(publish, alias, u.net, u.app, u.group, level, true) if not stat then log(err) end end
+        if level ~= nil then stat, err = pcall(publish, alias, u.net, u.app, u.group, level, true) if not stat then log(err) end end
       end
     end
   end
@@ -1932,17 +1932,17 @@ local function validateIncoming(cmd) -- Reject any weird socket messages receive
     local parts = string.split(incoming[1], '/')
     local payload = incoming[2]
     local dstC, n
-    if parts[2] and parts[2] == '228' then dstC = 4 else dstC = 3 end -- Measurement app is four dest parts, else three
+    if parts[2] and (parts[2] == '228' or parts[2] == '255') then dstC = 4 else dstC = 3 end -- Measurement/Unit param app is four dest parts, else three
     if payload == nil then return false end
-    for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dst parts are not whole decimal numbers
+    for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dest parts are not whole decimal numbers
     return true
   else
     local _, count = cmd:gsub('/', ''); if count < 3 or count > 4 then return false end
     local parts = string.split(cmd, '/')
     local dstC, payload, n
-    if parts[2] and parts[2] == '228' then dstC = 4; payload = parts[5] else dstC = 3; payload = parts[4] end -- Measurement app is four dest parts, else three
+    if parts[2] and (parts[2] == '228' or parts[2] == '255') then dstC = 4; payload = parts[5] else dstC = 3; payload = parts[4] end -- Measurement/Unit param app is four dest parts, else three
     if payload == nil then return false end
-    for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dst parts are not whole decimal numbers
+    for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dest parts are not whole decimal numbers
     return true
   end
   return false
