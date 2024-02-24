@@ -50,6 +50,8 @@ Newly added keywords can be regularly detected by both the 'MQTT send receive' a
 ### CBus (MQTT send receive)
 Lighting, measurement, user parameter, unit parameter and trigger control applications are implemented. (Unit parameter as a sensor only.)
 
+**Note**: All keywords are case sensitive.
+
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
 A type of light, fan, fan_pct (or fanpct), cover, select, sensor, switch, binary_sensor (or binarysensor), bsensor or button (default if not specified is 'light').
