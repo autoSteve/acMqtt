@@ -182,7 +182,7 @@ end
 Warn for firmware >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping / missing scripts / wrong version
 --]]
 local eventScripts = db:getall("SELECT name FROM scripting WHERE type = 'event'")
-local eventName, finalName, acName, atName, s = nil, nil, nil, nil, nil
+local eventName, finalName, acName, atName, s = nil, nil, nil, nil
 for _, s in ipairs(eventScripts) do
   if s.name:lower() == 'mqtt' then eventName = s.name end
   if s.name:lower() == 'mqtt final' then finalName = s.name end
@@ -198,22 +198,11 @@ if not eventInstalled and not finalInstalled then
   while true do sleep(1) end
 end
 
-local compatibleEvent = false
-if eventInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..eventName.."'")[1].script) end
-if finalInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..finalName.."'")[1].script) end
-if not compatibleEvent then
-  local scriptInUse = ''
-  if finalInstalled then scriptInUse = finalName end
-  if eventInstalled then scriptInUse = eventName end
-  log("Error: Incompatible '"..scriptInUse.."' script version detected, so update it. Not starting.")
-  while true do sleep(1) end
-end
-
 local version = string.split(io.readfile('/lib/genohm-scada/version'):trim(), '.')
 local legacyFirmware = false
 if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version[3]) >= 0 then
   if not finalInstalled then
-    log('Warning firmware > 1.15.0: Script MQTT final is not installed, or is disabled. This script avoids ramp detection.')
+    log('Warning firmware > 1.15.0: Script MQTT final is not installed, or is disabled. This script avoids ramp detection, and is recommended.')
     legacyFirmware = true
   end
 
@@ -257,6 +246,19 @@ else
 end
 if tonumber(version[1]) <= 1 and tonumber(version[2]) <= 6 then
   log('Warning: Untested on firmware 1.6.0 or below. An upgrade is highly recommended.')
+end
+-- By now, if both event scripts were installed then one of them will have been forced disabled, so re-check installed status before checking compatibility
+finalInstalled = finalName ~= nil and not (script.status(finalName) == nil or script.status(finalName) == false)
+eventInstalled = eventName ~= nil and not (script.status(eventName) == nil or script.status(eventName) == false)
+local compatibleEvent = false
+if eventInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..eventName.."'")[1].script) end
+if finalInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..finalName.."'")[1].script) end
+if not compatibleEvent then
+  local scriptInUse = ''
+  if finalInstalled then scriptInUse = finalName end
+  if eventInstalled then scriptInUse = eventName end
+  log("Error: Incompatible '"..scriptInUse.."' script version detected, so update it. Not starting.")
+  while true do sleep(1) end
 end
 
 
