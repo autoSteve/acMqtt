@@ -923,10 +923,10 @@ local function addAt(grps, found)
   for alias, v in pairs(grps) do
     local _L = { sa = '', dev = '', func = '', sense = '', unit = 'A', scale = 1, decimals = 2, }
     getKeyValue(alias, v.tags, _L)
-    if dev ~= '' then atDevs[dev] = true end
-    if atArea[dev] == nil and _L.sa ~= '' then
-      atArea[dev] = sa  -- The suggested area found is noted as being applicable for all user params of the device; only one need be tagged
-      atLog[dev] = nil
+    if _L.dev ~= '' then atDevs[_L.dev] = true end
+    if atArea[_L.dev] == nil and _L.sa ~= '' then
+      atArea[_L.dev] = _L.sa  -- The suggested area found is noted as being applicable for all user params of the device; only one needs be tagged
+      atLog[_L.dev] = nil
     end
 
     if _L.sense ~= '' then
@@ -1158,11 +1158,10 @@ Create / update / delete Airtopia devices
 local function cudAt()
   local grps = getGroups('AT')
   local boards = copy(atBoards)
-  local k, v, topic
+  local k, v, topic, kill
   unpublishedAt = {}
   
-  local addition = false
-  local found = addAt(grps)
+  local addition, found = addAt(grps)
 
   -- Handle deletions
   for k, _ in pairs(at) do
@@ -1174,7 +1173,7 @@ local function cudAt()
     local parts = string.split(k, '-')
     newBoards[parts[1]] = true
   end
-  local kill = {} for k, _ in pairs(atBoards) do if newBoards[k] == nil then table.insert(kill, k) end end
+  kill = {} for k, _ in pairs(atBoards) do if newBoards[k] == nil then table.insert(kill, k) end end
   for _, k in ipairs(kill) do
     atBoards[k] = nil;
     -- Clean up discovery topics
@@ -1462,7 +1461,7 @@ local function outstandingAtPublish()
     if atName then
       -- Ensure that newly tagged/removed groups with the AT keyword send updates
       if script.status(atName) ~= nil then script.disable(atName); script.enable(atName) end
-      log('Published '..#unpublishedAt..' Airtopia discovery and current level topic'..(#unpublishedAt ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..(failed ~= 0 and ' ('..failed..' failed)' or '')..', event script \''..atName..'\' restarted')
+      log('Published '..#unpublishedAt..' Airtopia discovery topic and current levels'..(#unpublishedAt ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..(failed ~= 0 and ' ('..failed..' failed)' or '')..', event script \''..atName..'\' restarted')
       unpublishedAt = {}
     else
       error('Airtopia event script \'AT\' not found')
@@ -1648,7 +1647,7 @@ local function outstandingMqttMessage()
       device = parts[2]..'-'..parts[4]
       local net, app, group
       
-      function pub(alias, payload) -- State publish to MQTT
+      local function pub(alias, payload) -- State publish to MQTT
         local parts = string.split(at[alias].name, '-')
         local board = parts[1]
         local topic = 'airtopia/'..board..'/state/'..parts[2]
@@ -1909,7 +1908,7 @@ local cud = {
 }
 if environmentSupport then table.insert(cud, { name = 'environment sensor', func = cudEnv, init = true }) end
 if panasonicSupport then table.insert(cud, { name = 'Panasonic', func = cudAc, init = true }) end
-if airtopiaSupport then table.insert(cud, { nname = 'Airtopia', func = cudAt, init = false }) end
+if airtopiaSupport then table.insert(cud, { name = 'Airtopia', func = cudAt, init = false }) end
 
 local i, c
 for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function
