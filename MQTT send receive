@@ -626,6 +626,16 @@ local function addDiscover(net, app, group, channel, tags, name)
   local alias = net..'/'..app..'/'..group
   if channel ~= nil then alias = alias..'/'..channel end
 
+  -- Clear any previous lookup table entries
+  cover[alias] = nil
+  fan[alias] = nil
+  bSensor[alias] = nil
+  binarySensor[alias] = nil
+  button[alias] = nil
+  local oldLightingButton = lightingButton[alias] lightingButton[alias] = nil
+  userParameter[alias] = nil
+  unitParameter[alias] = nil
+
   local allow = {
     light = {getPayload = function()
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', bri_stat_t = mqttReadTopic..alias..'/level', bri_cmd_t = mqttWriteTopic..alias..'/ramp', pl_off = 'OFF', on_cmd_type = 'brightness',}
@@ -824,6 +834,12 @@ local function addDiscover(net, app, group, channel, tags, name)
     payload = addCommonPayload(payload, oid, entity)
     removeOld(dType, oid)
     publish(payload, oid, entity)
+    if not oldLightingButton and lightingButton[alias] then -- If changing to a lighting button then clear status topics
+      local t = mqttReadTopic..alias..'/state'
+      if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end client:publish(t, '', mqttQoS, RETAIN)
+      t = mqttReadTopic..alias..'/level'
+      if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end client:publish(t, '', mqttQoS, RETAIN)
+    end
     return
   else
     error('Warning: a publish payload for '..name..' could not be built, so not published')
