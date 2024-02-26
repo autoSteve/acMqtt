@@ -595,18 +595,7 @@ end
 Build and publish a CBus MQTT discovery topic
 --]]
 local function addDiscover(net, app, group, channel, tags, name)
-  if not name then -- Need a name from tag lookup for everything but measurement app
-    if channel == nil then
-      error('Error: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required')
-    else
-      if app ~= 255 then
-        name = 'Measurement'
-      else
-        name = 'Unit parameter'
-      end
-    end
-  end
-    -- All keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
+  -- All keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
   local _L = {
     pn = name,      -- Preferred name
     sa = '',        -- Suggested area
@@ -619,14 +608,76 @@ local function addDiscover(net, app, group, channel, tags, name)
     off = 'Off',    -- bsensor 'off' string
     lvl = {},       -- Levels
   }
+  local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
+  local special = { includeunit = false, dec = false }
+
   local includeUnit = false
   local forceDecimals = false
   local lvl = false
   local dType, action, boid, dSa, payload, prefix, tag, k, t
+
+  local function getEntity(entity)
+    if _L.sa ~= '' then
+      local startIdx, endIdx
+      repeat
+        startIdx, endIdx = entity:find(_L.sa, 1, true)
+        if startIdx and startIdx == 1 then
+          entity = entity:sub(endIdx + 1):match'^%s*(.*)'
+        end
+      until not startIdx or startIdx > 1
+    end
+    return entity
+  end
+
+  local function addCommonPayload(payload, oid, entity)
+    -- Add payload common to all
+    payload.name = ''
+    payload.obj_id = oid
+    payload.uniq_id = oid
+    payload.avty_t = mqttCbus..'status'
+    payload.dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
+    if _L.img ~= '' then payload.ic = _L.img end
+    return payload
+  end
+
+  local function removeOld(dType, oid)
+    -- If dType has changed for an existing discovery topic then remove the previous topic
+    local oldDiscovery = discovery[oid]
+    if oldDiscovery ~= nil and oldDiscovery ~= dType then
+      client:publish(mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config', '', mqttQoS, RETAIN)
+      if logging then log('Removed discovery topic '..mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config') end
+    end
+    discovery[oid] = dType
+  end
+
+  local function publish(payload, oid, entity)
+    -- Publish to MQTT broker
+    local j = json.encode(payload)
+    if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
+    if logging then log('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa) end
+    if discoveryName[oid] ~= nil and discoveryName[oid] ~= entity then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
+    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
+  end
+
+  if not name then -- Need a name from tag lookup for everything but measurement app
+    if channel == nil then
+      error('Error: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required')
+    else
+      if app == 228 then name = 'Measurement' else name = 'Unit parameter' end
+    end
+  end
   
   -- Build an alias to refer to each group
   local alias = net..'/'..app..'/'..group
   if channel ~= nil then alias = alias..'/'..channel end
+
+  -- Build an OID (measurement application / unit parameter gets a channel as well), also add to mqttDevices
+  local oid = 'cbus_mqtt_'..tNetCBus(net)..'_'.. app..'_'..group if channel ~= nil then oid = oid..'_'..channel end
+  mqttDevices[alias].oid = oid
+  mqttDevices[alias].net = net
+  mqttDevices[alias].app = app
+  mqttDevices[alias].group = group
+  if channel then mqttDevices[alias].channel = channel end
 
   -- Clear any previous lookup table entries
   cover[alias] = nil
@@ -700,7 +751,34 @@ local function addDiscover(net, app, group, channel, tags, name)
       end },
     button = {getPayload = function()
       button[alias] = true
-      if lighting[tostring(app)] then lightingButton[alias] = true return {cmd_t = mqttWriteTopic..alias..'/press',} else return nil end
+      if lighting[tostring(app)] then
+        lightingButton[alias] = true
+        return {cmd_t = mqttWriteTopic..alias..'/press',}
+      elseif app == 202 then
+        local i
+        mqttDevices[alias].trigger = {}
+        mqttDevices[alias].type = 'button'
+        if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels, which is most inefficient!
+        for _, i in ipairs(_L.lvl) do
+          local tag, lvl = decodeLevel(net, app, group, i, publishNoLevel and 'Level '..i or nil)
+          if tag then
+            boid = oid..'_'..lvl
+            table.insert(mqttDevices[alias].trigger, boid)
+            action = tag:gsub("%s+", "_"):lower() -- Replace spaces with underscores
+            if triggers[group] == nil then triggers[group] = {} end
+            triggers[group][action] = lvl
+            if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
+            local entity = getEntity(prefix..tag)
+            payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity)
+            removeOld(dType, boid)
+            publish(payload, boid, entity)
+          end
+        end
+        return 'buttons'
+      else
+        log('Warning: MQTT button keyword used for unsupported application group '..alias)
+        return nil
+      end
       end },
     select = {getPayload = function()
       if #_L.lvl == 0 then log('Error: lvl= keyword not specified for select at '..alias..', which is required') return nil end
@@ -723,8 +801,6 @@ local function addDiscover(net, app, group, channel, tags, name)
   }
 
   -- Extract MQTT topic settings
-  local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
-  local special = { includeunit = false, dec = false }
   dType = getKeyValue(alias, tags, _L, synonym, special, allow)
   if dType == nil then dType = 'light' end -- Use light as default HomeAssistant type if not specified
   
@@ -747,91 +823,10 @@ local function addDiscover(net, app, group, channel, tags, name)
   if dType == 'light' and app == 228 then dType = 'sensor'; log('Warning: publishing '..alias..' as a sensor') end -- Measurement app sensor with incorrect/missing type
   if includeUnit then includeUnits[alias] = true if logging then log('Including units for '..alias) end else includeUnits[alias] = nil end
 
-  -- Build an OID (measurement application / unit parameter gets a channel as well), also add to mqttDevices
-  local oid = 'cbus_mqtt_'..tNetCBus(net)..'_'.. app..'_'..group if channel ~= nil then oid = oid..'_'..channel end
-  mqttDevices[alias].oid = oid
-  mqttDevices[alias].net = net
-  mqttDevices[alias].app = app
-  mqttDevices[alias].group = group
-  if channel then mqttDevices[alias].channel = channel end
-
-  local function getEntity(entity)
-    if _L.sa ~= '' then
-      local startIdx, endIdx
-      repeat
-        startIdx, endIdx = entity:find(_L.sa, 1, true)
-        if startIdx and startIdx == 1 then
-          entity = entity:sub(endIdx + 1):match'^%s*(.*)'
-        end
-      until not startIdx or startIdx > 1
-    end
-    return entity
-  end
-
-  local function addCommonPayload(payload, oid, entity)
-    -- Add payload common to all
-    payload.name = ''
-    payload.obj_id = oid
-    payload.uniq_id = oid
-    payload.avty_t = mqttCbus..'status'
-    payload.dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
-    if _L.img ~= '' then payload.ic = _L.img end
-    return payload
-  end
-
-  local function removeOld(dType, oid)
-    -- If dType has changed for an existing discovery topic then remove the previous topic
-    local oldDiscovery = discovery[oid]
-    if oldDiscovery ~= nil and oldDiscovery ~= dType then
-      client:publish(mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config', '', mqttQoS, RETAIN)
-      if logging then log('Removed discovery topic '..mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config') end
-    end
-    discovery[oid] = dType
-  end
-
-  local function publish(payload, oid, entity)
-    -- Publish to MQTT broker
-    local j = json.encode(payload)
-    if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
-    if logging then log('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa) end
-    if discoveryName[oid] ~= nil and discoveryName[oid] ~= entity then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
-    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
-  end
-
-  -- Handle the typical single device payload build
   payload = allow[dType].getPayload()
 
-  if payload ~= nil then
+  if payload ~= nil and payload ~= 'buttons' then
     mqttDevices[alias].type = dType -- If payload recieved then set the mqttDevices type, then move on to publish
-  else
-    -- Or if a nil payload so far then build and publish the trigger app buttons if applicable on all specific levels and publish as separate devices, and then return
-    if dType == 'button' and app == 202 then
-      local i
-      mqttDevices[alias].trigger = {}
-      mqttDevices[alias].type = 'button'
-      if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels, which is most inefficient!
-      for _, i in ipairs(_L.lvl) do
-        local tag, lvl = decodeLevel(net, app, group, i, publishNoLevel and 'Level '..i or nil)
-        if tag then
-          boid = oid..'_'..lvl
-          table.insert(mqttDevices[alias].trigger, boid)
-          action = tag:gsub("%s+", "_"):lower() -- Replace spaces with underscores
-          if triggers[group] == nil then triggers[group] = {} end
-          triggers[group][action] = lvl
-          if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
-          local entity = getEntity(prefix..tag)
-          payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity)
-          removeOld(dType, boid)
-          publish(payload, boid, entity)
-        end
-      end
-      return
-    elseif dType == 'button' then
-      error('Warning: MQTT button keyword used for unsupported application group '..alias..', so ignoring')
-    end
-  end
-
-  if payload ~= nil then
     local entity = getEntity(_L.pn)
     payload = addCommonPayload(payload, oid, entity)
     removeOld(dType, oid)
@@ -843,7 +838,10 @@ local function addDiscover(net, app, group, channel, tags, name)
       if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end client:publish(t, '', mqttQoS, RETAIN)
     end
     return
+  elseif payload == 'buttons' then
+    -- Trigger app buttons have already been published
   else
+    mqttDevices[alias] = nil
     error('Warning: a publish payload for '..name..' could not be built, so not published')
   end
 end
@@ -1509,12 +1507,12 @@ local function outstandingMqttMessage()
         end
 
       elseif contains('press', parts[6]) and payload == 'PRESS' then -- Lighting group press
-        PulseCBusLevel(net, app, group, 255, 0, 1, 0); if logging then log('Payload is PRESS') end
+        PulseCBusLevel(net, app, group, 255, 0, 1, 0); if logging then log('Payload for '..alias..' is PRESS') end
 
       elseif parts[7] ~= nil and contains('press', parts[7]) and payload == 'PRESS' then -- Trigger level press
         local level = triggers[group][parts[6]]
         if level ~= nil then
-          SetTriggerLevel(group, level); if logging then log('Payload is PRESS') end
+          SetTriggerLevel(group, level); if logging then log('Payload for '..alias..' is PRESS') end
         else
           log('Warning: MQTT trigger level received that is not published')
         end
@@ -1534,9 +1532,9 @@ local function outstandingMqttMessage()
         elseif payload == 'ON' then
           if fan[alias] then
             if lastLevel[alias] then
-              payload = lastLevel[alias]; if logging then log("Payload is fan ON, so using lastlevel instead") end
+              payload = lastLevel[alias]; if logging then log('Payload for '..alias..' is fan ON, so using lastlevel instead') end
             else
-              payload = '255'; if logging then log("Payload is fan ON, so using RAMP instead") end
+              payload = '255'; if logging then log('Payload for '..alias..' is fan ON') end
             end
           else
             if logging then log('Payload for '..alias..' is ON') end
@@ -1560,7 +1558,7 @@ local function outstandingMqttMessage()
               if lastLevel[alias] then if logging then log('Last level '..lastLevel[alias]) end end
               if lastLevel[alias] and num == 255 then
                 if blindKey and contains(blindKey, GetCBusGroupTag(net, app, group)) then
-                  toSet = num; if logging then log("Payload is 'Blind' ramp on, so ignoring lastlevel") end
+                  toSet = num; if logging then log('Payload is blind ramp on for '..alias) end
                 else
                   toSet = lastLevel[alias]
                 end
@@ -1568,7 +1566,7 @@ local function outstandingMqttMessage()
                 toSet = num
               end
             else
-              if logging then log("Payload is 'Fan' ramp, so ignoring lastlevel") end
+              if logging then log('Payload is fan ramp for '..alias) end
               toSet = num
             end
             if parts[2] ~= nil then ramp = tonumber(parts[2]) else ramp = 0 end
@@ -1818,24 +1816,21 @@ local function outstandingCbusMessage()
                 ramp[alias] = nil
                 if logging then log('Clear ramp for '..alias) end
                 -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
-                stat, err = pcall(publish, alias, net, app, group, payload)
-                if not stat then log(err) end
+                stat, err = pcall(publish, alias, net, app, group, payload) if not stat then log(err) end
               end
             else
-              stat, err = pcall(publish, alias, net, app, group, payload)
-              if not stat then log(err) end
+              stat, err = pcall(publish, alias, net, app, group, payload) if not stat then log(err) end
             end
           else
-            stat, err = pcall(publish, alias, net, app, group, payload)
-            if not stat then log(err) end
+            stat, err = pcall(publish, alias, net, app, group, payload) if not stat then log(err) end
           end
         end
       elseif app == 228 then -- Special case for measurement app
         alias = alias..'/'..parts[4]
-        stat, err = pcall(publishMeasurement, alias, net, app, group, tonumber(parts[4]), tonumber(parts[5]))
+        stat, err = pcall(publishMeasurement, alias, net, app, group, tonumber(parts[4]), tonumber(parts[5])) if not stat then log(err) end
       elseif app == 255 then -- Special case for unit param
         alias = alias..'/'..parts[4]
-        stat, err = pcall(publishUnitParam, alias, net, app, group, tonumber(parts[4]), tonumber(parts[5]))
+        stat, err = pcall(publishUnitParam, alias, net, app, group, tonumber(parts[4]), tonumber(parts[5])) if not stat then log(err) end
       end
     end
   end
