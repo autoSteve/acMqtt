@@ -611,8 +611,6 @@ local function addDiscover(net, app, group, channel, tags, name)
   local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
   local special = { includeunit = false, dec = false }
 
-  local includeUnit = false
-  local forceDecimals = false
   local lvl = false
   local dType, action, boid, dSa, payload, prefix, tag, k, t
 
@@ -713,7 +711,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       local payload
       local str = false
       if channel ~= nil then payload = { stat_t = mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/level', } else payload = { stat_t = mqttReadTopic..alias..'/level', } end
-      if lighting[tostring(app)] and not forceDecimals then _L.dec = 0 end
+      if lighting[tostring(app)] and not special.dec then _L.dec = 0 end
       if _L.class ~= '' then payload.dev_cla = _L.class end
       if app == 250 then userParameter[alias] = true end
       if app == 255 then unitParameter[alias] = true end
@@ -738,7 +736,7 @@ local function addDiscover(net, app, group, channel, tags, name)
         payload.val_tpl = tpl..'{% else %}Unknown{% endif %}'
       end
       if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
-      if _L.unit ~= '' and not includeUnit then payload.unit_of_meas = _L.unit else if not str then payload.unit_of_meas = '' end end
+      if _L.unit ~= '' and not special.includeUnit then payload.unit_of_meas = _L.unit else if not str then payload.unit_of_meas = '' end end
       return payload
       end },
     binary_sensor = {getPayload = function()
@@ -821,7 +819,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   end
 
   if dType == 'light' and app == 228 then dType = 'sensor'; log('Warning: publishing '..alias..' as a sensor') end -- Measurement app sensor with incorrect/missing type
-  if includeUnit then includeUnits[alias] = true if logging then log('Including units for '..alias) end else includeUnits[alias] = nil end
+  if special.includeUnit then includeUnits[alias] = true if logging then log('Including units for '..alias) end else includeUnits[alias] = nil end
 
   payload = allow[dType].getPayload()
 
