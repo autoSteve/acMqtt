@@ -664,7 +664,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       if app == 228 then name = 'Measurement' else name = 'Unit parameter' end
     end
   end
-  
+
   -- Build an alias to refer to each group
   local alias = net..'/'..app..'/'..group
   if channel ~= nil then alias = alias..'/'..channel end
@@ -818,13 +818,13 @@ local function addDiscover(net, app, group, channel, tags, name)
     if _L.img == '' then _L.img = 'mdi:lightbulb' end
   end
 
-  if dType == 'light' and app == 228 then dType = 'sensor'; log('Warning: publishing '..alias..' as a sensor') end -- Measurement app sensor with incorrect/missing type
+  if dType == 'light' and app == 228 then dType = 'sensor'; log('Warning: publishing measurement app '..alias..' as a sensor') end -- Measurement app sensor with incorrect/missing type
   if special.includeUnit then includeUnits[alias] = true if logging then log('Including units for '..alias) end else includeUnits[alias] = nil end
 
   payload = allow[dType].getPayload()
 
-  if payload ~= nil and payload ~= 'buttons' then
-    mqttDevices[alias].type = dType -- If payload recieved then set the mqttDevices type, then move on to publish
+  if payload ~= nil and payload ~= 'buttons' then -- If payload recieved then publish
+    mqttDevices[alias].type = dType
     local entity = getEntity(_L.pn)
     payload = addCommonPayload(payload, oid, entity)
     removeOld(dType, oid)
@@ -837,12 +837,13 @@ local function addDiscover(net, app, group, channel, tags, name)
     end
     return
   elseif payload == 'buttons' then
-    -- Trigger app buttons have already been published
+    -- Trigger app buttons have already been published, so do nothing
   else
     mqttDevices[alias] = nil
     error('Warning: a publish payload for '..name..' could not be built, so not published')
   end
 end
+
 
 --[[
 Build and publish an Airtopia discovery topic
@@ -1059,7 +1060,7 @@ local function cudAc()
   local found = {}
   local addition = false
   local count = 0
-  local alias, k, v
+  local alias, k, v, kill
 
   for alias, v in pairs(grps) do
     table.insert(found, alias)
@@ -1086,7 +1087,7 @@ local function cudAc()
       if not acLogGrp[alias] then log('Error: No device specified for Panasonic '..alias); acLogGrp[alias] = true end
     end
   end
-    
+
   -- Handle deletions
   for k, _ in pairs(ac) do
     local f = false; for _, v in ipairs(found) do if k == v then f = true; break end end
@@ -1113,7 +1114,6 @@ local function publishAtState()
   local k
   for k, _ in pairs(atBoards) do
     local parts, topic, level
-    
     local mode = atDevices[k..'-mode']
     local power = atDevices[k..'-power']
     if mode ~= nil and power ~= nil then
@@ -1158,7 +1158,7 @@ local function cudAt()
   local boards = copy(atBoards)
   local k, v, topic, kill
   unpublishedAt = {}
-  
+
   local addition, found = addAt(grps)
 
   -- Handle deletions
@@ -1196,7 +1196,7 @@ local function cudAt()
       end
     end
   end
-      
+
   if addition then
     if atName then
       -- Ensure that newly tagged/removed groups with the AT keyword send updates.
@@ -1218,7 +1218,7 @@ local function cudEnv()
   local found = {}
   local addition = false
   local count = 0
-  local alias, k, v
+  local alias, k, v, kill
 
   for alias, v in pairs(grps) do
     table.insert(found, alias)
@@ -1240,7 +1240,7 @@ local function cudEnv()
     end
     count = count + 1
   end
-    
+
   -- Handle deletions
   for k, _ in pairs(env) do
     local f = false; for _, v in ipairs(found) do if k == v then f = true; break end end
@@ -1496,7 +1496,7 @@ local function outstandingMqttMessage()
         if payload == 'ON' then      SetCBusLevel(net, app, group, 255, 0); if logging then log('Payload is ON for '..alias) end
         elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then log('Payload is OFF for '..alias) end
         end
-        
+
       elseif parts[6] == 'select' then
         if app ~= 202 then
           SetCBusLevel(net, app, group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
@@ -1514,7 +1514,7 @@ local function outstandingMqttMessage()
         else
           log('Warning: MQTT trigger level received that is not published')
         end
-    
+
       elseif parts[6] == 'measurement' then SetCBusMeasurement(net, app, group, payload, 0)
 
       elseif parts[6] == 'ramp' then
@@ -1639,12 +1639,12 @@ local function outstandingMqttMessage()
           ac[alias].state = payload
         end
       end
-    
+
     -- Messages from AT board cmd topics
     elseif airtopiaSupport and parts[1] == 'airtopia' and parts[3] == 'cmd' then
       device = parts[2]..'-'..parts[4]
       local net, app, group
-      
+
       local function pub(alias, payload) -- State publish to MQTT
         local parts = string.split(at[alias].name, '-')
         local board = parts[1]
@@ -1704,7 +1704,7 @@ local function outstandingMqttMessage()
           parts = string.split(hswing, '/'); SetUserParam(parts[1], parts[3], h)
           parts = string.split(vswing, '/'); SetUserParam(parts[1], parts[3], v)
         end
-        
+
       elseif parts[4] == 'fan' then
         local fan = atDevices[parts[2]..'-fan']
         if fan ~= nil then
@@ -1715,7 +1715,7 @@ local function outstandingMqttMessage()
           client:publish(topic, payload, mqttQoS, RETAIN)
           parts = string.split(fan, '/'); SetUserParam(parts[1], parts[3], f)
         end
-        
+
       else -- Set target temp
         if atDevices[device] then
           alias = atDevices[device]
