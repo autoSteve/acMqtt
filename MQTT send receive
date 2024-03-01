@@ -107,6 +107,13 @@ local imgDefault = {         -- Defaults for images - Simple image name, or a ta
   gate            = {open = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
 }
 local acMsg = {climate = true, select = true, sensor = true}
+local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
+  'MQTT', 'light', 'switch', 'cover', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'button', 'select',
+  'pn=', 'sa=', 'img=', 'unit=', 'class=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=',
+  'includeunit',
+}
+local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end
+
 
 local airtopiaCmds = {'power', 'fan', 'swing', 'mode', 'target_temperature'} -- All command topics (used for clean up)
 local atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
@@ -131,7 +138,7 @@ setmetatable(_G, {
 
 local function sleep(sec) socket.select(nil, nil, sec) end
 local function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring
-local function trim(s) if s ~= nil then return s:match "^%s*(.-)%s*$" else return nil end end -- Remove leading and trailing spaces
+local function trim(s) if s ~= nil then return s:match('^%s*(.-)%s*$') else return nil end end -- Remove leading and trailing spaces
 local function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
 local function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return i end -- Get number of dictionary members
 local function hasMembers(dict) local k; for k, _ in pairs(dict) do return true end return false end -- Get whether any dictionary members
@@ -157,6 +164,15 @@ local function equals(o1, o2, ignoreMt) -- Compare two variables (simple, tables
   for key2, _ in pairs(o2) do if not keySet[key2] then return false end end
   return true
 end
+local function removeIrrelevant(keywords)
+  local curr = {}
+  for _, k in ipairs(keywords:split(',')) do
+    local parts = k:split('=') if parts[2] ~= nil then parts[1] = trim(parts[1])..'=' end
+    if cudAll[parts[1]] then table.insert(curr, k) end
+  end
+  return table.concat(curr, ',')
+end
+
 
 
 --[[
@@ -332,7 +348,7 @@ local function publish(alias, net, app, group, level, noPre)
   if not userParameter[alias] then
     if not binarySensor[alias] then
       if bSensor[alias] then -- It's a bSensor
-        client:publish(mqttReadTopic..alias..'/state', level, mqttQoS, RETAIN)
+        client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
         if logging then log('Publishing '..mqttReadTopic..alias..' to '..level) end
       elseif selects[alias] then -- It's a select
         local l
@@ -1012,7 +1028,7 @@ local function publishCurrent()
     n = n + 1
     local name; if v.name then name = v.name else name = GetCBusGroupTag(v.net, v.app, v.group) end
     unpublished[n] = {net=v.net, app=v.app, group=v.group, channel=v.channel, tags=v.tags, name=name}
-    if not mqttDevices[alias] then mqttDevices[alias] = {}; mqttDevices[alias].tags = v.tags; mqttDevices[alias].keywords = v.keywords end
+    if not mqttDevices[alias] then mqttDevices[alias] = {}; mqttDevices[alias].tags = v.tags; mqttDevices[alias].keywords = removeIrrelevant(v.keywords) end
   end
   if n > 0 then if logging then log('Queued '..n..' objects with keyword MQTT for publication') end end
 
@@ -1275,7 +1291,8 @@ local function cudCBusTopics()
     local change = false
 
     table.insert(found, alias)
-    local curr = v.keywords
+    local curr = removeIrrelevant(v.keywords)
+
     if not mqttDevices[alias] then -- New group
       change = true
       mqttDevices[alias] = {}
@@ -1304,7 +1321,7 @@ local function cudCBusTopics()
           change = true
         end
         mqttDevices[alias].tags = v.tags
-        mqttDevices[alias].keywords = v.keywords
+        mqttDevices[alias].keywords = curr
       end
     end
     if change then
