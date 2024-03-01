@@ -717,7 +717,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     fan = {getPayload = function() fan[alias] = true storeLevel[alias] = true return {
       stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pl_on = 'ON', pl_off = 'OFF', pr_modes = {'low', 'medium', 'high'},
       pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
-      pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value == 0 %} OFF {% elif value == 86 %} low {% elif value == 170 %} medium {% elif value == 255 %} high {% endif %}'
+      pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | float == 0 %} OFF {% elif value | float == 86 %} low {% elif value | float == 170 %} medium {% elif value | float == 255 %} high {% endif %}'
     } end },
     fan_pct = {getPayload = function()
       dType = 'fan' fan[alias] = true storeLevel[alias] = true
