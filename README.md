@@ -32,7 +32,7 @@ LUA scripts for the automation controller (all script names are NOT case sensiti
 
 If you don't care for integrating Philips Hue, Panasonic or Airtopia, then don't deploy those scripts. For AC/environmental devices the LUA AC/ENV code can stay there in 'MQTT send receive' and will just be unused.
 
-**Note**: A change to the discovery behaviour has been made to accommodate a non-breaking change in HA 2023.8, which will become breaking in 2024.2. CBus devices are now created using a blank entity name to end up with a sole entity for each device, in line with the HA naming standards.
+**Note**: A change to the discovery behaviour has been made to accommodate a non-breaking change in HA 2023.8, which became breaking in 2024.2. CBus devices are now created using a blank entity name to end up with a sole entity for each device, in line with the HA naming standards.
 
 **Note**: For Philips Hue, automation controller firmware >= 1.10.0 <= 1.14.0 contain a bug that requires *Hue final work-around* to be used. This is fixed in 1.15.0+, so use *HUE final*.
 
@@ -45,7 +45,7 @@ Warnings are also thrown for obvious code defects that are encountered. If you g
 ## Keywords used for Automation Controller objects
 Automation controller object keywords are used to tell the scripts which objects to use, publish, and how they should be used. This varies based on circumstance, as described below.
 
-Newly added keywords can be regularly detected by both the 'MQTT send receive' and 'HUE send receive' scripts. This is configurable by setting an option that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is thirty seconds, and that is also a configurable variable. Checking for changes adds a low workload to the automation controller, so is recommended.
+Newly added keywords can be regularly detected by both the 'MQTT send receive' and 'HUE send receive' scripts. This is configurable by setting an option that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is thirty seconds, and that is also a configurable variable. Checking for changes adds a low workload to the automation controller, so is recommended. I run ten seconds these days without any significant load impact, mostly because my NAC is a crash test dummy for you. Five seconds or less would be a bit too aggresive in my opinion, but again it seems to not add significant load. Maybe do a shorter check interval while setting things up, and then back it off or disable it entirely when your config is stable, adding zero extra load.
 
 ### CBus (MQTT send receive)
 Lighting, measurement, user parameter, unit parameter and trigger control applications are implemented. (Unit parameter as a sensor only.)
