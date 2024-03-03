@@ -59,6 +59,8 @@ local mqttDiscoveryTopic = 'homeassistant/'
 Variables not to be messed with unless you definitely know what you're doing.
 --]]
 local EVENTVERSION = 3       -- MQTT/MQTT final event script compatible version
+local ACVERSION = 1          -- Panasonic final event script compatible version
+local ATVERSION = 1          -- Airtopia final event script compatible version
 local discovery = {}         -- MQTT discovery topics lookup
 local discoveryDelete = {}   -- If duplicate discovery topics are detected on startup then they will be removed
 local discoveryName = {}     -- Device names (used for rename detection)
@@ -206,6 +208,8 @@ end
 
 local finalInstalled = finalName ~= nil and not (script.status(finalName) == nil or script.status(finalName) == false)
 local eventInstalled = eventName ~= nil and not (script.status(eventName) == nil or script.status(eventName) == false)
+local acInstalled = acName ~= nil and not (script.status(acName) == nil or script.status(acName) == false)
+local atInstalled = atName ~= nil and not (script.status(atName) == nil or script.status(atName) == false)
 
 if not eventInstalled and not finalInstalled then
   log("Error: The event script 'MQTT' or 'MQTT final' is not installed or enabled. Not starting.")
@@ -273,6 +277,16 @@ if not compatibleEvent then
   if eventInstalled then scriptInUse = eventName end
   log("Error: Incompatible '"..scriptInUse.."' script version detected, so update it. Not starting.")
   while true do sleep(1) end
+end
+if panasonicSupport then
+  local compatibleAc = false
+  if acInstalled then compatibleAc = contains('VERSION: '..ACVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..acName.."'")[1].script) end
+  if not compatibleAc then log("Error: Incompatible '"..acName.."' script version detected, so update it. Not starting.") while true do sleep(1) end end
+end
+if airtopiaSupport then
+  local compatibleAt = false
+  if atInstalled then compatibleAt = contains('VERSION: '..ATVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..atName.."'")[1].script) end
+  if not compatibleAt then log("Error: Incompatible '"..atName.."' script version detected, so update it. Not starting.") while true do sleep(1) end end
 end
 
 
