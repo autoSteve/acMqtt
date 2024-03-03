@@ -3,7 +3,7 @@ local mqttBroker = '192.168.10.21'
 local mqttUsername = 'mqtt'
 local mqttPassword = 'password'
 local lighting = { ['56'] = true, } -- Array of applications that are used for lighting (do not remove should lastLevel not be required)
-local checkForChanges = true       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load)
+local checkForChanges = true       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load, and manually restart on keyword change)
 local checkChanges = 30            -- Interval in seconds to check for changes to object keywords
 
 --[[ SET AS APPROPRIATE TO SUIT ENVIRONMENT --]]
@@ -62,16 +62,16 @@ local EVENTVERSION = 3       -- MQTT/MQTT final event script compatible version
 local discovery = {}         -- MQTT discovery topics lookup
 local discoveryDelete = {}   -- If duplicate discovery topics are detected on startup then they will be removed
 local discoveryName = {}     -- Device names (used for rename detection)
-local atDiscovery = {}       -- AT discovery topics lookup
-local atDiscoveryDelete = {} -- If duplicate discovery topics are detected on startup then they will be removed
 local mqttDevices = {}       -- CBus groups to send MQTT topics for
-local ac = {}                -- AC device details
+local ac = {}                -- Panasonic AC device details
 local acDevices = {}         -- Quick lookup to determine whether an object is an AC device
 local acBoards = {}          -- All physical AC boards (esp32)
 local acSense = {}           -- Quick lookup for AC sensors
-local at = {}                -- AT device details
+local at = {}                -- Airtopia device details
 local atDevices = {}         -- Quick lookup to determine whether an object is an AT device
 local atBoards = {}          -- All physical AT boards
+local atDiscovery = {}       -- AT discovery topics lookup
+local atDiscoveryDelete = {} -- If duplicate discovery topics are detected on startup then they will be removed
 local env = {}               -- Environment device details
 local envDevices = {}        -- Quick lookup to determine whether an object is an environment device
 local envBoards = {}         -- All physical environment boards (esp32)
@@ -106,19 +106,18 @@ local imgDefault = {         -- Defaults for images - Simple image name, or a ta
   exhaust         = 'mdi:fan',
   gate            = {open = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
 }
-local acMsg = {climate = true, select = true, sensor = true}
+local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
   'MQTT', 'light', 'switch', 'cover', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'button', 'select',
   'pn=', 'sa=', 'img=', 'unit=', 'class=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=',
   'includeunit',
 }
-local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end
+local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end cudRaw = nil
 
-
-local airtopiaCmds = {'power', 'fan', 'swing', 'mode', 'target_temperature'} -- All command topics (used for clean up)
-local atmodes = {'auto', 'cool', 'heat', 'fan_only', 'dry', 'off'} -- Airtopia modes
-local atswings = {'Off', 'Horizontal only', 'Vertical only', 'Horizontal and Vertical'} -- Airtopia swing modes
-local atfans = {'Auto', '1', '2', '3', '4'} -- Airtopia fan speed (THIS IS UNTESTED, will result in 0, 1, 2, 3, 4 being set in the user parameter in the order of the table)
+local airtopiaCmds = { 'power', 'fan', 'swing', 'mode', 'target_temperature', } -- All command topics (used for clean up)
+local atmodes = { 'auto', 'cool', 'heat', 'fan_only', 'dry', 'off', } -- Airtopia modes
+local atswings = { 'Off', 'Horizontal only', 'Vertical only', 'Horizontal and Vertical', } -- Airtopia swing modes
+local atfans = { 'Auto', '1', '2', '3', '4', } -- Airtopia fan speed (THIS IS UNTESTED, will result in 0, 1, 2, 3, 4 being set in the user parameter in the order of the table)
 local airtopiaStates = {}    -- Current state topics in use (used for clean up)
 
 local RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
@@ -172,7 +171,6 @@ local function removeIrrelevant(keywords)
   end
   return table.concat(curr, ',')
 end
-
 
 
 --[[
@@ -394,6 +392,7 @@ local function publish(alias, net, app, group, level, noPre)
   end
 end
 
+
 --[[
 Publish measurement application objects to MQTT 
 --]]
@@ -415,11 +414,12 @@ local function publishMeasurement(alias, net, app, group, channel, value, noPre)
   end
   local mAlias = lastSlashToUnderscore(alias)
   client:publish(mqttReadTopic..mAlias..'/level', v, mqttQoS, RETAIN)
-  -- if logging then log('Publishing measurement '..mqttReadTopic..mAlias..' to '..v) end
+  if logging then log('Publishing measurement '..mqttReadTopic..mAlias..' to '..v) end
   if not noPre and value ~= nil then
     storage.set('pre'..alias, string.format('%.3f', value))
   end
 end
+
 
 --[[
 Publish unit parameter objects to MQTT 
@@ -437,6 +437,7 @@ local function publishUnitParam(alias, net, app, group, channel, value, noPre)
     storage.set('pre'..alias, string.format('%.3f', value))
   end
 end
+
 
 --[[
 Publish Panasonic ESPHome objects to MQTT 
@@ -475,6 +476,7 @@ local function publishAc(alias, level, select)
     if logging then log('Ignoring MQTT publish for '..alias..' because already at level '..level) end
   end
 end
+
 
 --[[
 Publish Airtopia MODBUS objects to MQTT 
@@ -577,7 +579,7 @@ end
 
 
 --[[
-Get key/value pairs. Returns a keyword if found in 'allow' (which is optional).
+Get key/value pairs. Returns a keyword if found in 'allow'. (allow, synonym and special parameters are optional).
 --]]
 local function getKeyValue(alias, tags, _L, synonym, special, allow)
   if synonym == nil then synonym = {} end
@@ -1001,8 +1003,8 @@ local function getGroups(kw)
   local grps = {}
   for _, t in ipairs(db:getall("SELECT o.address, o.tagcache, o.name FROM objects AS o JOIN objecttags AS ot ON o.id=ot.object WHERE ot.tag='"..kw.."'")) do
     local alias = knxlib.decodega(t.address)
-    local parts = alias:split('/')
-    grps[alias] = { tags = {}, name = t.name, keywords = t.tagcache:gsub(', ',','), net = tonumber(parts[1]), app = tonumber(parts[2]), group = tonumber(parts[3]), channel = tonumber(parts[4]), }
+    local parts = load("return {"..alias:gsub('/',',').."}")()
+    grps[alias] = { tags = {}, name = t.name, keywords = t.tagcache:gsub(', ',','), net = parts[1], app = parts[2], group = parts[3], channel = parts[4], }
     local tags = {}
     local tg
     for _, tg in ipairs(grps[alias].keywords:split(',')) do
@@ -1223,6 +1225,7 @@ local function cudAt()
     end
   end
 end
+
 
 --[[
 Create / update / delete ENV (environment) devices
@@ -1660,7 +1663,7 @@ local function outstandingMqttMessage()
     -- Messages from AT board cmd topics
     elseif airtopiaSupport and parts[1] == 'airtopia' and parts[3] == 'cmd' then
       device = parts[2]..'-'..parts[4]
-      local net, app, group
+      local net, group
 
       local function pub(alias, payload) -- State publish to MQTT
         local parts = string.split(at[alias].name, '-')
@@ -1672,7 +1675,7 @@ local function outstandingMqttMessage()
       if parts[4] == 'mode' then
         if atDevices[device] then
           alias = atDevices[device]
-          local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
+          local p = string.split(alias, '/'); net = tonumber(p[1]); group = tonumber(p[3])
           i = indexOf(atmodes, payload)
           if i ~= nil then
             local set = false
@@ -1736,7 +1739,7 @@ local function outstandingMqttMessage()
       else -- Set target temp
         if atDevices[device] then
           alias = atDevices[device]
-          local p = string.split(alias, '/'); net = tonumber(p[1]); app = tonumber(p[2]); group = tonumber(p[3])
+          local p = string.split(alias, '/'); net = tonumber(p[1]); group = tonumber(p[3])
           pub(alias, payload)
           -- publish to CBus
           local extant = GetUserParam(net, group)
