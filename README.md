@@ -57,7 +57,7 @@ Add the keyword 'MQTT' to groups for CBus discovery, plus...
 A type of light, fan, fan_pct (or fanpct), cover, select, sensor, switch, binary_sensor (or binarysensor), bsensor or button (default if not specified is 'light').
 - Light, cover, select, sensor, switch, binary_sensor and button are self-explanatory, being the Home Assistant equivalents.
 - Using cover assumes that a L5501RBCP blind relay is in "level translation mode" (status updates in HA will be less than perfect, but acceptable). I personally use a select without level translation mode, and level presets for open, closed, and part open at half way, which works well, and is predictable.
-- The fan keyword is specifically for sweep fan controllers like a L5501RFCP. For fan/fan-pct the Home Assistant object changes, as described below, with one a preset to suit the L5501RFCP, and the other variable percentage.
+- The fan keyword is specifically for sweep fan controllers like a L5501RFCP. For fan/fan_pct the Home Assistant object changes, as described below, with one a preset, and the other slider percentage. (Note, to use preset in conjunction with fan_pct specify the keyword 'preset' along with fan_pct)
 - A bsensor is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. Motion detected/Motion not detected.
 
 And in addition to the type...
@@ -72,6 +72,7 @@ And in addition to the type...
 - on=     Preferred value shown in HA for a 'bsensor' ON value (bsensor only)
 - off=    Preferred value shown in HA for a 'bsensor' OFF value (bsensor only)
 - Plus the keyword includeunits for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, not the unit= keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without includeunits is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
+- Plus the keyword preset for fan_pct if both a percentage slider and a preset option are desired.
 
 Using lvl= for trigger control buttons is highly recommended. This will attempt to publish only certain levels, greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
@@ -88,7 +89,7 @@ A special case exists to use lvl= with a lighting group sensor. This is where it
 
 For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
 
-CBus fan controller objects can use either 'fan' or 'fan_pct' keywords. The former will use a preset mode of low/medium/high, while the latter discovers as a raw percentage fan in Home Assistant.
+CBus fan controller objects can use either 'fan' or 'fan_pct' keywords. The former will use a preset mode of low/medium/high, while the latter discovers as a percentage slider fan in Home Assistant.
 
 The image keyword img= will default to several different "likely" values based on name or preferred name keywords. If the script gets it wrong, then add an img= keyword, or contact me by raising an issue for cases where it's stupidly wrong or where other defaults would be handy. Default is mdi:lightbulb for lighting groups. Here's the current set...
 
@@ -106,8 +107,9 @@ local imgDefault = { -- Defaults for images - Simple image name, or a table of '
 
 Keyword examples:
 
-- MQTT, light, sa=Outside, pn=Outside Laundry Door Light, img=mdi:lightbulb, 
+- MQTT, light, sa=Outside, pn=Outside Laundry Door Light
 - MQTT, switch, sa=Bathroom 1, img=mdi:radiator, 
+- MQTT, fan_pct, preset, sa=Hutch, img=mdi:ceiling-fan, 
 - MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
 - MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
 - MQTT, select, sa=Bathroom 2, lvl=0/137/255, 
