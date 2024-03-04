@@ -731,14 +731,26 @@ local function addDiscover(net, app, group, channel, tags, name)
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
       end },
     fan = {getPayload = function() fan[alias] = true storeLevel[alias] = true return {
-      stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pl_on = 'ON', pl_off = 'OFF', pr_modes = {'off', 'low', 'medium', 'high'},
+      pl_on = 'ON', pl_off = 'OFF',
+      stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp',
+      pr_modes = {'off', 'low', 'medium', 'high'},
       pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "off" %} 0 {% elif value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
-      pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | float == 0 %} off {% elif value | float == 86 %} low {% elif value | float == 170 %} medium {% elif value | float == 255 %} high {% endif %}'
+      pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} low {% elif value | int == 170 %} medium {% elif value | int == 255 %} high {% endif %}',
     } end },
     fan_pct = {getPayload = function()
-      dType = 'fan' fan[alias] = true storeLevel[alias] = true
-      return {stat_t = mqttReadTopic..alias..'/level', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF', pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_stat_t = mqttReadTopic..alias..'/level', opt = true,}
-      end },
+      dType = 'fan' fan[alias] = true storeLevel[alias] = true return {
+      pl_on = 'ON', pl_off = 'OFF',
+      stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp',
+      pct_stat_t = mqttReadTopic..alias..'/level',
+      --pr_modes = {'off', 'low', 'medium', 'high'},
+      --pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "off" %} 0 {% elif value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
+      --pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} low {% elif value | int == 170 %} medium {% elif value | int == 255 %} high {% endif %}',
+      pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_cmd_tpl = '{% if value | int == 0 %} 0 {% elif value | int == 1 %} 86 {% elif value | int == 2 %} 170 {% elif value | int == 3 %} 255 {% endif %}',
+      pct_stat_t = mqttReadTopic..alias..'/level', pct_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} 1 {% elif value | int == 170 %} 2 {% elif value | int == 255 %} 3 {% endif %}',
+      spd_rng_min = 1,
+      spd_rng_max = 3,
+      opt = true,
+    } end },
     sensor = {getPayload = function()
       local payload
       local str = false
