@@ -112,7 +112,7 @@ local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
   'MQTT', 'light', 'switch', 'cover', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'button', 'select',
   'pn=', 'sa=', 'img=', 'unit=', 'class=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=',
-  'includeunit',
+  'includeunit', 'preset',
 }
 local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end cudRaw = nil
 
@@ -603,7 +603,7 @@ local function getKeyValue(alias, tags, _L, synonym, special, allow)
   for k, t in pairs(tags) do
     k = trim(k)
     if t ~= -1 then
-      if special[k] ~= nil then special[k] = true  end
+      if special[k] ~= nil then special[k] = true end
       local v = trim(t)
       if _L[k] then
         if type(_L[k]) == 'number' then _L[k] = tonumber(v) if _L[k] == nil then error('Error: Bad numeric value for '..alias..', keyword "'..k..'="') end
@@ -614,6 +614,7 @@ local function getKeyValue(alias, tags, _L, synonym, special, allow)
       end
     else
       if synonym[k] then k = synonym[k] end
+      if special[k] ~= nil then special[k] = true end
       if allow[k] then
         if dType == nil then dType = k else error('Error: More than one "type" keyword used for '..alias) end
       end
@@ -641,7 +642,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     lvl = {},       -- Levels
   }
   local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
-  local special = { includeunit = false, dec = false }
+  local special = { includeunit = false, preset = false, dec = false }
 
   local lvl = false
   local dType, action, boid, dSa, payload, prefix, tag, k, t
@@ -738,18 +739,24 @@ local function addDiscover(net, app, group, channel, tags, name)
       pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} low {% elif value | int == 170 %} medium {% elif value | int == 255 %} high {% endif %}',
     } end },
     fan_pct = {getPayload = function()
-      dType = 'fan' fan[alias] = true storeLevel[alias] = true return {
+      dType = 'fan' fan[alias] = true storeLevel[alias] = true local payload = {
       pl_on = 'ON', pl_off = 'OFF',
       stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp',
-      --pr_modes = {'off', 'low', 'medium', 'high'},
-      --pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "off" %} 0 {% elif value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
-      --pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} low {% elif value | int == 170 %} medium {% elif value | int == 255 %} high {% endif %}',
       pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_cmd_tpl = '{% if value | int == 0 %} 0 {% elif value | int == 1 %} 86 {% elif value | int == 2 %} 170 {% elif value | int == 3 %} 255 {% endif %}',
-      pct_stat_t = mqttReadTopic..alias..'/level', pct_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} 1 {% elif value | int == 170 %} 2 {% elif value | int == 255 %} 3 {% endif %}',
+      pct_stat_t = mqttReadTopic..alias..'/level', pct_val_tpl = '{% if value | int == 0 %} 0 {% elif value | int == 86 %} 1 {% elif value | int == 170 %} 2 {% elif value | int == 255 %} 3 {% endif %}',
       spd_rng_min = 1,
       spd_rng_max = 3,
       opt = false,
-    } end },
+      }
+      if special.preset then
+        payload.pr_modes = {'off', 'low', 'medium', 'high'}
+        payload.pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp'
+        payload.pr_mode_cmd_tpl = '{% if value == "off" %} 0 {% elif value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}'
+        payload.pr_mode_stat_t = mqttReadTopic..alias..'/level'
+        payload.pr_mode_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} low {% elif value | int == 170 %} medium {% elif value | int == 255 %} high {% endif %}'
+      end
+      return payload
+    end },
     sensor = {getPayload = function()
       local payload
       local str = false
