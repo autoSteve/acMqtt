@@ -208,8 +208,6 @@ end
 
 local finalInstalled = finalName ~= nil and not (script.status(finalName) == nil or script.status(finalName) == false)
 local eventInstalled = eventName ~= nil and not (script.status(eventName) == nil or script.status(eventName) == false)
-local acInstalled = acName ~= nil and not (script.status(acName) == nil or script.status(acName) == false)
-local atInstalled = atName ~= nil and not (script.status(atName) == nil or script.status(atName) == false)
 
 if not eventInstalled and not finalInstalled then
   log("Error: The event script 'MQTT' or 'MQTT final' is not installed or enabled. Not starting.")
@@ -279,11 +277,13 @@ if not compatibleEvent then
   while true do sleep(1) end
 end
 if panasonicSupport then
+  local acInstalled = acName ~= nil and not (script.status(acName) == nil or script.status(acName) == false)
   local compatibleAc = false
   if acInstalled then compatibleAc = contains('VERSION: '..ACVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..acName.."'")[1].script) end
   if not compatibleAc and ACVERSION ~= 1 then log("Error: Incompatible '"..acName.."' script version detected, so update it. Not starting.") while true do sleep(1) end end
 end
 if airtopiaSupport then
+  local atInstalled = atName ~= nil and not (script.status(atName) == nil or script.status(atName) == false)
   local compatibleAt = false
   if atInstalled then compatibleAt = contains('VERSION: '..ATVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..atName.."'")[1].script) end
   if not compatibleAt and ATVERSION ~= 1 then log("Error: Incompatible '"..atName.."' script version detected, so update it. Not starting.") while true do sleep(1) end end
@@ -733,7 +733,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     fan = {getPayload = function() fan[alias] = true storeLevel[alias] = true return {
       stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pl_on = 'ON', pl_off = 'OFF', pr_modes = {'low', 'medium', 'high'},
       pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
-      pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | float == 0 %} off {% elif value | float == 86 %} low {% elif value | float == 170 %} medium {% elif value | float == 255 %} high {% endif %}'
+      pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | float == 86 %} low {% elif value | float == 170 %} medium {% elif value | float == 255 %} high {% endif %}'
     } end },
     fan_pct = {getPayload = function()
       dType = 'fan' fan[alias] = true storeLevel[alias] = true
