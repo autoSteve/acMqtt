@@ -741,7 +741,6 @@ local function addDiscover(net, app, group, channel, tags, name)
       dType = 'fan' fan[alias] = true storeLevel[alias] = true return {
       pl_on = 'ON', pl_off = 'OFF',
       stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp',
-      pct_stat_t = mqttReadTopic..alias..'/level',
       --pr_modes = {'off', 'low', 'medium', 'high'},
       --pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "off" %} 0 {% elif value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
       --pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} low {% elif value | int == 170 %} medium {% elif value | int == 255 %} high {% endif %}',
@@ -749,7 +748,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       pct_stat_t = mqttReadTopic..alias..'/level', pct_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} 1 {% elif value | int == 170 %} 2 {% elif value | int == 255 %} 3 {% endif %}',
       spd_rng_min = 1,
       spd_rng_max = 3,
-      opt = true,
+      opt = false,
     } end },
     sensor = {getPayload = function()
       local payload
