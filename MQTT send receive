@@ -137,12 +137,12 @@ setmetatable(_G, {
   __index = function (_, n) if not exclude[n] and not declaredNames[n] then log('Warning: Read undeclared global variable "'..n..'"') end return nil end,
 })
 
+local function len(tbl) local i = 0 for _, _ in pairs(tbl) do i = i + 1 end return i end -- Get number of table members
+local function hasMembers(tbl) for _, _ in pairs(tbl) do return true end return false end -- Get whether any table members
+string.contains = function (text, prefix) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring, ignoring nil
+--string.trim = function (s) if s ~= nil then return s:match('^%s*(.-)%s*$') else return nil end end -- Remove leading and trailing spaces
 local function sleep(sec) socket.select(nil, nil, sec) end
-local function contains(prefix, text) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring
-local function trim(s) if s ~= nil then return s:match('^%s*(.-)%s*$') else return nil end end -- Remove leading and trailing spaces
 local function tNetCBus(net) if net == 0 then return 254 else return net end end -- Translate AC network numbering to CBus
-local function len(dict) local i = 0; local k; for k, _ in pairs(dict) do i = i + 1 end return i end -- Get number of dictionary members
-local function hasMembers(dict) local k; for k, _ in pairs(dict) do return true end return false end -- Get whether any dictionary members
 local function indexOf(array, value) for i, v in ipairs(array) do if v == value then return i end end return nil end -- Find the index number of an array member
 local function lastSlashToUnderscore(alias) local cnt alias, cnt = alias:gsub('/', '_') return alias:gsub('_', '/', cnt-1) end -- Convert the last slash character to an underscore
 local function copy(obj, seen) -- Copy tables, 'seen' is for recursive use
@@ -168,7 +168,7 @@ end
 local function removeIrrelevant(keywords)
   local curr = {}
   for _, k in ipairs(keywords:split(',')) do
-    local parts = k:split('=') if parts[2] ~= nil then parts[1] = trim(parts[1])..'=' end
+    local parts = k:split('=') if parts[2] ~= nil then parts[1] = parts[1]:trim()..'=' end
     if cudAll[parts[1]] then table.insert(curr, k) end
   end
   return table.concat(curr, ',')
@@ -267,8 +267,8 @@ end
 finalInstalled = finalName ~= nil and not (script.status(finalName) == nil or script.status(finalName) == false)
 eventInstalled = eventName ~= nil and not (script.status(eventName) == nil or script.status(eventName) == false)
 local compatibleEvent = false
-if eventInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..eventName.."'")[1].script) end
-if finalInstalled then compatibleEvent = contains('VERSION: '..EVENTVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..finalName.."'")[1].script) end
+if eventInstalled then compatibleEvent = db:getall("SELECT script FROM scripting WHERE name = '"..eventName.."'")[1].script:contains('VERSION: '..EVENTVERSION) end
+if finalInstalled then compatibleEvent = db:getall("SELECT script FROM scripting WHERE name = '"..finalName.."'")[1].script:contains('VERSION: '..EVENTVERSION) end
 if not compatibleEvent then
   local scriptInUse = ''
   if finalInstalled then scriptInUse = finalName end
@@ -279,13 +279,13 @@ end
 if panasonicSupport then
   local acInstalled = acName ~= nil and not (script.status(acName) == nil or script.status(acName) == false)
   local compatibleAc = false
-  if acInstalled then compatibleAc = contains('VERSION: '..ACVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..acName.."'")[1].script) end
+  if acInstalled then compatibleAc = db:getall("SELECT script FROM scripting WHERE name = '"..acName.."'")[1].script:contains('VERSION: '..ACVERSION) end
   if not compatibleAc and ACVERSION ~= 1 then log("Error: Incompatible '"..acName.."' script version detected, so update it. Not starting.") while true do sleep(1) end end
 end
 if airtopiaSupport then
   local atInstalled = atName ~= nil and not (script.status(atName) == nil or script.status(atName) == false)
   local compatibleAt = false
-  if atInstalled then compatibleAt = contains('VERSION: '..ATVERSION, db:getall("SELECT script FROM scripting WHERE name = '"..atName.."'")[1].script) end
+  if atInstalled then compatibleAt = db:getall("SELECT script FROM scripting WHERE name = '"..atName.."'")[1].script:contains('VERSION: '..ATVERSION) end
   if not compatibleAt and ATVERSION ~= 1 then log("Error: Incompatible '"..atName.."' script version detected, so update it. Not starting.") while true do sleep(1) end end
 end
 
@@ -324,7 +324,7 @@ client.ON_DISCONNECT = function(...)
 end
 
 client.ON_MESSAGE = function(mid, topic, payload)
-  if contains('/cbus_mqtt_', topic) then
+  if topic:contains('/cbus_mqtt_') then
     -- Record discovery topics to check for duplication
     local parts = string.split(topic, '/')
     if parts[1] == string.split(mqttDiscoveryTopic, '/')[1] then
@@ -563,7 +563,7 @@ end
 Get level name and value
 --]]
 local function decodeLevel(net, app, group, level, default)
-  if contains('/', level) then log('Error: Legacy separator "/" being used for '..net..'/'..app..'/'..group..'! Use ":" instead') return nil, nil end
+  if level:contains('/') then log('Error: Legacy separator "/" being used for '..net..'/'..app..'/'..group..'! Use ":" instead') return nil, nil end
   local parts = string.split(level, ':')
   local lvl = -1
   if #parts == 2 then -- A select option and level
@@ -601,15 +601,15 @@ local function getKeyValue(alias, tags, _L, synonym, special, allow)
   if allow == nil then allow = {} end
   local dType = nil
   for k, t in pairs(tags) do
-    k = trim(k)
+    k = k:trim()
     if t ~= -1 then
       if special[k] ~= nil then special[k] = true end
-      local v = trim(t)
+      local v = t:trim()
       if _L[k] then
         if type(_L[k]) == 'number' then _L[k] = tonumber(v) if _L[k] == nil then error('Error: Bad numeric value for '..alias..', keyword "'..k..'="') end
         elseif type(_L[k]) == 'table' then
           _L[k] = string.split(v, '/')
-          local tv for _, tv in ipairs(_L[k]) do tv = trim(tv) end
+          local tv for _, tv in ipairs(_L[k]) do tv = tv:trim() end
         else _L[k] = v end
       end
     else
@@ -628,6 +628,18 @@ end
 Build and publish a CBus MQTT discovery topic
 --]]
 local function addDiscover(net, app, group, channel, tags, name)
+  -- Build an alias to refer to each group
+  local alias = net..'/'..app..'/'..group
+  if channel ~= nil then alias = alias..'/'..channel end
+
+  if not name then -- Need a name from tag lookup for everything but measurement app
+    if channel == nil then
+      error('Error: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required')
+    else
+      if app == 228 then name = 'Measurement '..alias else name = 'Unit parameter '..alias end
+    end
+  end
+
   -- All keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
   local _L = {
     pn = name,      -- Preferred name
@@ -666,7 +678,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     payload.obj_id = oid
     payload.uniq_id = oid
     payload.avty_t = mqttCbus..'status'
-    payload.dev = { name=entity, ids=trim(_L.sa..' '..entity), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
+    payload.dev = { name=entity, ids=_L.sa..' '..entity:trim(), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
     if _L.img ~= '' then payload.ic = _L.img end
     return payload
   end
@@ -689,18 +701,6 @@ local function addDiscover(net, app, group, channel, tags, name)
     if discoveryName[oid] ~= nil and discoveryName[oid] ~= entity then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
   end
-
-  if not name then -- Need a name from tag lookup for everything but measurement app
-    if channel == nil then
-      error('Error: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required')
-    else
-      if app == 228 then name = 'Measurement' else name = 'Unit parameter' end
-    end
-  end
-
-  -- Build an alias to refer to each group
-  local alias = net..'/'..app..'/'..group
-  if channel ~= nil then alias = alias..'/'..channel end
 
   -- Build an OID (measurement application / unit parameter gets a channel as well), also add to mqttDevices
   local oid = 'cbus_mqtt_'..tNetCBus(net)..'_'.. app..'_'..group if channel ~= nil then oid = oid..'_'..channel end
@@ -856,11 +856,11 @@ local function addDiscover(net, app, group, channel, tags, name)
   if _L.img == '' and lighting[tostring(app)] then
     local pnl = _L.pn:lower()
     for k, v in pairs(imgDefault) do
-      if contains(k, pnl) then
+      if pnl:contains(k) then
         if type(v) == 'string' then _L.img = v
         else
           local ik, iv, theElse
-          for ik, iv in pairs(v) do if ik ~= '#else' then if contains(ik, pnl) then _L.img = iv end else theElse = v['#else'] end end
+          for ik, iv in pairs(v) do if ik ~= '#else' then if pnl:contains(ik) then _L.img = iv end else theElse = v['#else'] end end
           if _L.img == '' then _L.img = theElse end
         end
       end
@@ -868,7 +868,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     if _L.img == '' then _L.img = 'mdi:lightbulb' end
   end
 
-  if dType == 'light' and app == 228 then dType = 'sensor'; log('Warning: publishing measurement app '..alias..' as a sensor') end -- Measurement app sensor with incorrect/missing type
+  if dType == 'light' and app == 228 then dType = 'sensor'; log('Warning: publishing measurement app '..alias..' as a sensor, not light') end -- Measurement app sensor with incorrect/missing type
   if special.includeUnit then includeUnits[alias] = true if logging then log('Including units for '..alias) end else includeUnits[alias] = nil end
 
   payload = allow[dType].getPayload()
@@ -1032,16 +1032,20 @@ end
 Get applicable groups and keywords
 --]]
 local function getGroups(kw)
+  local t
   local grps = {}
   for _, t in ipairs(db:getall("SELECT o.address, o.tagcache, o.name FROM objects AS o JOIN objecttags AS ot ON o.id=ot.object WHERE ot.tag='"..kw.."'")) do
     local alias = knxlib.decodega(t.address)
     local parts = load("return {"..alias:gsub('/',',').."}")()
     grps[alias] = { tags = {}, name = t.name, keywords = t.tagcache:gsub(', ',','), net = parts[1], app = parts[2], group = parts[3], channel = parts[4], }
+    if parts[2] == 228 then -- Get the measurement app channel name from the CBus tag map
+      grps[alias].name = db:getall('SELECT tag FROM cbus_tag_map WHERE tagtype="S" AND net='..parts[1]..' AND app='..parts[2]..' AND grp='..parts[3]..' AND tagid='..parts[4])[1]['tag']
+    end
     local tags = {}
     local tg
     for _, tg in ipairs(grps[alias].keywords:split(',')) do
       parts = tg:split('=')
-      if parts[2] then tags[trim(parts[1])] = trim(parts[2]) else tags[trim(parts[1])] = -1 end
+      if parts[2] then tags[parts[1]:trim()] = parts[2]:trim() else tags[parts[1]:trim()] = -1 end
     end
     grps[alias].tags = tags
   end
@@ -1057,10 +1061,16 @@ local function publishCurrent()
   mqttDevices = {}
   local grps = getGroups('MQTT')
   local n = 0
-  local i, k, v, alias
+  local i, k, v, alias, name
   for alias, v in pairs(grps) do
     n = n + 1
-    local name; if v.name then name = v.name else name = GetCBusGroupTag(v.net, v.app, v.group) end
+    if v.name then name = v.name else
+      if v.app ~= 228 then
+        name = GetCBusGroupTag(v.net, v.app, v.group)
+      else
+        name = nil
+      end
+    end
     unpublished[n] = {net=v.net, app=v.app, group=v.group, channel=v.channel, tags=v.tags, name=name}
     if not mqttDevices[alias] then mqttDevices[alias] = {}; mqttDevices[alias].tags = v.tags; mqttDevices[alias].keywords = removeIrrelevant(v.keywords) end
   end
@@ -1556,10 +1566,10 @@ local function outstandingMqttMessage()
           SetTriggerLevel(group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
         end
 
-      elseif contains('press', parts[6]) and payload == 'PRESS' then -- Lighting group press
+      elseif parts[6]:contains('press') and payload == 'PRESS' then -- Lighting group press
         PulseCBusLevel(net, app, group, 255, 0, 1, 0); if logging then log('Payload for '..alias..' is PRESS') end
 
-      elseif parts[7] ~= nil and contains('press', parts[7]) and payload == 'PRESS' then -- Trigger level press
+      elseif parts[7] ~= nil and parts[7]:contains('press') and payload == 'PRESS' then -- Trigger level press
         local level = triggers[group][parts[6]]
         if level ~= nil then
           SetTriggerLevel(group, level); if logging then log('Payload for '..alias..' is PRESS') end
@@ -1607,7 +1617,7 @@ local function outstandingMqttMessage()
             if not fan[alias] then 
               if lastLevel[alias] then if logging then log('Last level '..lastLevel[alias]) end end
               if lastLevel[alias] and num == 255 then
-                if blindKey and contains(blindKey, GetCBusGroupTag(net, app, group)) then
+                if blindKey and GetCBusGroupTag(net, app, group):contains(blindKey) then
                   toSet = num; if logging then log('Payload is blind ramp on for '..alias) end
                 else
                   toSet = lastLevel[alias]
@@ -1799,7 +1809,7 @@ local function outstandingCbusMessage()
   local lastLevel = storage.get('lastlvl', {})
   for _, cmd in ipairs(cbusMessages) do
     -- Check for final levels
-    if contains('>', cmd) then
+    if cmd:contains('>') then
       cmd = cmd:gsub('>', '/')
       final = true
       parts = string.split(cmd, '/')
@@ -1961,7 +1971,7 @@ local i, c
 for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function
 
 local function validateIncoming(cmd) -- Reject any weird socket messages received
-  if contains('>', cmd) then
+  if cmd:contains('>') then
     local incoming = string.split(cmd, '>')
     local _, count = incoming[1]:gsub('/', ''); if count < 2 or count > 3 then return false end
     local parts = string.split(incoming[1], '/')
