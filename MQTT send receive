@@ -61,6 +61,8 @@ Variables not to be messed with unless you definitely know what you're doing.
 local EVENTVERSION = 3       -- MQTT/MQTT final event script compatible version
 local ACVERSION = 1          -- Panasonic event script compatible version
 local ATVERSION = 1          -- Airtoipia event script compatible version
+local init = true            -- Initialisation
+local reconnect = false      -- Reconnection does not perform a full publish
 local discovery = {}         -- MQTT discovery topics lookup
 local discoveryDelete = {}   -- If duplicate discovery topics are detected on startup then they will be removed
 local discoveryName = {}     -- Device names (used for rename detection)
@@ -321,6 +323,8 @@ end
 client.ON_DISCONNECT = function(...)
   log('Mosquitto broker disconnected')
   mqttStatus = 2
+  init = true
+  reconnect = true
 end
 
 client.ON_MESSAGE = function(mid, topic, payload)
@@ -1462,6 +1466,7 @@ local function outstandingPublish()
       failed = failed + 1
       log(err)
     end
+    -- Publish current levels
     local alias = u.net..'/'..u.app..'/'..u.group
     -- Measurement application
     if u.app == 228 then
@@ -1993,6 +1998,9 @@ local function validateIncoming(cmd) -- Reject any weird socket messages receive
   return false
 end
 
+local warningTimeout = 30
+local timeout = 1
+local timeoutStart, connectStart
 
 while true do
   -- Check for new messages from CBus. The entire socket buffer is collected each iteration for efficiency.
@@ -2015,11 +2023,10 @@ while true do
   end)
   if not stat then log('Socket receive error: '..err) end
 
-  -- Process MQTT message buffers synchronously - sends and receives
-  client:loop(mqttTimeout)
+  if mqttStatus == 1 then -- When connected to the broker
+    -- Process MQTT message buffers synchronously - sends and receives
+    client:loop(mqttTimeout)
 
-  if mqttStatus == 1 then
-    -- When connected to the broker
     if #mqttMessages > 0 then
       -- Send outstanding messages to CBus
       stat, err = pcall(outstandingMqttMessage)
@@ -2056,12 +2063,12 @@ while true do
     end
   elseif mqttStatus == 2 or not mqttStatus then
     -- MQTT is disconnected, so attempt a connection, waiting. If fail to connect then retry.
-    local warningTimeout = 60
-    local timeout = 1
-    local timeoutStart = socket.gettime()
-    local connectStart = timeoutStart
-    log('Connecting to Mosquitto broker')
-    ::reconnect::
+    if init then
+      log('Connecting to Mosquitto broker')
+      timeoutStart = socket.gettime()
+      connectStart = timeoutStart
+      init = false
+    end
     stat, err = pcall(function (b, p, k) client:connect(b, p, k) end, mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
     if not stat then -- Log and abort
       log('Error calling connect to broker: '..err)
@@ -2070,14 +2077,13 @@ while true do
     end
     while mqttStatus ~= 1 do
       client:loop(1) -- Service the client with a generous timeout
-      if socket.gettime() - timeoutStart > warningTimeout then
-        log('Failed to connect to the Mosquitto broker, retrying continuously')
-        timeoutStart = socket.gettime()
-      end
-      checkHeartbeat()
       if socket.gettime() - connectStart > timeout then
+        if socket.gettime() - timeoutStart > warningTimeout then
+          log('Failed to connect to the Mosquitto broker, retrying continuously')
+          timeoutStart = socket.gettime()
+        end
         connectStart = socket.gettime()
-        goto reconnect
+        goto next -- Exit to the main loop to keep socket messages monitored
       end
     end
     mqttConnected = socket.gettime()
@@ -2089,16 +2095,20 @@ while true do
     if environmentSupport then for k, _ in pairs(envBoards) do client:subscribe(k..'/#', mqttQoS) end end
     -- Connected... Now loop briefly to allow retained value retrieval for subscribed topics because synchronous
     while socket.gettime() - mqttConnected < 0.5 do client:loop(0) end
-    -- Full publish CBus topics
-    stat, err = pcall(publishCurrent)
-    if not stat then log('Error publishing current values: '..err) end -- Log and continue
-    -- Initial load of devices excluding CBus/Airtopia
-    for _, c in ipairs(cud) do if c.init then local stat, err = pcall(c.func) if not stat then log('Error calling '..c.name..' create/update/delete function: '..err) end end end
+    if not reconnect then
+      -- Full publish CBus topics
+      stat, err = pcall(publishCurrent)
+      if not stat then log('Error publishing current values: '..err) end -- Log and continue
+      -- Initial load of devices excluding CBus/Airtopia
+      for _, c in ipairs(cud) do if c.init then local stat, err = pcall(c.func) if not stat then log('Error calling '..c.name..' create/update/delete function: '..err) end end end
+    end
   else
     log('Error: Invalid mqttStatus: '..mqttStatus)
     pcall(function () server:close() end)
     do return end
   end
+
+  ::next::
 
   --[[
   Send a heartbeat periodically to port 5433, listened to by the heartheat script.
