@@ -56,7 +56,7 @@ Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
 A type of light, fan, fan_pct (or fanpct), cover, select, sensor, switch, binary_sensor (or binarysensor), bsensor or button (default if not specified is 'light').
 - Light, cover, select, sensor, switch, binary_sensor and button are self-explanatory, being the Home Assistant equivalents.
-- Using cover assumes that a L5501RBCP blind relay is in "level translation mode" (status updates in HA will be less than perfect, but acceptable). I personally use a select without level translation mode, and level presets for open, closed, and part open at half way, which works well, and is predictable.
+- Using cover by default assumes that a L5501RBCP blind relay is in "level translation mode" (status updates in HA will be less than perfect, but acceptable). I personally use a select without level translation mode, and level presets for open, closed, and part open at half way, which works well, and is predictable. To not use level translation mode, add the keyword 'noleveltranslate'.
 - The fan keyword is specifically for sweep fan controllers like a L5501RFCP. For fan/fan_pct the Home Assistant object changes, as described below, with one a preset, and the other slider percentage. (Note, to use preset in conjunction with fan_pct specify the keyword 'preset' along with fan_pct)
 - A bsensor is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. Motion detected/Motion not detected.
 
@@ -111,7 +111,7 @@ Keyword examples:
 - MQTT, switch, sa=Bathroom 1, img=mdi:radiator, 
 - MQTT, fan_pct, preset, sa=Hutch, img=mdi:ceiling-fan, 
 - MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
-- MQTT, cover, sa=Bathroom 2, img=mdi:blinds, 
+- MQTT, cover, sa=Bathroom 2, img=mdi:blinds, noleveltranslate
 - MQTT, select, sa=Bathroom 2, lvl=0/137/255, 
 - MQTT, select, sa=Bathroom 2, lvl=Closed/Half open/Open, 
 - MQTT, select, sa=Bathroom 2, lvl=Closed:0/Half open:137/Open:255, 

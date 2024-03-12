@@ -355,9 +355,13 @@ local function publish(alias, net, app, group, level, noPre)
   if level == nil then log('Warning: Nil CBus level for '..net..'/'..app..'/'..group); do return end end
   local state = ''
   if cover[alias] then
-    -- For CBus blind controllers report level unless it is 5, which is a preset for stop in level translation mode
-    state = 'stopped'
-    if level == 5 then level = -1 end
+    if mqttDevices[alias].noleveltranslate then
+	    state = (tonumber(level) ~= 0) and 'open' or 'closed'
+    else
+      -- For CBus blind controllers report level unless it is 5, which is a preset for stop in level translation mode
+      state = 'stopped'
+      if level == 5 then level = -1 end
+    end
   else
     state = (tonumber(level) ~= 0) and 'ON' or 'OFF'
   end
@@ -658,7 +662,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     lvl = {},       -- Levels
   }
   local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
-  local special = { includeunit = false, preset = false, dec = false }
+  local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false }
 
   local lvl = false
   local dType, action, boid, dSa, payload, prefix, tag, k, t
@@ -734,6 +738,7 @@ local function addDiscover(net, app, group, channel, tags, name)
       end },
     cover = {getPayload = function()
       cover[alias] = true
+      if special.noleveltranslate then mqttDevices[alias].noleveltranslate = true end
       return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
       end },
     fan = {getPayload = function() fan[alias] = true storeLevel[alias] = true return {
@@ -1594,7 +1599,7 @@ local function outstandingMqttMessage()
           SetCBusLevel(net, app, group, 0, 0)
           goto next
         elseif payload == 'STOP' then
-          SetCBusLevel(net, app, group, 5, 0)
+          if not mqttDevices[alias].noleveltranslate then SetCBusLevel(net, app, group, 5, 0) end
           goto next
         elseif payload == 'ON' then
           if fan[alias] then
