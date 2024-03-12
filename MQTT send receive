@@ -723,6 +723,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   local oldLightingButton = lightingButton[alias] lightingButton[alias] = nil
   userParameter[alias] = nil
   unitParameter[alias] = nil
+  storeLevel[alias] = nil
 
   local allow = {
     light = {getPayload = function()
@@ -1620,9 +1621,10 @@ local function outstandingMqttMessage()
             if logging then log('Payload for '..alias..' is RAMP '..payload) end
             local toSet = 0
             local ramp = 0
-            if not fan[alias] then 
-              if lastLevel[alias] then if logging then log('Last level '..lastLevel[alias]) end end
-              if lastLevel[alias] and num == 255 then
+            if not fan[alias] then
+              if lastLevel[alias] and not storeLevel[alias] then lastLevel[alias] = nil storage.set('lastlvl', lastLevel) log('Clear legacy lastLevel for '..alias) end
+              if storeLevel[alias] and lastLevel[alias] then if logging then log('Last level '..lastLevel[alias]) end end
+              if storeLevel[alias] and lastLevel[alias] and num == 255 then
                 if blindKey and GetCBusGroupTag(net, app, group):contains(blindKey) then
                   toSet = num; if logging then log('Payload is blind ramp on for '..alias) end
                 else
