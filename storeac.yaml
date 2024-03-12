@@ -52,6 +52,24 @@ mqtt:
   password: !secret mqtt_password
   discovery: false
   
+globals:
+  - id: saved_today
+    type: double
+    restore_value: yes
+    initial_value: '0'
+
+sensor:
+  - platform: homeassistant
+    entity_id: sensor.panasonic_ac_today_power_consumption
+    id : consumption
+    accuracy_decimals: 3
+    filters:
+    - filter_out: nan
+    on_value:
+      then:
+        - lambda: |-
+           id(saved_today) = id(consumption).state;
+
 climate:
   - platform: panasonic_ac
     # For CZ-TACG1
