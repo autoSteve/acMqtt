@@ -1044,7 +1044,7 @@ local function getGroups(kw)
     grps[alias] = { tags = {}, name = t.name, keywords = t.tagcache:gsub(', ',','), net = parts[1], app = parts[2], group = parts[3], channel = parts[4], }
     if parts[2] == 228 then -- Get the measurement app channel name from the CBus tag map
       local resp = db:getall('SELECT tag FROM cbus_tag_map WHERE tagtype="S" AND net='..parts[1]..' AND app='..parts[2]..' AND grp='..parts[3]..' AND tagid='..parts[4])
-      if resp ~= nil then grps[alias].name = resp[1]['tag'] else grps[alias].name = alias end
+      if resp ~= nil and resp[1] ~= nil and resp[1]['tag'] ~= nil then grps[alias].name = resp[1]['tag'] else grps[alias].name = alias end
     end
     local tags = {}
     local tg
