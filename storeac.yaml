@@ -8,6 +8,10 @@ esp32:
   framework:
     type: arduino
 
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
 # Enable logging
 logger:
   level: INFO
@@ -71,8 +75,10 @@ climate:
     #   name: Panasonic AC NanoeX Switch
     # mild_dry_switch:
     #   name: Panasonic AC Mild Dry Switch
-    # current_power_consumption:
-    #   name: Panasonic AC Power Consumption
+    current_power_consumption:
+      name: Panasonic AC Power Consumption
+    today_power_consumption:
+      name: Panasonic AC Today Power Consumption
 
     # Useful when the ac does not report a current temperature (CZ-TACG1 only)
     # current_temperature_sensor: temperature_sensor_id
