@@ -28,6 +28,7 @@ General configuration variables follow. Change as required, but probably no need
 local logging = false        -- Enable detailed logging
 local logms = false          -- Display timestamp duration of certain operations
 
+local setCoverLevelAtStop = true -- As the name implies, for tracked covers in level translation mode, set the stop value to the estimated level at stop, and not the CBus trnaslation mode level 5 for stop
 local sendHeartbeat = 30     -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 local heartbeatConditions = { max = 120, } -- At most 120 seconds without a heartbeat or else get restarted
 local publishNoLevel = false -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
@@ -40,7 +41,7 @@ local mqttJunk = true        -- Whether to publish junk before a blank publish m
 --[[
 Timing variables. Adjust to taste if you know what you're doing. These provide a good compromise, but your deployment may vary.
 --]]
-local socketTimeout = 0.2    -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
+local socketTimeout = 0.1    -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 local mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 local ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
 local rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds (legacy firmware only)
@@ -97,6 +98,7 @@ local unitParameter = {}     -- Quick lookup to determine whether an object is a
 local storeLevel = {}        -- Instruct MQTT Final/MQTT event script to store the last level for certain object types (fan, fan_pct)
 local publishAdj = {}        -- Holds scale and decimals to apply
 local includeUnits = {}      -- Holds table of booleans to add sensor unit (%, $, °C, etc.) to MQTT value
+local transition = {}        -- Covers that are transitioning
 local unpublished = {}       -- The outstanding set of CBus objects to publish discovery topics for
 local unpublishedAt = {}     -- The outstanding set of CBus Airtopia objects to publish discovery topics for
 local mqttStatus = 2         -- The status of the MQTT connection. Initially disconnected, which will cause an immediate connection. 1=connected, 2=disconnected
@@ -113,10 +115,13 @@ local imgDefault = {         -- Defaults for images - Simple image name, or a ta
 local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
   'MQTT', 'light', 'switch', 'cover', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'button', 'select',
-  'pn=', 'sa=', 'img=', 'unit=', 'class=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=',
-  'includeunit', 'preset',
+  'pn=', 'sa=', 'img=', 'unit=', 'class=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=', 'rate=', 'delay=',
+  'includeunit', 'preset', 'noleveltranslate',
 }
 local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end cudRaw = nil
+
+-- local coverLevel = {} storage.set('coverLevel', coverLevel) -- Clear stored coverLevel
+local coverLevel = storage.get('coverLevel', {}) -- Holds the current level of covers (survives restart)
 
 local airtopiaCmds = { 'power', 'fan', 'swing', 'mode', 'target_temperature', } -- All command topics (used for clean up)
 local atmodes = { 'auto', 'cool', 'heat', 'fan_only', 'dry', 'off', } -- Airtopia modes
@@ -356,7 +361,7 @@ local function publish(alias, net, app, group, level, noPre)
   local state = ''
   if cover[alias] then
     if mqttDevices[alias].noleveltranslate then
-	    state = (tonumber(level) ~= 0) and 'open' or 'closed'
+      state = (tonumber(level) ~= 0) and 'open' or 'closed'
     else
       -- For CBus blind controllers report level unless it is 5, which is a preset for stop in level translation mode
       state = 'stopped'
@@ -387,11 +392,29 @@ local function publish(alias, net, app, group, level, noPre)
           end
         end
       elseif button[alias] then -- It's a button, so do nothing as it has no state
+      elseif cover[alias] then -- It's a cover, so vary state behaviour based on level translation mode
+        if mqttDevices[alias].noleveltranslate then
+          client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
+          if level ~= -1 then client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN) end
+          if logging then log('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level) end
+        else
+          local v
+          if hasMembers(mqttDevices[alias].rate) then
+            state = (coverLevel[alias] ~= 0) and 'open' or 'closed'
+            v = coverLevel[alias]
+          else
+            state = (level ~= 0) and 'open' or 'closed'
+            v = (level < 0) and 128 or level
+          end
+          client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
+          client:publish(mqttReadTopic..alias..'/open', v, mqttQoS, RETAIN)
+          if logging then log('Publishing state and open '..mqttReadTopic..alias..' to '..state..'/'..v) end
+        end
       else -- It's a bog standard group
         local v
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
         if publishAdj[alias] then v = tonumber(string.format('%.'..publishAdj[alias].dec..'f', level * publishAdj[alias].scale)) else v = level end
-        if level ~= -1 then client:publish(mqttReadTopic..alias..'/level', v, mqttQoS, RETAIN) end
+        client:publish(mqttReadTopic..alias..'/level', v, mqttQoS, RETAIN)
         if logging then log('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..v) end
       end
     else -- It's a binary sensor / trigger
@@ -486,7 +509,7 @@ local function publishAc(alias, level, select)
       if topic ~= '' then client:publish(topic, level, mqttQoS, NORETAIN) end
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
-      ignoreCbus[alias] = socket.gettime()
+      ignoreCbus[alias] = socket.gettime(); log('Setting ignore CBus for '..alias)
       if logging then log('Published AC '..ac[alias].name..' to '..level) end
     else
       ignoreMqtt[alias] = nil
@@ -518,7 +541,7 @@ local function publishAt(alias, level)
       client:publish(topic, level, mqttQoS, RETAIN)
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
-      if level ~= at[alias].state then ignoreCbus[alias] = socket.gettime() end
+      if level ~= at[alias].state then ignoreCbus[alias] = socket.gettime(); log('Setting ignore CBus for '..alias) end
       if logging then log('Published AT '..at[alias].name..' to '..level) end
       -- Determine whether a HomeAssistant state topic needs to be also published
       local st = nil
@@ -617,7 +640,7 @@ local function getKeyValue(alias, tags, _L, synonym, special, allow)
         if type(_L[k]) == 'number' then _L[k] = tonumber(v) if _L[k] == nil then error('Error: Bad numeric value for '..alias..', keyword "'..k..'="') end
         elseif type(_L[k]) == 'table' then
           _L[k] = string.split(v, '/')
-          local tv for _, tv in ipairs(_L[k]) do tv = tv:trim() end
+          local i, tv for i, tv in ipairs(_L[k]) do _L[k][i] = tv:trim() end
         else _L[k] = v end
       end
     else
@@ -660,6 +683,8 @@ local function addDiscover(net, app, group, channel, tags, name)
     on = 'On',      -- bsensor 'on' string
     off = 'Off',    -- bsensor 'off' string
     lvl = {},       -- Levels
+    rate = {},      -- Rate of open/close for cover
+    delay = 0,      -- Delay before starting cover tracking
   }
   local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
   local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false }
@@ -728,6 +753,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   userParameter[alias] = nil
   unitParameter[alias] = nil
   storeLevel[alias] = nil
+  for s, _ in pairs(special) do mqttDevices[s] = nil end
 
   local allow = {
     light = {getPayload = function()
@@ -738,8 +764,18 @@ local function addDiscover(net, app, group, channel, tags, name)
       end },
     cover = {getPayload = function()
       cover[alias] = true
-      if special.noleveltranslate then mqttDevices[alias].noleveltranslate = true end
-      return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
+      if special.noleveltranslate then
+        mqttDevices[alias].noleveltranslate = true
+        return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
+      else
+        mqttDevices[alias].noleveltranslate = false
+        if _L.rate[2] == nil then _L.rate[2] = _L.rate[1] end
+        mqttDevices[alias].rate = _L.rate
+        mqttDevices[alias].delay = _L.delay
+        if not hasMembers(_L.rate) then log('Warning: No cover open/cose rate specified for '..alias..'. Transition tracking disabled.') end
+        if coverLevel[alias] == nil then coverLevel[alias] = grp.getvalue(alias) log('Warning: Initialising cover level for '..alias..' with '..grp.getvalue(alias)..'. This may not be correct.') end
+        return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/open', set_pos_t = mqttWriteTopic..alias..'/ramp',}
+      end
       end },
     fan = {getPayload = function() fan[alias] = true storeLevel[alias] = true return {
       pl_on = 'ON', pl_off = 'OFF',
@@ -1544,6 +1580,36 @@ end
 
 
 --[[
+Tracking of cover transitions, estimating with time travelled
+--]]
+local function trackTransitions()
+  local k, v
+  local t = socket.gettime()
+  local kill = {}
+  
+  for k, v in pairs(transition) do
+    if t < v.ts then goto next end
+    local closing = v.state == 'closing'
+    local rate = closing and tonumber(mqttDevices[k].rate[2]) or tonumber(mqttDevices[k].rate[1])
+    local increment = (t - v.ts) / rate * 256
+    if closing then v.level = v.level - increment else v.level = v.level + increment end
+    coverLevel[k] = math.floor(v.level + 0.5)
+    v.ts = t
+    if coverLevel[k] < 0 then coverLevel[k] = 0 elseif coverLevel[k] > 255 then coverLevel[k] = 255 end
+    if (coverLevel[k] == 0 and closing) or (coverLevel[k] == 255 and not closing) then kill[k] = true end
+    -- log(k..': '..coverLevel[k]..', '..rate)
+    local state = (coverLevel[k] ~= 0) and 'open' or 'closed'
+    client:publish(mqttReadTopic..k..'/state', state, mqttQoS, RETAIN)
+    client:publish(mqttReadTopic..k..'/open', coverLevel[k], mqttQoS, RETAIN)
+    if logging then log('Publishing state and open '..mqttReadTopic..k..' to '..state..'/'..coverLevel[k]) end
+    ::next::
+  end
+  if hasMembers(kill) then storage.set('coverLevel', coverLevel) end
+  for k, _ in pairs(kill) do transition[k] = nil end
+end
+
+  
+--[[
 Publish the next queued messages for CBus
 --]]
 local function outstandingMqttMessage()
@@ -1556,10 +1622,11 @@ local function outstandingMqttMessage()
 
     -- Messages from CBus write topics
     if parts[1] == 'cbus' and parts[2] == 'write' then
-
       local net = tonumber(parts[3]) local app = tonumber(parts[4]) local group = tonumber(parts[5])
       local alias = net..'/'..app..'/'..group
       if logging then log('Set '..topic..' to '..payload) end
+
+      -- ignoreMqtt[alias] = socket.gettime(); if logging then log('Setting ignoreMqtt for '..alias) end
 
       local lastLevel = storage.get('lastlvl', {})
 
@@ -1594,12 +1661,17 @@ local function outstandingMqttMessage()
       elseif parts[6] == 'ramp' then
         if payload == 'OPEN' then
           SetCBusLevel(net, app, group, 255, 0)
+          if cover[alias] and not mqttDevices[alias].noleveltranslate and hasMembers(mqttDevices[alias].rate) and not transition[alias] then transition[alias] = { state='opening', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to open') end end
           goto next
         elseif payload == 'CLOSE' then
           SetCBusLevel(net, app, group, 0, 0)
+          if cover[alias] and not mqttDevices[alias].noleveltranslate and hasMembers(mqttDevices[alias].rate) and not transition[alias] then transition[alias] = { state='closing', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to close') end end
           goto next
         elseif payload == 'STOP' then
-          if not mqttDevices[alias].noleveltranslate then SetCBusLevel(net, app, group, 5, 0) end
+          if not mqttDevices[alias].noleveltranslate then
+            storage.set('coverLevel', coverLevel) transition[alias] = nil if logging then log('Cancel transition for '..alias) end
+            if setCoverLevelAtStop and hasMembers(mqttDevices[alias].rate) then SetCBusLevel(net, app, group, coverLevel[alias], 0) else SetCBusLevel(net, app, group, 5, 0) end
+          end
           goto next
         elseif payload == 'ON' then
           if fan[alias] then
@@ -1633,13 +1705,13 @@ local function outstandingMqttMessage()
                 if blindKey and GetCBusGroupTag(net, app, group):contains(blindKey) then
                   toSet = num; if logging then log('Payload is blind ramp on for '..alias) end
                 else
-                  toSet = lastLevel[alias]
+                  if lastLevel[alias] then toSet = lastLevel[alias] else toSet = num end
                 end
               else
                 toSet = num
               end
+              if cover[alias] then coverLevel[alias] = toSet storage.set('coverLevel', coverLevel) mqttDevices[alias].transition = nil end
             else
-              if logging then log('Payload is fan ramp for '..alias) end
               toSet = num
             end
             if parts[2] ~= nil then ramp = tonumber(parts[2]) else ramp = 0 end
@@ -1897,6 +1969,15 @@ local function outstandingCbusMessage()
           else
             stat, err = pcall(publish, alias, net, app, group, payload) if not stat then log(err) end
           end
+          if cover[alias] and not mqttDevices[alias].noleveltranslate and hasMembers(mqttDevices[alias].rate) then
+            if not transition[alias] then
+              if payload == 0 then transition[alias] = { state='closing', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to open') end
+              elseif payload == 255 then transition[alias] = { state='opening', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to closed') end
+              end
+            else
+              if payload == 5 then storage.set('coverLevel', coverLevel) transition[alias] = nil if logging then log('Cancel transition for '..alias) end end
+            end
+          end
         end
       elseif app == 228 then -- Special case for measurement app
         alias = alias..'/'..parts[4]
@@ -1912,7 +1993,7 @@ end
 
 
 --[[
-Remove any orphaned ramp flags
+Remove any orphaned ramp flags (legacy firmware)
 --]]
 local function checkRampOrphans()
   local k, v; local orphan = {}
@@ -2054,6 +2135,11 @@ while true do
       -- Publish outstanding Airtopia discovery topics
       stat, err = pcall(outstandingAtPublish)
       if not stat then log('Error publishing outstanding Airtopia discovery topics: '..err) unpublishedAt = {} end -- Log error and clear the queue, continue
+    end
+    if hasMembers(transition) then
+      -- Tracking progress of open/close of covers
+      stat, err = pcall(trackTransitions)
+      if not stat then log('Error tracking transitions: '..err) transition = {} end -- Log error and clear the transition list, continue
     end
     if legacyFirmware and hasMembers(ramp) then
       -- Some scenarios can create ramp orphans when using a legacy firmware setup
