@@ -509,7 +509,7 @@ local function publishAc(alias, level, select)
       if topic ~= '' then client:publish(topic, level, mqttQoS, NORETAIN) end
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
-      ignoreCbus[alias] = socket.gettime(); log('Setting ignore CBus for '..alias)
+      ignoreCbus[alias] = socket.gettime(); if logging then log('Setting ignore CBus for '..alias) end
       if logging then log('Published AC '..ac[alias].name..' to '..level) end
     else
       ignoreMqtt[alias] = nil
@@ -541,7 +541,7 @@ local function publishAt(alias, level)
       client:publish(topic, level, mqttQoS, RETAIN)
       -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
       -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
-      if level ~= at[alias].state then ignoreCbus[alias] = socket.gettime(); log('Setting ignore CBus for '..alias) end
+      if level ~= at[alias].state then ignoreCbus[alias] = socket.gettime(); if logging then log('Setting ignore CBus for '..alias) end end
       if logging then log('Published AT '..at[alias].name..' to '..level) end
       -- Determine whether a HomeAssistant state topic needs to be also published
       local st = nil
