@@ -1597,9 +1597,7 @@ local function trackTransitions()
     v.ts = t
     if coverLevel[k] < 0 then coverLevel[k] = 0 elseif coverLevel[k] > 255 then coverLevel[k] = 255 end
     if (coverLevel[k] == 0 and closing) or (coverLevel[k] == 255 and not closing) then kill[k] = true end
-    -- log(k..': '..coverLevel[k]..', '..rate)
-    local state = (coverLevel[k] ~= 0) and 'open' or 'closed'
-    client:publish(mqttReadTopic..k..'/state', state, mqttQoS, RETAIN)
+    client:publish(mqttReadTopic..k..'/state', v.state, mqttQoS, RETAIN)
     client:publish(mqttReadTopic..k..'/open', coverLevel[k], mqttQoS, RETAIN)
     if logging then log('Publishing state and open '..mqttReadTopic..k..' to '..state..'/'..coverLevel[k]) end
     ::next::
