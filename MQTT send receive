@@ -1597,13 +1597,18 @@ local function trackTransitions()
     v.ts = t
     if coverLevel[k] < 0 then coverLevel[k] = 0 elseif coverLevel[k] > 255 then coverLevel[k] = 255 end
     if (coverLevel[k] == 0 and closing) or (coverLevel[k] == 255 and not closing) then kill[k] = true end
+    -- log(k..': '..coverLevel[k]..', '..rate)
+    -- local state = (coverLevel[k] ~= 0) and 'open' or 'closed'
     client:publish(mqttReadTopic..k..'/state', v.state, mqttQoS, RETAIN)
     client:publish(mqttReadTopic..k..'/open', coverLevel[k], mqttQoS, RETAIN)
     if logging then log('Publishing state and open '..mqttReadTopic..k..' to '..state..'/'..coverLevel[k]) end
     ::next::
   end
   if hasMembers(kill) then storage.set('coverLevel', coverLevel) end
-  for k, _ in pairs(kill) do transition[k] = nil end
+  for k, _ in pairs(kill) do
+    client:publish(mqttReadTopic..k..'/state', (coverLevel[k] ~= 0) and 'open' or 'closed', mqttQoS, RETAIN)
+    transition[k] = nil
+  end
 end
 
   
@@ -1668,6 +1673,7 @@ local function outstandingMqttMessage()
         elseif payload == 'STOP' then
           if not mqttDevices[alias].noleveltranslate then
             storage.set('coverLevel', coverLevel) transition[alias] = nil if logging then log('Cancel transition for '..alias) end
+            if hasMembers(mqttDevices[alias].rate) then client:publish(mqttReadTopic..alias..'/state', (coverLevel[alias] ~= 0) and 'open' or 'closed', mqttQoS, RETAIN) end
             if setCoverLevelAtStop and hasMembers(mqttDevices[alias].rate) then SetCBusLevel(net, app, group, coverLevel[alias], 0) else SetCBusLevel(net, app, group, 5, 0) end
           end
           goto next
@@ -1708,7 +1714,10 @@ local function outstandingMqttMessage()
               else
                 toSet = num
               end
-              if cover[alias] then coverLevel[alias] = toSet storage.set('coverLevel', coverLevel) mqttDevices[alias].transition = nil end
+              if cover[alias] then
+                coverLevel[alias] = toSet storage.set('coverLevel', coverLevel) mqttDevices[alias].transition = nil
+                if hasMembers(mqttDevices[alias].rate) then client:publish(mqttReadTopic..alias..'/state', (coverLevel[alias] ~= 0) and 'open' or 'closed', mqttQoS, RETAIN) end
+              end
             else
               toSet = num
             end
@@ -1973,7 +1982,10 @@ local function outstandingCbusMessage()
               elseif payload == 255 then transition[alias] = { state='opening', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to closed') end
               end
             else
-              if payload == 5 then storage.set('coverLevel', coverLevel) transition[alias] = nil if logging then log('Cancel transition for '..alias) end end
+              if payload == 5 then
+                storage.set('coverLevel', coverLevel) transition[alias] = nil if logging then log('Cancel transition for '..alias) end
+                if hasMembers(mqttDevices[alias].rate) then client:publish(mqttReadTopic..alias..'/state', (coverLevel[alias] ~= 0) and 'open' or 'closed', mqttQoS, RETAIN) end
+              end
             end
           end
         end
