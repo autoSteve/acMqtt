@@ -439,6 +439,39 @@ end
 
 
 --[[
+Tracking of cover transitions, estimating with time travelled
+--]]
+local function trackTransitions()
+  local k, v
+  local t = socket.gettime()
+  local kill = {}
+  
+  for k, v in pairs(transition) do
+    if t < v.ts then goto next end
+    local closing = v.state == 'closing'
+    local rate = closing and tonumber(mqttDevices[k].rate[2]) or tonumber(mqttDevices[k].rate[1])
+    local increment = (t - v.ts) / rate * 256
+    if closing then v.level = v.level - increment else v.level = v.level + increment end
+    coverLevel[k] = math.floor(v.level + 0.5)
+    v.ts = t
+    if coverLevel[k] < 0 then coverLevel[k] = 0 elseif coverLevel[k] > 255 then coverLevel[k] = 255 end
+    if (coverLevel[k] == 0 and closing) or (coverLevel[k] == 255 and not closing) then kill[k] = true end
+    -- log(k..': '..coverLevel[k]..', '..rate)
+    -- local state = (coverLevel[k] ~= 0) and 'open' or 'closed'
+    client:publish(mqttReadTopic..k..'/state', v.state, mqttQoS, RETAIN)
+    client:publish(mqttReadTopic..k..'/open', coverLevel[k], mqttQoS, RETAIN)
+    if logging then log('Publishing state and open '..mqttReadTopic..k..' to '..state..'/'..coverLevel[k]) end
+    ::next::
+  end
+  if hasMembers(kill) then storage.set('coverLevel', coverLevel) end
+  for k, _ in pairs(kill) do
+    client:publish(mqttReadTopic..k..'/state', (coverLevel[k] ~= 0) and 'open' or 'closed', mqttQoS, RETAIN)
+    transition[k] = nil
+  end
+end
+
+
+--[[
 Publish measurement application objects to MQTT 
 --]]
 local function publishMeasurement(alias, net, app, group, channel, value, noPre)
@@ -1067,7 +1100,7 @@ local function addAt(grps, found)
     end
     ::nextAt::
     if at[alias] ~= nil and atArea[v.dev] ~= nil then
-      table.insert(found, alias) -- Valid, having a sa=, so found (otherwise removed elsewhere if an existing device)
+      found[alias] = true -- Valid, having a sa=, so found (otherwise removed elsewhere if an existing device)
     end
   end
   return addition, found
@@ -1170,35 +1203,41 @@ local function cudAc()
   local alias, k, v, kill
 
   for alias, v in pairs(grps) do
-    table.insert(found, alias)
+    found[alias] = true
 
     local _L = { dev = '', func = '', sel = '', sense = '', topic = 'sensor', }
     getKeyValue(alias, v.tags, _L)
 
     if _L.dev ~= '' then
       if _L.func ~= '' then
-        if not ac[alias] then ac[alias] = {}; addition = true end
+        if not ac[alias] then ac[alias] = {} addition = true count = count + 1 end
       	ac[alias].name = _L.dev..'-'.._L.func; ac[alias].select = 'func'; acDevices[_L.dev..'-'.._L.func] = alias; acBoards[_L.dev] = true
       elseif _L.sel ~= '' then
-        if not ac[alias] then ac[alias] = {}; addition = true end
+        if not ac[alias] then ac[alias] = {} addition = true count = count + 1 end
       	ac[alias].name = _L.dev..'-'.._L.sel; ac[alias].select = 'sel'; acDevices[_L.dev..'-'.._L.sel] = alias; acBoards[_L.dev] = true
       elseif _L.sense ~= '' then
-        if not ac[alias] then ac[alias] = {}; addition = true end
+        if not ac[alias] then ac[alias] = {} addition = true count = count + 1 end
       	ac[alias].name = _L.dev..'-'.._L.sense; ac[alias].select = 'sense'; ac[alias].sense = _L.sense; ac[alias].topic = _L.topic; acDevices[_L.dev..'-'.._L.sense..'-sense'] = alias; acBoards[_L.dev] = true; acSense[_L.dev..'-'.._L.sense] = alias
       end
       ac[alias].net = v.net
       ac[alias].group = v.group
       acLogGrp[alias] = nil
-      count = count + 1
     else
       if not acLogGrp[alias] then log('Error: No device specified for Panasonic '..alias); acLogGrp[alias] = true end
     end
   end
 
   -- Handle deletions
+  local removed = 0
   for k, _ in pairs(ac) do
-    local f = false; for _, v in ipairs(found) do if k == v then f = true; break end end
-    if not f then kill = ac[k].name; ac[k] = nil; acDevices[kill] = nil end
+    if not found[k] then
+      local name if ac[k].select == 'sense' then name = ac[k].name..'-sense' else name = ac[k].name end
+      log('Removing '..k..' AC '..name) kill = name; ac[k] = nil; acDevices[kill] = nil removed = removed + 1
+    end
+  end
+  if removed > 0 then
+    log('Removed '..removed..' Panasonic A/C object'..(removed ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..', event script \''..acName..'\' restarted')
+    script.disable(acName); script.enable(acName)
   end
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
   if addition then
@@ -1270,8 +1309,7 @@ local function cudAt()
 
   -- Handle deletions
   for k, _ in pairs(at) do
-    local f = false; for _, v in ipairs(found) do if k == v then f = true; break end end
-    if not f then kill = at[k].name; at[k] = nil; atDevices[kill] = nil end
+    if not found[k] then kill = at[k].name; at[k] = nil; atDevices[kill] = nil end
   end
   local newBoards = {}
   for k, _ in pairs(atDevices) do
@@ -1329,7 +1367,7 @@ local function cudEnv()
   local alias, k, v, kill
 
   for alias, v in pairs(grps) do
-    table.insert(found, alias)
+    found[alias] = true
 
     local _L = { dev = '', func = '', }
     getKeyValue(alias, v.tags, _L)
@@ -1340,19 +1378,21 @@ local function cudEnv()
         if v.name then n = v.name else n = GetCBusGroupTag(v.net, v.app, v.group) end
         _L.func = n:lower():gsub("%s+", "_")
       end
-      if not env[alias] then env[alias] = {}; addition = true end
+      if not env[alias] then env[alias] = {}; addition = true count = count + 1 end
       env[alias].name = _L.dev..'-'.._L.func; envDevices[_L.dev..'-'.._L.func] = {v.net, v.group, alias}; envBoards[_L.dev] = true
       envLogGrp[alias] = nil
     else
       if not envLogGrp[alias] then log('Error: No device specified for environment sensor '..alias); envLogGrp[alias] = true end
     end
-    count = count + 1
   end
 
   -- Handle deletions
+  removed = 0
   for k, _ in pairs(env) do
-    local f = false; for _, v in ipairs(found) do if k == v then f = true; break end end
-    if not f then kill = env[k].name; env[k] = nil; envDevices[kill] = nil end
+    if not found[k] then kill = env[k].name; env[k] = nil; envDevices[kill] = nil; removed = removed + 1 end
+  end
+  if removed > 0 then
+    log('Removed '..removed..' environment sensor object'..(removed ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or ''))
   end
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
   if addition then
@@ -1382,7 +1422,7 @@ local function cudCBusTopics()
   for alias, v in pairs(grps) do
     local change = false
 
-    table.insert(found, alias)
+    found[alias] = true
     local curr = removeIrrelevant(v.keywords)
 
     if not mqttDevices[alias] then -- New group
@@ -1429,8 +1469,7 @@ local function cudCBusTopics()
   local kill = {}
   for alias, v in pairs(mqttDevices) do
     local topic, oid, trigger
-    local f = false; for _, vv in ipairs(found) do if alias == vv then f = true; break end end
-    if not f then
+    if not found[alias] then
       table.insert(kill, alias)
       if v.app == 202 and v.type == 'button' then
         for _, trigger in ipairs(v.trigger) do
@@ -1579,39 +1618,6 @@ local function outstandingAtPublish()
 end
 
 
---[[
-Tracking of cover transitions, estimating with time travelled
---]]
-local function trackTransitions()
-  local k, v
-  local t = socket.gettime()
-  local kill = {}
-  
-  for k, v in pairs(transition) do
-    if t < v.ts then goto next end
-    local closing = v.state == 'closing'
-    local rate = closing and tonumber(mqttDevices[k].rate[2]) or tonumber(mqttDevices[k].rate[1])
-    local increment = (t - v.ts) / rate * 256
-    if closing then v.level = v.level - increment else v.level = v.level + increment end
-    coverLevel[k] = math.floor(v.level + 0.5)
-    v.ts = t
-    if coverLevel[k] < 0 then coverLevel[k] = 0 elseif coverLevel[k] > 255 then coverLevel[k] = 255 end
-    if (coverLevel[k] == 0 and closing) or (coverLevel[k] == 255 and not closing) then kill[k] = true end
-    -- log(k..': '..coverLevel[k]..', '..rate)
-    -- local state = (coverLevel[k] ~= 0) and 'open' or 'closed'
-    client:publish(mqttReadTopic..k..'/state', v.state, mqttQoS, RETAIN)
-    client:publish(mqttReadTopic..k..'/open', coverLevel[k], mqttQoS, RETAIN)
-    if logging then log('Publishing state and open '..mqttReadTopic..k..' to '..state..'/'..coverLevel[k]) end
-    ::next::
-  end
-  if hasMembers(kill) then storage.set('coverLevel', coverLevel) end
-  for k, _ in pairs(kill) do
-    client:publish(mqttReadTopic..k..'/state', (coverLevel[k] ~= 0) and 'open' or 'closed', mqttQoS, RETAIN)
-    transition[k] = nil
-  end
-end
-
-  
 --[[
 Publish the next queued messages for CBus
 --]]
