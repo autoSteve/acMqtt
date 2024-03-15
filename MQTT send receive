@@ -28,7 +28,7 @@ General configuration variables follow. Change as required, but probably no need
 local logging = false        -- Enable detailed logging
 local logms = false          -- Display timestamp duration of certain operations
 
-local setCoverLevelAtStop = true -- As the name implies, for tracked covers in level translation mode, set the stop value to the estimated level at stop, and not the CBus trnaslation mode level 5 for stop
+local setCoverLevelAtStop = true -- As the name implies, for tracked covers in level translation mode, set the stop value to the estimated level at stop
 local sendHeartbeat = 30     -- Send a heartbeat to the 'Heartbeat' script every n seconds (zero to disable heartbeat)
 local heartbeatConditions = { max = 120, } -- At most 120 seconds without a heartbeat or else get restarted
 local publishNoLevel = false -- For trigger app, whether to publish a level with no tag as "Level n" or raise an error in the log
@@ -1387,7 +1387,7 @@ local function cudEnv()
   end
 
   -- Handle deletions
-  removed = 0
+  local removed = 0
   for k, _ in pairs(env) do
     if not found[k] then kill = env[k].name; env[k] = nil; envDevices[kill] = nil; removed = removed + 1 end
   end
