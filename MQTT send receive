@@ -355,9 +355,9 @@ end
 --[[
 Publish lighting, user parameter and trigger objects to MQTT 
 --]]
-local function publish(alias, net, app, group, level, noPre)
+local function publish(alias, app, level, noPre)
   if noPre == nil then noPre = false end
-  if level == nil then log('Warning: Nil CBus level for '..net..'/'..app..'/'..group); do return end end
+  if level == nil then log('Warning: Nil CBus level for '..alias); do return end end
   local state = ''
   if cover[alias] then
     if mqttDevices[alias].noleveltranslate then
@@ -456,8 +456,6 @@ local function trackTransitions()
     v.ts = t
     if coverLevel[k] < 0 then coverLevel[k] = 0 elseif coverLevel[k] > 255 then coverLevel[k] = 255 end
     if (coverLevel[k] == 0 and closing) or (coverLevel[k] == 255 and not closing) then kill[k] = true end
-    -- log(k..': '..coverLevel[k]..', '..rate)
-    -- local state = (coverLevel[k] ~= 0) and 'open' or 'closed'
     client:publish(mqttReadTopic..k..'/state', v.state, mqttQoS, RETAIN)
     client:publish(mqttReadTopic..k..'/open', coverLevel[k], mqttQoS, RETAIN)
     if logging then log('Publishing state and open '..mqttReadTopic..k..' to '..state..'/'..coverLevel[k]) end
@@ -474,7 +472,7 @@ end
 --[[
 Publish measurement application objects to MQTT 
 --]]
-local function publishMeasurement(alias, net, app, group, channel, value, noPre)
+local function publishMeasurement(alias, net, group, channel, value, noPre)
   if noPre == nil then noPre = false end
   if value == nil then log('Warning: Nil CBus measurement value for '..alias); do return end end
   local units, v
@@ -502,7 +500,7 @@ end
 --[[
 Publish unit parameter objects to MQTT 
 --]]
-local function publishUnitParam(alias, net, app, group, channel, value, noPre)
+local function publishUnitParam(alias, value, noPre)
   if noPre == nil then noPre = false end
   if value == nil then log('Warning: Nil unit parameter value for '..alias); do return end end
   local adjust = publishAdj[alias]
@@ -1554,14 +1552,14 @@ local function outstandingPublish()
     if u.app == 228 then
       alias = alias..'/'..u.channel
       local level = nil; pcall(function () level = GetCBusMeasurement(u.net, u.group, u.channel) end)
-      if level ~= nil then stat, err = pcall(publishMeasurement, alias, u.net, u.app, u.group, u.channel, level, true) if not stat then log(err) end end
+      if level ~= nil then stat, err = pcall(publishMeasurement, alias, u.net, u.group, u.channel, level, true) if not stat then log(err) end end
     -- User parameters
-    elseif u.app == 250 then stat, err = pcall(publish, alias, u.net, u.app, u.group, GetUserParam(u.net, u.group), true) if not stat then log(err) end
+    elseif u.app == 250 then stat, err = pcall(publish, alias, u.app, GetUserParam(u.net, u.group), true) if not stat then log(err) end
     -- Unit parameters
     elseif u.app == 255 then
       alias = alias..'/'..u.channel
       local level = nil; pcall(function () level = GetUnitParameter(u.net, u.group, u.channel) end)
-      if level ~= nil then stat, err = pcall(publishUnitParam, alias, u.net, u.app, u.group, u.channel, level, true) if not stat then log(err) end end
+      if level ~= nil then stat, err = pcall(publishUnitParam, alias, level, true) if not stat then log(err) end end
     -- Lighting and other
     else
       if not lightingButton[u.net..'/'..u.app..'/'..u.group] then -- Do nothing for lighting buttons
@@ -1571,7 +1569,7 @@ local function outstandingPublish()
         else
           pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
         end
-        if level ~= nil then stat, err = pcall(publish, alias, u.net, u.app, u.group, level, true) if not stat then log(err) end end
+        if level ~= nil then stat, err = pcall(publish, alias, u.app, level, true) if not stat then log(err) end end
       end
     end
   end
@@ -1974,13 +1972,13 @@ local function outstandingCbusMessage()
                 ramp[alias] = nil
                 if logging then log('Clear ramp for '..alias) end
                 -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
-                stat, err = pcall(publish, alias, net, app, group, payload) if not stat then log(err) end
+                stat, err = pcall(publish, alias, app, payload) if not stat then log(err) end
               end
             else
-              stat, err = pcall(publish, alias, net, app, group, payload) if not stat then log(err) end
+              stat, err = pcall(publish, alias, app, payload) if not stat then log(err) end
             end
           else
-            stat, err = pcall(publish, alias, net, app, group, payload) if not stat then log(err) end
+            stat, err = pcall(publish, alias, app, payload) if not stat then log(err) end
           end
           if cover[alias] and not mqttDevices[alias].noleveltranslate and hasMembers(mqttDevices[alias].rate) then
             if not transition[alias] then
@@ -1997,10 +1995,10 @@ local function outstandingCbusMessage()
         end
       elseif app == 228 then -- Special case for measurement app
         alias = alias..'/'..parts[4]
-        stat, err = pcall(publishMeasurement, alias, net, app, group, tonumber(parts[4]), tonumber(parts[5])) if not stat then log(err) end
+        stat, err = pcall(publishMeasurement, alias, net, group, tonumber(parts[4]), tonumber(parts[5])) if not stat then log(err) end
       elseif app == 255 then -- Special case for unit param
         alias = alias..'/'..parts[4]
-        stat, err = pcall(publishUnitParam, alias, net, app, group, tonumber(parts[4]), tonumber(parts[5])) if not stat then log(err) end
+        stat, err = pcall(publishUnitParam, alias, tonumber(parts[5])) if not stat then log(err) end
       end
     end
   end
@@ -2021,7 +2019,7 @@ local function checkRampOrphans()
       table.insert(orphan, k)
       local parts = string.split(k, '/')
       local net = tonumber(parts[1]) local app = tonumber(parts[2]) local group = tonumber(parts[3])
-      publish(k, net, app, group, v.target)
+      publish(k, app, v.target)
     end
   end
   for _, k in ipairs(orphan) do ramp[k] = nil; if logging then log('Removing orphaned ramp for '..k) end end
