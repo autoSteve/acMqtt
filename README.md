@@ -42,15 +42,6 @@ If you get errors in the log (error or event log), then feel free to raise an is
 
 Warnings are also thrown for obvious code defects that are encountered. If you get something like 'Warning: Read undeclared global variable "someVariableName"' then *definitely* raise an issue.
 
-## Variables at the top of the script
-Aside from the obvious local broker, change checking, and Airtopia, Panasonic and ESPhome support variables at the stop of the script, there are three script behaviour modifying variables. These can be important to select individual preferences.
-
-The first is 'entityIdAsIdentifier'. This is important to choose how the entity ID is presented to Home Assistant. If it is set to true, then entity IDs will be created using the object identifier (e.g. light.bathroom_1_fan), and if false by using C-Bus numbering (e.g. light.cbus_mqtt_254_56_10). Choosing 'true' may make writing automations, and selecting dashboard items much easier and readable. I recommend it. Note that entity IDs must be unique, so if setting to 'true' then make sure all sa=/pn= selections are unique. The script currently does not check this, so if there are duplicates they will be revealed in the Home Assistant error log.
-
-The second is 'forceChangeId'. If 'entityIdAsIdentifier' is changed, then entity IDs, by default will not change when a discovery entity ID change occurs. This is by design in Home Assistant. If this variable is set to true, then the entities will be recreated on script start where there is an entity ID change, so **will** use the new ID. **Excercise great caution**, as this will almost certainly break dashboards and existing automations that reference the old entity IDs. The change may well be worth it, though, and I also recommend it. Things should have been like this since the birth of acMqtt. If you do change 'entityIdAsIdentifier' with 'forceChangeId' set and change your mind, then setting 'entityIdAsIdentifier' back again and restarting will restore dashboard/automation goodness.
-
-The third is 'removeSaFromStartOfPn'. By default this is 'true', and I prefer this, but some do not. The script will remove the 'suggested area' from the start of any 'preferred name' entries if present (or from the default C-Bus object name). For example, with a sa=Bedroom 1, the pn=Bedroom 1 Light would become simply 'Light'. When this variable is set to false, the exact perferred name would be used instead, being 'Bedroom 1 Light'. Note that including the keyword 'exactpn' with the variable 'removeSaFromStartOfPn' set to true will create an exception for an individual object, allowing the best of both worlds.
-
 ## Keywords used for Automation Controller objects
 Automation controller object keywords are used to tell the scripts which objects to use, publish, and how they should be used. This varies based on circumstance, as described below.
 
@@ -180,6 +171,15 @@ For the bsensor example of a carport motion sensor, set up a CBus group address 
 For some PIR sensors, like the 5753PEIRL the light level may be broadcast periodically to a group address. Getting this into HomeAssistant as a percentage is then trivial with keywords like these:
 
 * MQTT, sensor, sa=Carport, pn=Carport Light Level, unit=%, dec=0, scale=0.390625,
+
+#### Variables at the top of the script
+Aside from the obvious local broker, change checking, and Airtopia, Panasonic and ESPhome support variables at the stop of the script, there are three script behaviour modifying variables. These can be important to select individual preferences.
+
+The first is 'entityIdAsIdentifier'. This is important to choose how the entity ID is presented to Home Assistant. If it is set to true, then entity IDs will be created using the object identifier (e.g. light.bathroom_1_fan), and if false by using C-Bus numbering (e.g. light.cbus_mqtt_254_56_10). Choosing 'true' may make writing automations, and selecting dashboard items much easier and readable. I recommend it. Note that entity IDs must be unique, so if setting to 'true' then make sure all sa=/pn= selections are unique. The script currently does not check this, so if there are duplicates they will be revealed in the Home Assistant error log.
+
+The second is 'forceChangeId'. If 'entityIdAsIdentifier' is changed, then entity IDs, by default will not change when a discovery entity ID change occurs. This is by design in Home Assistant. If this variable is set to true, then the entities will be recreated on script start where there is an entity ID change, so **will** use the new ID. **Excercise great caution**, as this will almost certainly break dashboards and existing automations that reference the old entity IDs. The change may well be worth it, though, and I also recommend it. Things should have been like this since the birth of acMqtt. If you do change 'entityIdAsIdentifier' with 'forceChangeId' set and change your mind, then setting 'entityIdAsIdentifier' back again and restarting will restore dashboard/automation goodness.
+
+The third is 'removeSaFromStartOfPn'. By default this is 'true', and I prefer this, but some do not. The script will remove the 'suggested area' from the start of any 'preferred name' entries if present (or from the default C-Bus object name). For example, with a sa=Bedroom 1, the pn=Bedroom 1 Light would become simply 'Light'. When this variable is set to false, the exact perferred name would be used instead, being 'Bedroom 1 Light'. Note that including the keyword 'exactpn' with the variable 'removeSaFromStartOfPn' set to true will create an exception for an individual object, allowing the best of both worlds.
 
 ### Philips Hue (HUE send receive)
 For Philips Hue devices, bi-directional sync with CBus occurs. I run Home Assistant talking directly to the Hue hub, and also the Automation Controller script via REST API. Add the keyword 'HUE' to CBus objects, plus...
