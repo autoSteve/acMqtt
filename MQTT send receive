@@ -724,16 +724,14 @@ local function addDiscover(net, app, group, channel, tags, name)
   local dType, action, boid, dSa, payload, prefix, tag, k, t
 
   local function getEntity(entity)
-    if removeSaFromStartOfPn then
-      if _L.sa ~= '' then
-        local startIdx, endIdx
-        repeat
-          startIdx, endIdx = entity:find(_L.sa, 1, true)
-          if startIdx and startIdx == 1 then
-            entity = entity:sub(endIdx + 1):match'^%s*(.*)'
-          end 
-        until not startIdx or startIdx > 1
-      end
+    if _L.sa ~= '' then
+      local startIdx, endIdx
+      repeat
+        startIdx, endIdx = entity:find(_L.sa, 1, true)
+        if startIdx and startIdx == 1 then
+          entity = entity:sub(endIdx + 1):match'^%s*(.*)'
+        end 
+      until not startIdx or startIdx > 1
     end
     return entity
   end
@@ -897,7 +895,7 @@ local function addDiscover(net, app, group, channel, tags, name)
             if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
             local entity = getEntity(prefix..tag)
             local name
-            if special.exactpn then name = prefix..tag else name = entity end
+            if special.exactpn or not removeSaFromStartOfPn then name = prefix..tag else name = entity end
             payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity, name)
             removeOld(dType, boid)
             publish(payload, boid, entity, name)
@@ -958,7 +956,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     mqttDevices[alias].type = dType
     local entity = getEntity(_L.pn)
     local name
-    if special.exactpn then name = _L.pn else name = entity end
+    if special.exactpn or not removeSaFromStartOfPn then name = _L.pn else name = entity end
     payload = addCommonPayload(payload, oid, entity, name)
     removeOld(dType, oid)
     publish(payload, oid, entity, name)
