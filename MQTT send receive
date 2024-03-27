@@ -7,6 +7,7 @@ local checkForChanges = true       -- When true the script will periodically che
 local checkChanges = 30            -- Interval in seconds to check for changes to object keywords
 
 --[[ SET AS APPROPRIATE TO SUIT ENVIRONMENT --]]
+local removeSaFromStartOfPn = true -- If true then the suggested area will be removed from the beginning of the preferred name (if the pn includes it) - add the keyword 'exactpn' to create an exception when true
 local airtopiaSupport = false      -- Monitor keyword 'AT' for Airtopia devices - set to true if support is desired
 local panasonicSupport = false     -- Monitor keyword 'AC' for Panasonic devices - set to true if support is desired
 local environmentSupport = false   -- Monitor keyword 'ENV' for ESPHome environment sensors - set to true if support is desired
@@ -116,7 +117,7 @@ local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
   'MQTT', 'light', 'switch', 'cover', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'button', 'select',
   'pn=', 'sa=', 'img=', 'unit=', 'class=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=', 'rate=', 'delay=',
-  'includeunit', 'preset', 'noleveltranslate',
+  'includeunit', 'preset', 'noleveltranslate', 'exactpn',
 }
 local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end cudRaw = nil
 
@@ -311,13 +312,11 @@ server:setsockname('127.0.0.1', 5432) -- Listen on port 5432 for CBus changes
 Mosquitto client and call-backs
 --]]
 
-local mqtt = require('mosquitto')
-local client = mqtt.new(mqttClientId)
-client:will_set(mqttCbus..'status', 'offline', mqttQoS, RETAIN) -- Last will and testament is to set status offline
+local client = require('mosquitto').new(mqttClientId)
 if mqttUsername then client:login_set(mqttUsername, mqttPassword) end
+client:will_set(mqttCbus..'status', 'offline', mqttQoS, RETAIN) -- Last will and testament is to set status offline
 
 client.ON_CONNECT = function(success)
-  local k
   if success then
     log('Connected to Mosquitto broker')
     client:publish(mqttCbus..'status', 'online', mqttQoS, RETAIN)
@@ -382,7 +381,8 @@ local function publish(alias, app, level, noPre)
             if selectExact and tonumber(level) ~= l.lvl and app ~= 202 then
               -- Current CBus level does not match the select, so optionally adjust the CBus level
               if logging then log('Warning: Forcing level to set for select '..alias..' to nearest level '..l.lvl..' ('..tonumber(level)..' requested, but selectExact=true)') end
-              SetCBusLevel(net, app, group, l.lvl, 0)
+              grp.write(alias, l.lvl)
+              --SetCBusLevel(net, app, group, l.lvl, 0)
               -- Adjusting the level will result in two MQTT publish events, which could be avoided but is not
             end
             client:publish(mqttReadTopic..alias..'/select', l.sel, mqttQoS, RETAIN)
@@ -718,31 +718,33 @@ local function addDiscover(net, app, group, channel, tags, name)
     delay = 0,      -- Delay before starting cover tracking
   }
   local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
-  local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false }
+  local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false, exactpn = false, }
 
   local lvl = false
   local dType, action, boid, dSa, payload, prefix, tag, k, t
 
   local function getEntity(entity)
-    if _L.sa ~= '' then
-      local startIdx, endIdx
-      repeat
-        startIdx, endIdx = entity:find(_L.sa, 1, true)
-        if startIdx and startIdx == 1 then
-          entity = entity:sub(endIdx + 1):match'^%s*(.*)'
-        end
-      until not startIdx or startIdx > 1
+    if removeSaFromStartOfPn then
+      if _L.sa ~= '' then
+        local startIdx, endIdx
+        repeat
+          startIdx, endIdx = entity:find(_L.sa, 1, true)
+          if startIdx and startIdx == 1 then
+            entity = entity:sub(endIdx + 1):match'^%s*(.*)'
+          end 
+        until not startIdx or startIdx > 1
+      end
     end
     return entity
   end
 
-  local function addCommonPayload(payload, oid, entity)
+  local function addCommonPayload(payload, oid, entity, name)
     -- Add payload common to all
     payload.name = ''
     payload.obj_id = oid
     payload.uniq_id = oid
     payload.avty_t = mqttCbus..'status'
-    payload.dev = { name=entity, ids=_L.sa..' '..entity:trim(), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
+    payload.dev = { name=name, ids=_L.sa..' '..entity:trim(), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
     if _L.img ~= '' then payload.ic = _L.img end
     return payload
   end
@@ -757,12 +759,12 @@ local function addDiscover(net, app, group, channel, tags, name)
     discovery[oid] = dType
   end
 
-  local function publish(payload, oid, entity)
+  local function publish(payload, oid, entity, name)
     -- Publish to MQTT broker
     local j = json.encode(payload)
     if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
     if logging then log('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa) end
-    if discoveryName[oid] ~= nil and discoveryName[oid] ~= entity then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
+    if discoveryName[oid] ~= nil and discoveryName[oid] ~= name then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
   end
 
@@ -894,9 +896,11 @@ local function addDiscover(net, app, group, channel, tags, name)
             triggers[group][action] = lvl
             if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
             local entity = getEntity(prefix..tag)
-            payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity)
+            local name
+            if special.exactpn then name = prefix..tag else name = entity end
+            payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity, name)
             removeOld(dType, boid)
-            publish(payload, boid, entity)
+            publish(payload, boid, entity, name)
           end
         end
         return 'buttons'
@@ -953,9 +957,11 @@ local function addDiscover(net, app, group, channel, tags, name)
   if payload ~= nil and payload ~= 'buttons' then -- If payload recieved then publish
     mqttDevices[alias].type = dType
     local entity = getEntity(_L.pn)
-    payload = addCommonPayload(payload, oid, entity)
+    local name
+    if special.exactpn then name = _L.pn else name = entity end
+    payload = addCommonPayload(payload, oid, entity, name)
     removeOld(dType, oid)
-    publish(payload, oid, entity)
+    publish(payload, oid, entity, name)
     if not oldLightingButton and lightingButton[alias] then -- If changing to a lighting button then clear status topics
       local t = mqttReadTopic..alias..'/state'
       if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end client:publish(t, '', mqttQoS, RETAIN)
@@ -1112,6 +1118,7 @@ local function getGroups(kw)
   local t
   local grps = {}
   for _, t in ipairs(db:getall("SELECT o.address, o.tagcache, o.name FROM objects AS o JOIN objecttags AS ot ON o.id=ot.object WHERE ot.tag='"..kw.."'")) do
+    if t.tagcache == nil then goto skip end
     local alias = knxlib.decodega(t.address)
     local parts = load("return {"..alias:gsub('/',',').."}")()
     grps[alias] = { tags = {}, name = t.name, keywords = t.tagcache:gsub(', ',','), net = parts[1], app = parts[2], group = parts[3], channel = parts[4], }
@@ -1126,6 +1133,7 @@ local function getGroups(kw)
       if parts[2] then tags[parts[1]:trim()] = parts[2]:trim() else tags[parts[1]:trim()] = -1 end
     end
     grps[alias].tags = tags
+    ::skip::
   end
   return grps
 end
