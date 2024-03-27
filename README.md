@@ -9,6 +9,8 @@ Functions:
 * Optionally ESPHome sensors for temperature and relative humidity (example .yaml files are for this.)
 * Optionally Airtopia I/R blasters
 
+If you're using a 'generic' zigbee coordinator instead of Philips Hue then check out https://github.com/geoffwatts/cbus2zigbee. I'm contributing to his brilliant effort to make that the 'go to' for zigbee/C-Bus AC integration. Hue hub is dead to me.
+
 The pieces of the puzzle include:
 * Home Assistant 'HAOS' running somewhere. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker going (but you could use a separately installed MQTT broker elsewhere on your network and use 'core'). HA Cloud talks to Google Assistant/Alexa, so a subscription is required if you want that.
 * Home Assistant plug-ins: 'Mosquitto broker', and file editor is also handy.
