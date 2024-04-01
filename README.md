@@ -18,17 +18,13 @@ The pieces of the puzzle include:
 
 LUA scripts for the automation controller (all script names are NOT case sensitive, but must be called these names - some scripts are automatically re-started based on name):
 * *MQTT send receive*: resident, zero sleep
-* *MQTT*: event-based, execute during ramping, trigger on keyword 'MQTT' (*use for firmware older than 1.15.0*)
-* *MQTT final*: event-based, DO NOT execute during ramping, trigger on keyword 'MQTT' (*use for firmware 1.15.0+*)
-* *AC*: (for Panasonic air) event-based, execute during ramping, trigger on keyword 'AC'
-* *AT*: (for Airtopa) event-based, execute during ramping, trigger on keyword 'AT'
 * *HUE send receive*: (for Philips Hue) resident, zero sleep
 * *HUE*: (for Philips Hue) event-based, execute during ramping, trigger on keyword 'HUE'
 * *HUE final*: (for Philips Hue) event-based, DO NOT execute during ramping, trigger on keyword 'HUE'
 * *HUE final work-around*: (for Philips Hue) event-based, execute during ramping? whatever. See below. Trigger on keyword 'HUE'
 * *Heartbeat*: (optional) resident, zero sleep ... monitors for failure of 'MQTT send receive' and 'HUE send receive' and re-starts them on failure
 
-**Note**: Use either event script *MQTT* or *MQTT final*, and not both. The *MQTT send receive* script checks this, and also checks the *Execute during ramping* setting. The resident script will not start if the event script is mis-configured for execute during ramping, but will disable the one it doesn't want should both be installed.
+**Note**: Legacy event scripts will be disabled on start of *MQTT send receive*
 
 **Note**: *MQTT send receive* can examine the keywords *MQTT, ENV, AC* and *AT*, but by default it only utilises *MQTT*. To enable support for ESPHome environment sensors, Panasonic A/C, or Airtopia A/C alter the variables *environmentSupport*, *panasonicSupport* or *airtopiaSupport* near the top of *MQTT send receive* as appropriate.
 

@@ -7,15 +7,13 @@ local checkForChanges = true       -- When true the script will periodically che
 local checkChanges = 30            -- Interval in seconds to check for changes to object keywords
 
 --[[ SET AS APPROPRIATE TO SUIT ENVIRONMENT --]]
-local entityIdAsIndentifier = false -- If true then entity IDs will be created using the object identifier (e.g. light.bathroom_1_fan), and if false using C-Bus numbering (e.g. light.cbus_mqtt_254_56_10)
-local forceChangeId = false        -- CAUTION!!! If true, then if the entity ID changes (because entityIdAsIndentifier) then the entities will be removed and re-added, forcing the entity ID to change - this WILL break dashboards/automations/etc.
+local entityIdAsIndentifier = true -- If true then entity IDs will be created using the object identifier (e.g. light.bathroom_1_fan), and if false using C-Bus numbering (e.g. light.cbus_mqtt_254_56_10)
+local forceChangeId = true         -- CAUTION!!! If true, then if the entity ID changes (because entityIdAsIndentifier) then the entities will be removed and re-added, forcing the entity ID to change - this WILL break dashboards/automations/etc.
 local removeSaFromStartOfPn = true -- If true then the suggested area will be removed from the beginning of the preferred name (if the pn includes it) - add the keyword 'exactpn' to create an exception when true
+local useLastLevel = false         -- Whether to store and use lastLevel (these days Home Assistant recalls previous 'on' levels for most things, but not some things, so lastLevel is always used for certain objects, like fan)
 local airtopiaSupport = false      -- Monitor keyword 'AT' for Airtopia devices - set to true if support is desired
-local panasonicSupport = false     -- Monitor keyword 'AC' for Panasonic devices - set to true if support is desired
-local environmentSupport = false   -- Monitor keyword 'ENV' for ESPHome environment sensors - set to true if support is desired
-
---[[ NOTE: cbus/read/254 and cbus/write/254 HAVE CHANGED to cbus/read/0 and cbus/write/0 (done for improved efficiency). Clean up old topics using MQTT Explorer. --]]
---[[ NOTE: !!!+++BREAKING CHANGE+++!!! Keywords for the lvl= tag have CHANGED. Use '/' instead of '-', and ':' where '/' was previously used. See the README for updated examples. --]]
+local panasonicSupport = true      -- Monitor keyword 'AC' for Panasonic devices - set to true if support is desired
+local environmentSupport = true    -- Monitor keyword 'ENV' for ESPHome environment sensors - set to true if support is desired
 
 --[[
 Resident, zero sleep interval, name: 'MQTT send receive'
@@ -44,7 +42,7 @@ local mqttJunk = true        -- Whether to publish junk before a blank publish m
 --[[
 Timing variables. Adjust to taste if you know what you're doing. These provide a good compromise, but your deployment may vary.
 --]]
-local socketTimeout = 0.1    -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
+local busTimeout = 0.1       -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 local mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 local ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
 local rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds (legacy firmware only)
@@ -62,9 +60,6 @@ local mqttDiscoveryTopic = 'homeassistant/'
 --[[
 Variables not to be messed with unless you definitely know what you're doing.
 --]]
-local EVENTVERSION = 3       -- MQTT/MQTT final event script compatible version
-local ACVERSION = 1          -- Panasonic event script compatible version
-local ATVERSION = 1          -- Airtoipia event script compatible version
 local init = true            -- Initialisation
 local reconnect = false      -- Reconnection does not perform a full publish
 local discovery = {}         -- MQTT discovery topics lookup
@@ -99,7 +94,7 @@ local button = {}            -- Quick lookup to determine whether an object is a
 local lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
 local userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 local unitParameter = {}     -- Quick lookup to determine whether an object is a unit parameter
-local storeLevel = {}        -- Instruct MQTT Final/MQTT event script to store the last level for certain object types (fan, fan_pct)
+local storeLevel = {}        -- Force store the last level for certain object types (fan, fan_pct)
 local publishAdj = {}        -- Holds scale and decimals to apply
 local includeUnits = {}      -- Holds table of booleans to add sensor unit (%, $, °C, etc.) to MQTT value
 local transition = {}        -- Covers that are transitioning
@@ -126,6 +121,7 @@ local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = 
 
 -- local coverLevel = {} storage.set('coverLevel', coverLevel) -- Clear stored coverLevel
 local coverLevel = storage.get('coverLevel', {}) -- Holds the current level of covers (survives restart)
+local lastLevel = storage.get('lastlvl', {}) -- Holds any last levels if desired/forced (survives restart)
 
 local airtopiaCmds = { 'power', 'fan', 'swing', 'mode', 'target_temperature', } -- All command topics (used for clean up)
 local atmodes = { 'auto', 'cool', 'heat', 'fan_only', 'dry', 'off', } -- Airtopia modes
@@ -206,7 +202,7 @@ end
 
 
 --[[
-Warn for firmware >= 1.15.0 that using MQTT final is preferred, and also halt regarding settings for execute during ramping / missing scripts / wrong version
+Legacy event script management
 --]]
 local eventScripts = db:getall("SELECT name FROM scripting WHERE type = 'event'")
 local eventName, finalName, acName, atName, s = nil, nil, nil, nil
@@ -219,96 +215,15 @@ end
 
 local finalInstalled = finalName ~= nil and not (script.status(finalName) == nil or script.status(finalName) == false)
 local eventInstalled = eventName ~= nil and not (script.status(eventName) == nil or script.status(eventName) == false)
+local acInstalled = acName ~= nil and not (script.status(acName) == nil or script.status(acName) == false)
+local atInstalled = atName ~= nil and not (script.status(atName) == nil or script.status(atName) == false)
 
-if not eventInstalled and not finalInstalled then
-  log("Error: The event script 'MQTT' or 'MQTT final' is not installed or enabled. Not starting.")
-  while true do sleep(1) end
-end
+if finalInstalled then script.disable(finalName) log('Disabling event script '..finalName..', as no longer required') end
+if eventInstalled then script.disable(eventName) log('Disabling event script '..eventName..', as no longer required') end
+if acInstalled then script.disable(acName) log('Disabling event script '..acName..', as no longer required') end
+if atInstalled then script.disable(atName) log('Disabling event script '..atName..', as no longer required') end
 
 local version = string.split(io.readfile('/lib/genohm-scada/version'):trim(), '.')
-local legacyFirmware = false
-if tonumber(version[1]) >= 1 and tonumber(version[2]) >= 15 and tonumber(version[3]) >= 0 then
-  if not finalInstalled then
-    log('Warning firmware > 1.15.0: Script MQTT final is not installed, or is disabled. This script avoids ramp detection, and is recommended.')
-    legacyFirmware = true
-  end
-
-  if eventInstalled and finalInstalled then
-    log("Warning: Both 'MQTT' and 'MQTT final' are installed. Disabling MQTT event script...")
-    script.disable(eventName)
-    eventInstalled = false
-  end
-
-  local edr
-  if eventInstalled then
-    edr = db:getall("SELECT subparams FROM scripting WHERE name = '"..eventName.."'")
-    edr = edr[1] if edr ~= nil then edr = edr.subparams end
-    if edr ~= '1' then
-      log("Error firmware > 1.15.0: Event script 'MQTT' is not set to execute during ramping. Not starting. Consider using 'MQTT final' instead.")
-      while true do sleep(1) end
-    end
-  end
-  if finalInstalled then
-    edr = db:getall("SELECT subparams FROM scripting WHERE name = '"..finalName.."'")
-    edr = edr[1] if edr ~= nil then edr = edr.subparams end
-    if edr ~= '0' then
-      log("Error firmware > 1.15.0: Event script 'MQTT final' is set to execute during ramping. Turn this off. Not starting.")
-      while true do sleep(1) end
-    end
-  end
-else
-  legacyFirmware = true
-  log('Warning: An upgrade to firmware 1.15.0+ is highly recommended. See the README at https://github.com/autoSteve/acMqtt.')
-
-  if not eventInstalled and finalInstalled then
-    log("Error: The script 'MQTT' is not installed. Do not use 'MQTT final' for 1.15.0+. Not starting.")
-    while true do sleep(1) end
-  end
-
-  if eventInstalled and finalInstalled then
-    log("Warning: Both 'MQTT' and 'MQTT final' are installed. Disabling MQTT final event script...")
-    script.disable(finalName)
-    finalInstalled = false
-  end
-end
-if tonumber(version[1]) <= 1 and tonumber(version[2]) <= 6 then
-  log('Warning: Untested on firmware 1.6.0 or below. An upgrade is highly recommended.')
-end
--- By now, if both event scripts were installed then one of them will have been forced disabled, so re-check installed status before checking compatibility
-finalInstalled = finalName ~= nil and not (script.status(finalName) == nil or script.status(finalName) == false)
-eventInstalled = eventName ~= nil and not (script.status(eventName) == nil or script.status(eventName) == false)
-local compatibleEvent = false
-if eventInstalled then compatibleEvent = db:getall("SELECT script FROM scripting WHERE name = '"..eventName.."'")[1].script:contains('VERSION: '..EVENTVERSION) end
-if finalInstalled then compatibleEvent = db:getall("SELECT script FROM scripting WHERE name = '"..finalName.."'")[1].script:contains('VERSION: '..EVENTVERSION) end
-if not compatibleEvent then
-  local scriptInUse = ''
-  if finalInstalled then scriptInUse = finalName end
-  if eventInstalled then scriptInUse = eventName end
-  log("Error: Incompatible '"..scriptInUse.."' script version detected, so update it. Not starting.")
-  while true do sleep(1) end
-end
-if panasonicSupport then
-  local acInstalled = acName ~= nil and not (script.status(acName) == nil or script.status(acName) == false)
-  local compatibleAc = false
-  if acInstalled then compatibleAc = db:getall("SELECT script FROM scripting WHERE name = '"..acName.."'")[1].script:contains('VERSION: '..ACVERSION) end
-  if not compatibleAc and ACVERSION ~= 1 then log("Error: Incompatible '"..acName.."' script version detected, so update it. Not starting.") while true do sleep(1) end end
-end
-if airtopiaSupport then
-  local atInstalled = atName ~= nil and not (script.status(atName) == nil or script.status(atName) == false)
-  local compatibleAt = false
-  if atInstalled then compatibleAt = db:getall("SELECT script FROM scripting WHERE name = '"..atName.."'")[1].script:contains('VERSION: '..ATVERSION) end
-  if not compatibleAt and ATVERSION ~= 1 then log("Error: Incompatible '"..atName.."' script version detected, so update it. Not starting.") while true do sleep(1) end end
-end
-
-
---[[
-UDP listener - receive messages from CBus level change event scripts
---]]
-declare('server')
-pcall(function () server:close() end)
-server = require('socket').udp()
-server:settimeout(socketTimeout)
-server:setsockname('127.0.0.1', 5432) -- Listen on port 5432 for CBus changes
 
 
 --[[
@@ -351,6 +266,72 @@ client.ON_MESSAGE = function(mid, topic, payload)
     mqttMessages[#mqttMessages + 1] = { topic=topic, payload=payload } -- Queue the message
   end
 end
+
+
+--[[
+C-Bus events, only queues a C-Bus message at the end of a ramp
+--]]
+local function eventCallback(event)
+  if mqttDevices[event.dst] then
+    local function setLastLevel(val)
+      if val ~= 0 and val ~= lastLevel[event.dst] then
+        lastLevel[event.dst] = val
+        if logging then log('Set lastLevel to '..val..' for '..event.dst) end
+        storage.set('lastlvl', lastLevel)
+      end
+    end
+
+    local value
+    local ramp
+    local parts = string.split(event.dst, '/')
+    if lighting[parts[2]] then
+      value = tonumber(string.sub(event.datahex,1,2),16)
+      local target = tonumber(string.sub(event.datahex,3,4),16)
+      local ramp = tonumber(string.sub(event.datahex,5,8),16)
+      if ramp > 0 then
+        if event.meta == 'admin' then return end
+        if value ~= target then return end
+      end
+    else
+      value = grp.getvalue(event.dst)
+    end
+    local pre, comp
+    if type(value) == 'number' then
+      if mqttDevices[event.dst].value ~= nil then pre = string.format('%.5f', mqttDevices[event.dst].value) else pre = nil end
+      comp = string.format('%.5f', value)
+    else
+      pre = mqttDevices[event.dst].value
+      comp = value
+    end
+    if comp == pre then -- Don't publish if already at the level
+      if logging then log('Not setting '..event.dst..' to '..value..', same as previous value') end
+      return
+    end
+    mqttDevices[event.dst].value = value
+    if logging then log('Setting '..event.dst..' to '..value..', previous='..mqttDevices[event.dst].value) end
+    cbusMessages[#cbusMessages + 1] = event.dst.."/"..value -- Queue the event
+
+    -- Check whether to set the level as a tracked lastlevel
+    if lighting[parts[2]] then
+      if useLastLevel then
+        setLastLevel(val)
+      else
+        if storeLevel ~= nil then
+          if storeLevel[event.dst] then setLastLevel(val) end
+        else
+          if storage.get('lastlvl') then storage.delete('lastlvl') end
+        end
+      end
+    end
+  elseif (panasonicSupport and ac[event.dst]) or (airtopiaSupport and at[event.dst]) then
+    local value = grp.getvalue(event.dst)
+    if logging then log('Setting '..event.dst..' to '..value) end
+    cbusMessages[#cbusMessages + 1] = event.dst.."/"..value -- Queue the event
+  end
+end
+
+local localbus = require('localbus').new(busTimeout) -- Set up the localbus
+localbus:sethandler('groupwrite', eventCallback)
 
 
 --[[
@@ -434,7 +415,6 @@ local function publish(alias, app, level, noPre)
     if app ~= 202 then -- Not trigger
       local p = level
       if tonumber(level) ~= nil then p = string.format('%.3f', level) end
-      storage.set('pre'..alias, p) -- Save payload as 'previous' for use in the MQTT event-based script
     end
   end
 end
@@ -474,8 +454,7 @@ end
 --[[
 Publish measurement application objects to MQTT 
 --]]
-local function publishMeasurement(alias, net, group, channel, value, noPre)
-  if noPre == nil then noPre = false end
+local function publishMeasurement(alias, net, group, channel, value)
   if value == nil then log('Warning: Nil CBus measurement value for '..alias); do return end end
   local units, v
   local adjust = publishAdj[alias]
@@ -493,17 +472,13 @@ local function publishMeasurement(alias, net, group, channel, value, noPre)
   local mAlias = lastSlashToUnderscore(alias)
   client:publish(mqttReadTopic..mAlias..'/level', v, mqttQoS, RETAIN)
   if logging then log('Publishing measurement '..mqttReadTopic..mAlias..' to '..v) end
-  if not noPre and value ~= nil then
-    storage.set('pre'..alias, string.format('%.3f', value))
-  end
 end
 
 
 --[[
 Publish unit parameter objects to MQTT 
 --]]
-local function publishUnitParam(alias, value, noPre)
-  if noPre == nil then noPre = false end
+local function publishUnitParam(alias, value)
   if value == nil then log('Warning: Nil unit parameter value for '..alias); do return end end
   local adjust = publishAdj[alias]
   local v
@@ -511,9 +486,6 @@ local function publishUnitParam(alias, value, noPre)
   local mAlias = lastSlashToUnderscore(alias)
   client:publish(mqttReadTopic..mAlias..'/level', v, mqttQoS, RETAIN)
   if logging then log('Publishing unit parameter '..mqttReadTopic..mAlias..' to '..v) end
-  if not noPre and value ~= nil then
-    storage.set('pre'..alias, string.format('%.3f', value))
-  end
 end
 
 
@@ -540,8 +512,6 @@ local function publishAc(alias, level, select)
         log('Invalid AC command for alias='..alias..', select='..select)
       end
       if topic ~= '' then client:publish(topic, level, mqttQoS, NORETAIN) end
-      -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
-      -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
       ignoreCbus[alias] = socket.gettime(); if logging then log('Setting ignore CBus for '..alias) end
       if logging then log('Published AC '..ac[alias].name..' to '..level) end
     else
@@ -572,8 +542,6 @@ local function publishAt(alias, level)
       local adjust = publishAdj[alias]
       if adjust then level = tonumber(string.format('%.'..adjust.dec..'f', level * adjust.scale)) end
       client:publish(topic, level, mqttQoS, RETAIN)
-      -- Publishing to MQTT here will result in outstandingMqttMessage() below setting the CBus state for the group.
-      -- This is undesired, so ignoreCbus[alias] is used to ensure that the MQTT change received does not set CBus.
       if level ~= at[alias].state then ignoreCbus[alias] = socket.gettime(); if logging then log('Setting ignore CBus for '..alias) end end
       if logging then log('Published AT '..at[alias].name..' to '..level) end
       -- Determine whether a HomeAssistant state topic needs to be also published
@@ -968,6 +936,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     payload = addCommonPayload(payload, oid, entity, name, objId)
     removeOld(dType, oid)
     publish(payload, oid, entity, name, objId)
+    mqttDevices[alias].value = grp.getvalue(alias)
     if not oldLightingButton and lightingButton[alias] then -- If changing to a lighting button then clear status topics
       local t = mqttReadTopic..alias..'/state'
       if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end client:publish(t, '', mqttQoS, RETAIN)
@@ -1248,19 +1217,12 @@ local function cudAc()
     end
   end
   if removed > 0 then
-    log('Removed '..removed..' Panasonic A/C object'..(removed ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..', event script \''..acName..'\' restarted')
-    script.disable(acName); script.enable(acName)
+    log('Removed '..removed..' Panasonic A/C object'..(removed ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or ''))
   end
   -- Handle additions, and re-subscribe all board topics to get status of newly added devices
   if addition then
     for k, _ in pairs(acBoards) do client:subscribe(k..'/#', 2) end
-    if acName then
-      log('Added '..count..' Panasonic A/C object'..(count ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..', event script \''..acName..'\' restarted')
-      -- Ensure that newly tagged/removed groups with the AC keyword send updates.
-      script.disable(acName); script.enable(acName)
-    else
-      error('Panasonic A/C event script \'AC\' not found')
-    end
+    log('Added '..count..' Panasonic A/C object'..(count ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or ''))
   end
 end
 
@@ -1354,15 +1316,7 @@ local function cudAt()
     end
   end
 
-  if addition then
-    if atName then
-      -- Ensure that newly tagged/removed groups with the AT keyword send updates.
-      log('AT object keywords added, restarting event script')
-      script.disable(atName); script.enable(atName)
-    else
-      error('Airtopia event script \'AT\' not found')
-    end
-  end
+  if addition then log('AT object keywords added') end
 end
 
 
@@ -1566,14 +1520,14 @@ local function outstandingPublish()
     if u.app == 228 then
       alias = alias..'/'..u.channel
       local level = nil; pcall(function () level = GetCBusMeasurement(u.net, u.group, u.channel) end)
-      if level ~= nil then stat, err = pcall(publishMeasurement, alias, u.net, u.group, u.channel, level, true) if not stat then log(err) end end
+      if level ~= nil then stat, err = pcall(publishMeasurement, alias, u.net, u.group, u.channel, level) if not stat then log(err) end end
     -- User parameters
     elseif u.app == 250 then stat, err = pcall(publish, alias, u.app, GetUserParam(u.net, u.group), true) if not stat then log(err) end
     -- Unit parameters
     elseif u.app == 255 then
       alias = alias..'/'..u.channel
       local level = nil; pcall(function () level = GetUnitParameter(u.net, u.group, u.channel) end)
-      if level ~= nil then stat, err = pcall(publishUnitParam, alias, level, true) if not stat then log(err) end end
+      if level ~= nil then stat, err = pcall(publishUnitParam, alias, level) if not stat then log(err) end end
     -- Lighting and other
     else
       if not lightingButton[u.net..'/'..u.app..'/'..u.group] then -- Do nothing for lighting buttons
@@ -1587,14 +1541,9 @@ local function outstandingPublish()
       end
     end
   end
-  storage.set('storeLevel', storeLevel)
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
-    local scriptName
-    if eventInstalled then if script.status(eventName) ~= nil then scriptName = eventName end end
-    if finalInstalled then if script.status(finalName) ~= nil then scriptName = finalName end end
-    script.disable(scriptName); script.enable(scriptName)
-    log('Published '..#unpublished - failed..' CBus discovery and current level topic'..(#unpublished - failed ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..(failed ~= 0 and ' ('..failed..' failed)' or '')..', event script \''..scriptName..'\' restarted')
+    log('Published '..#unpublished - failed..' CBus discovery and current level topic'..(#unpublished - failed ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..(failed ~= 0 and ' ('..failed..' failed)' or ''))
     unpublished = {}
   end
 end
@@ -1617,14 +1566,8 @@ local function outstandingAtPublish()
     end
   end
   if #unpublishedAt > 0 then
-    if atName then
-      -- Ensure that newly tagged/removed groups with the AT keyword send updates
-      if script.status(atName) ~= nil then script.disable(atName); script.enable(atName) end
-      log('Published '..#unpublishedAt..' Airtopia discovery topic and current levels'..(#unpublishedAt ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..(failed ~= 0 and ' ('..failed..' failed)' or '')..', event script \''..atName..'\' restarted')
-      unpublishedAt = {}
-    else
-      error('Airtopia event script \'AT\' not found')
-    end
+    log('Published '..#unpublishedAt..' Airtopia discovery topic and current levels'..(#unpublishedAt ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..(failed ~= 0 and ' ('..failed..' failed)' or ''))
+    unpublishedAt = {}
   end
   stat, err = pcall(publishAtState) if not stat then log(err) end
 end
@@ -1648,8 +1591,6 @@ local function outstandingMqttMessage()
       if logging then log('Set '..topic..' to '..payload) end
 
       -- ignoreMqtt[alias] = socket.gettime(); if logging then log('Setting ignoreMqtt for '..alias) end
-
-      local lastLevel = storage.get('lastlvl', {})
 
       if not parts[6] then
         log('MQTT error: Invalid message format: '..topic)
@@ -1798,8 +1739,6 @@ local function outstandingMqttMessage()
             else
               log('Warning: nil payload for '..alias..', ignoring')
             end
-            -- Setting CBus here will result in the AC event script requesting publication of the state using publishAc() above.
-            -- This is undesired, so ignoreMqtt[alias] is used to ensure that the CBus change received does not publish to MQTT.
             if set then
               ignoreMqtt[alias] = socket.gettime()
               -- if logging then log('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
@@ -1916,20 +1855,9 @@ Publish the next queued messages for MQTT
 local function outstandingCbusMessage()
   local cmd, stat, err, parts, alias, final
 
-  local lastLevel = storage.get('lastlvl', {})
   for _, cmd in ipairs(cbusMessages) do
-    -- Check for final levels
-    if cmd:contains('>') then
-      cmd = cmd:gsub('>', '/')
-      final = true
-      parts = string.split(cmd, '/')
-      alias = parts[1]..'/'..parts[2]..'/'..parts[3]
-      if logging and lighting[parts[2]] then log('Final level achieved, '..cmd) end
-    else
-      final = false
-      parts = string.split(cmd, '/')
-      alias = parts[1]..'/'..parts[2]..'/'..parts[3]
-    end
+    parts = string.split(cmd, '/')
+    alias = parts[1]..'/'..parts[2]..'/'..parts[3]
 
     if panasonicSupport and ac[alias] then -- AC message to MQTT (no ramping involved for AC groups)
       stat, err = pcall(publishAc, alias, parts[4], ac[alias].select)
@@ -1940,35 +1868,8 @@ local function outstandingCbusMessage()
     else -- CBus message to MQTT
       local net = tonumber(parts[1]) local app = tonumber(parts[2]) local group = tonumber(parts[3]);
       if app ~= 228 and app ~= 255 then -- i.e. not measurement application / unit parameter
-        local setting = true
         local payload = tonumber(parts[4]) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
-        if lighting[parts[2]] then -- Lighting application, so check for ramp
-          if legacyFirmware then
-            if logging then log('Alias: '..alias..', payload: '..payload..', ramp rate: '..GetCBusRampRate(net, app, group)..', target level: '..GetCBusTargetLevel(net, app, group)) end
-            -- A CBus ramp up and down can annoyingly begin with a zero level, then steadily converge to the target level. This initial
-            -- zero should not be published to MQTT so it is ignored. If an initial zero is not seen then the ramp will be orphaned (and
-            -- ultimately cleaned up/published, albeit a bit late after rampTimeout seconds).
-            if not ramp[alias] then
-              if GetCBusRampRate(net, app, group) > 0 then
-                -- if lastLevel[alias] ~= GetCBusTargetLevel(net, app, group) or not lastLevel[alias] then
-                  ramp[alias] = { ts=socket.gettime(), ramp=GetCBusRampRate(net, app, group), target=GetCBusTargetLevel(net, app, group) }
-                -- end
-                if payload == 0 then
-                  setting = false
-                  if ramp[alias] then if logging then log('Set ramp for '..alias..' and suppress zero send') end end
-                else
-                  if ramp[alias] then if logging then log('Set ramp for '..alias) end end
-                end
-              end
-            else
-              if ramp[alias].target ~= GetCBusTargetLevel(net, app, group) then -- Target level has changed so cancel ramp
-                ramp[alias] = nil
-                if logging then log('Cancel ramp for '..alias) end
-                if payload == 0 and GetCBusRampRate(net, app, group) > 0 then setting = false end -- Ignore initial zero if ramp on
-              end
-            end
-          end
-        else -- Possibly a string payload for user parameter
+        if not lighting[parts[2]] then -- Possibly a string payload for user parameter
           if payload == nil then
             payload = parts[4]
             local pt = 5 -- Accommodate an unlimited number of slashes in a string payload
@@ -1977,33 +1878,17 @@ local function outstandingCbusMessage()
               pt = pt + 1
             end
           end
-          -- Groups other than lighting are never ramped, so setting is always true
         end
-        if setting then
-          if legacyFirmware then
-            if ramp[alias] then
-              if final then
-                ramp[alias] = nil
-                if logging then log('Clear ramp for '..alias) end
-                -- Only update MQTT at the end of a ramp, not during it (avoids HomeAssistant remembering an implausible level)
-                stat, err = pcall(publish, alias, app, payload) if not stat then log(err) end
-              end
-            else
-              stat, err = pcall(publish, alias, app, payload) if not stat then log(err) end
+        stat, err = pcall(publish, alias, app, payload) if not stat then log(err) end
+        if cover[alias] and not mqttDevices[alias].noleveltranslate and hasMembers(mqttDevices[alias].rate) then
+          if not transition[alias] then
+            if payload == 0 then transition[alias] = { state='closing', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to open') end
+            elseif payload == 255 then transition[alias] = { state='opening', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to closed') end
             end
           else
-            stat, err = pcall(publish, alias, app, payload) if not stat then log(err) end
-          end
-          if cover[alias] and not mqttDevices[alias].noleveltranslate and hasMembers(mqttDevices[alias].rate) then
-            if not transition[alias] then
-              if payload == 0 then transition[alias] = { state='closing', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to open') end
-              elseif payload == 255 then transition[alias] = { state='opening', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to closed') end
-              end
-            else
-              if payload == 5 then
-                storage.set('coverLevel', coverLevel) transition[alias] = nil if logging then log('Cancel transition for '..alias) end
-                if hasMembers(mqttDevices[alias].rate) then client:publish(mqttReadTopic..alias..'/state', (coverLevel[alias] ~= 0) and 'open' or 'closed', mqttQoS, RETAIN) end
-              end
+            if payload == 5 then
+              storage.set('coverLevel', coverLevel) transition[alias] = nil if logging then log('Cancel transition for '..alias) end
+              if hasMembers(mqttDevices[alias].rate) then client:publish(mqttReadTopic..alias..'/state', (coverLevel[alias] ~= 0) and 'open' or 'closed', mqttQoS, RETAIN) end
             end
           end
         end
@@ -2067,7 +1952,6 @@ local function checkHeartbeat()
     end)
     if not stat then
       log('A fault occurred sending heartbeat. Restarting...')
-      pcall(function () server:close() end)
       return false
     else
       return true
@@ -2120,25 +2004,10 @@ local timeout = 1
 local timeoutStart, connectStart
 
 while true do
-  -- Check for new messages from CBus. The entire socket buffer is collected each iteration for efficiency.
   local stat, err
-  local more = false
-  stat, err = pcall(function ()
-    ::checkAgain::
-    local cmd = nil
-	  cmd = server:receive()
-    if cmd and type(cmd) == 'string' then
-      if validateIncoming(cmd) then
-        cbusMessages[#cbusMessages + 1] = cmd -- Queue the new message
-      else
-        log('Invalid command received: '..cmd)
-      end
-      server:settimeout(0); more = true; goto checkAgain -- Immediately check for more buffered inbound messages to queue
-    else
-      if more then server:settimeout(socketTimeout) end
-    end
-  end)
-  if not stat then log('Socket receive error: '..err) end
+
+  -- Check for new messages from CBus. The entire socket buffer is collected each iteration for efficiency.
+  localbus:step()
 
   if mqttStatus == 1 then -- When connected to the broker
     -- Process MQTT message buffers synchronously - sends and receives
@@ -2169,11 +2038,6 @@ while true do
       stat, err = pcall(trackTransitions)
       if not stat then log('Error tracking transitions: '..err) transition = {} end -- Log error and clear the transition list, continue
     end
-    if legacyFirmware and hasMembers(ramp) then
-      -- Some scenarios can create ramp orphans when using a legacy firmware setup
-      stat, err = pcall(checkRampOrphans)
-      if not stat then log('Error checking ramp orphans: '..err) end -- Log and continue
-    end
     if hasMembers(discoveryDelete) then
       -- A type has changed for existing topics, so clean up discovery for the old topics
       stat, err = pcall(dupDelete)
@@ -2194,7 +2058,6 @@ while true do
     stat, err = pcall(function (b, p, k) client:connect(b, p, k) end, mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
     if not stat then -- Log and abort
       log('Error calling connect to broker: '..err)
-      pcall(function () server:close() end)
       do return end
     end
     while mqttStatus ~= 1 do
@@ -2226,7 +2089,6 @@ while true do
     end
   else
     log('Error: Invalid mqttStatus: '..mqttStatus)
-    pcall(function () server:close() end)
     do return end
   end
 
