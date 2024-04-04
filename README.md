@@ -28,10 +28,6 @@ LUA scripts for the automation controller (all scripts do NOT have to be called 
 
 **Note**: *MQTT send receive* can examine the keywords *MQTT, ENV, AC* and *AT*, but by default it only utilises *MQTT*. To enable support for ESPHome environment sensors, Panasonic A/C, or Airtopia A/C alter the variables *environmentSupport*, *panasonicSupport* or *airtopiaSupport* near the top of *MQTT send receive* as appropriate.
 
-**Note**: A change to the discovery behaviour has been made to accommodate a non-breaking change in HA 2023.8, which became breaking in 2024.2. CBus devices are now created using a blank entity name to end up with a sole entity for each device, in line with the HA naming standards.
-
-**Note**: For Philips Hue, automation controller firmware >= 1.10.0 <= 1.14.0 contain a bug that requires *Hue final work-around* to be used. This is fixed in 1.15.0+, so use *HUE final*.
-
 ## About errors
 
 If you get errors in the log (error or event log), then feel free to raise an issue and I'll try to help.
