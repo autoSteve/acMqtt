@@ -16,6 +16,11 @@ local panasonicSupport = false     -- Monitor keyword 'AC' for Panasonic devices
 local environmentSupport = false   -- Monitor keyword 'ENV' for ESPHome environment sensors - set to true if support is desired
 
 --[[
+  ** NOTE: This script at one stage relied on an event-based script 'MQTT final' or 'MQTT'. This event script is no longer needed, and can be deleted.
+  ** If named correctly, this resident script will disable the event-based script on startup, but even if it is enabled it will not cause any issue.\
+--]]
+
+--[[
 Resident, zero sleep interval, name: 'MQTT send receive'
 
 Manage CBus, Panasonic and Airtopia AC and environment events for MQTT, and publish discovery topics. Used with Home Assistant.
@@ -176,7 +181,7 @@ local function removeIrrelevant(keywords)
   local curr = {}
   for _, k in ipairs(keywords:split(',')) do
     local parts = k:split('=') if parts[2] ~= nil then parts[1] = parts[1]:trim()..'=' end
-    if cudAll[parts[1]] then table.insert(curr, k) end
+    if cudAll[parts[1]] then curr[#curr+1] = k end
   end
   return table.concat(curr, ',')
 end
@@ -1290,7 +1295,7 @@ local function cudAt()
     local parts = string.split(k, '-')
     newBoards[parts[1]] = true
   end
-  kill = {} for k, _ in pairs(atBoards) do if newBoards[k] == nil then table.insert(kill, k) end end
+  kill = {} for k, _ in pairs(atBoards) do if newBoards[k] == nil then kill[#kill + 1] = k end end
   for _, k in ipairs(kill) do
     atBoards[k] = nil;
     -- Clean up discovery topics
@@ -1436,7 +1441,7 @@ local function cudCBusTopics()
   for alias, v in pairs(mqttDevices) do
     local topic, oid, trigger
     if not found[alias] then
-      table.insert(kill, alias)
+      kill[#kill + 1] = alias
       if v.app == 202 and v.type == 'button' then
         for _, trigger in ipairs(v.trigger) do
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
@@ -1841,7 +1846,7 @@ local function outstandingMqttMessage()
         end
       end
     elseif airtopiaSupport and parts[1] == 'airtopia' and parts[3] == 'state' then
-      if indexOf(airtopiaStates, parts[4]) == nil then table.insert(airtopiaStates, parts[4]) end
+      if indexOf(airtopiaStates, parts[4]) == nil then airtopiaStates[#airtopiaStates + 1] = parts[4] end
     end
     ::next::
   end
@@ -1915,7 +1920,7 @@ local function checkRampOrphans()
       -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur, but does occasionally when set up for firmware < 1.15.0).
       -- Remove the orphan, and publish the final target, which will be zero.
       -- Will occur when a ramp to off does not begin with a zero level during the ramp, or if a ramp to zero starts when the group is already at zero.
-      table.insert(orphan, k)
+      orphan[#orphan + 1] = k
       local parts = string.split(k, '/')
       local net = tonumber(parts[1]) local app = tonumber(parts[2]) local group = tonumber(parts[3])
       publish(k, app, v.target)
@@ -1969,9 +1974,9 @@ Main loop
 local cud = {
   { name = 'CBus', func = cudCBusTopics, init = false },
 }
-if environmentSupport then table.insert(cud, { name = 'environment sensor', func = cudEnv, init = true }) end
-if panasonicSupport then table.insert(cud, { name = 'Panasonic', func = cudAc, init = true }) end
-if airtopiaSupport then table.insert(cud, { name = 'Airtopia', func = cudAt, init = false }) end
+if environmentSupport then cud[#cud + 1] = { name = 'environment sensor', func = cudEnv, init = true } end
+if panasonicSupport then cud[#cud + 1] = { name = 'Panasonic', func = cudAc, init = true } end
+if airtopiaSupport then cud[#cud + 1] = { name = 'Airtopia', func = cudAt, init = false } end
 
 local i, c
 for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function
