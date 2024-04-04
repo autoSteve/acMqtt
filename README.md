@@ -15,13 +15,16 @@ The pieces of the puzzle include:
 * Home Assistant 'HAOS' running somewhere. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker going (but you could use a separately installed MQTT broker elsewhere on your network and use 'core'). HA Cloud talks to Google Assistant/Alexa, so a subscription is required if you want that.
 * Home Assistant plug-ins: 'Mosquitto broker', and file editor is also handy.
 * LUA code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2).
+* Keywords added to Automation Controller objects.
 
-LUA scripts for the automation controller (all script names are NOT case sensitive, but must be called these names - some scripts are automatically re-started based on name):
-* *MQTT send receive*: resident, zero sleep
-* *HUE send receive*: (for Philips Hue) resident, zero sleep
-* *Heartbeat*: (optional) resident, zero sleep ... monitors for failure of 'MQTT send receive' and 'HUE send receive' and re-starts them on failure
+LUA scripts for the automation controller (all scripts do NOT have to be called these names):
+* *MQTT send receive*: resident, zero sleep suggested, but higher will just mean slower restart speed on failure
+* *HUE send receive*: (for Philips Hue) resident, zero sleep suggested, but higher will just mean slower restart speed on failure
+* *Heartbeat*: (optional) resident, zero sleep ... monitors for failure of 'MQTT send receive' and 'HUE send receive' and re-starts them when unresponsive (stuck in loop, lock-up, etc.)
 
-**Note**: Legacy event scripts will be disabled on start of *MQTT send receive*, but Hue event scripts must be disabled manually / deleted.
+**Note**: Carefully examine the environment specific variable comments at the top of *MQTT send receive* and set as appropriate to your needs.
+
+**Note**: If implemented, legacy event scripts *MQTT final* or *MQTT* (which aren't used any more) will be disabled on start of *MQTT send receive*, but Hue event scripts must be disabled manually / deleted. If left enabled these scripts will cause no conflict, however, just waste system resources.
 
 **Note**: *MQTT send receive* can examine the keywords *MQTT, ENV, AC* and *AT*, but by default it only utilises *MQTT*. To enable support for ESPHome environment sensors, Panasonic A/C, or Airtopia A/C alter the variables *environmentSupport*, *panasonicSupport* or *airtopiaSupport* near the top of *MQTT send receive* as appropriate.
 
