@@ -9,11 +9,11 @@ local checkChanges = 30            -- Interval in seconds to check for changes t
 --[[ SET AS APPROPRIATE TO SUIT ENVIRONMENT --]]
 local entityIdAsIndentifier = true -- If true then entity IDs will be created using the object identifier (e.g. light.bathroom_1_fan), and if false using C-Bus numbering (e.g. light.cbus_mqtt_254_56_10)
 local forceChangeId = true         -- CAUTION!!! If true, then if the entity ID changes (because entityIdAsIndentifier) then the entities will be removed and re-added, forcing the entity ID to change - this WILL break dashboards/automations/etc.
-local removeSaFromStartOfPn = true -- If true then the suggested area will be removed from the beginning of the preferred name (if the pn includes it) - add the keyword 'exactpn' to create an exception when true
+local removeSaFromStartOfPn = false -- If true then the suggested area will be removed from the beginning of the preferred name (if the pn includes it) - add the keyword 'exactpn' to create an exception when true
 local useLastLevel = false         -- Whether to store and use lastLevel (these days Home Assistant recalls previous 'on' levels for most things, but not some things, so lastLevel is always used for certain objects, like fan)
 local airtopiaSupport = false      -- Monitor keyword 'AT' for Airtopia devices - set to true if support is desired
-local panasonicSupport = true      -- Monitor keyword 'AC' for Panasonic devices - set to true if support is desired
-local environmentSupport = true    -- Monitor keyword 'ENV' for ESPHome environment sensors - set to true if support is desired
+local panasonicSupport = false     -- Monitor keyword 'AC' for Panasonic devices - set to true if support is desired
+local environmentSupport = false   -- Monitor keyword 'ENV' for ESPHome environment sensors - set to true if support is desired
 
 --[[
 Resident, zero sleep interval, name: 'MQTT send receive'
