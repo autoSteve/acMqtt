@@ -46,11 +46,12 @@ Lighting, measurement, user parameter, unit parameter and trigger control applic
 
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
-A type of light, fan, fan_pct (or fanpct), cover, select, sensor, switch, binary_sensor (or binarysensor), bsensor or button (default if not specified is 'light').
+A type of light, fan, fan_pct (or fanpct), cover, select, sensor, switch, binary_sensor (or binarysensor), bsensor, isensor or button (default if not specified is 'light').
 * Light, cover, select, sensor, switch, binary_sensor and button are self-explanatory, being the Home Assistant equivalents.
 * Using cover by default assumes that a L5501RBCP blind relay is in "level translation mode". Using a select would also work well, with predictable level presets for open, closed, and part open at half way. See the cover notes below for more.
 * The fan keyword is specifically for sweep fan controllers like a L5501RFCP. See the sweep fan notes below.
 * A bsensor is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. Motion detected/Motion not detected.
+* An isensor is an inbound sensor, with values subscribed in MQTT topics. Use an automation in Home Assistant to publish sensor vaules to MQTT.
 
 And in addition to the type...
 * sa=     Suggested area
@@ -65,6 +66,7 @@ And in addition to the type...
 * off=    Preferred value shown in HA for a 'bsensor' OFF value (bsensor only)
 * rate=   Rate of cover open/close for tracking, see below (cover only)
 * delay=  Delay cover tracking, see below (cover only)
+* topic=  A MQTT topic to subscribe to (isensor only)
 * Plus the keyword "includeunits" for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, not the unit= keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without includeunits is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
 * Plus the keyword "preset" for fan_pct if both a percentage slider and a preset option are desired.
 * Plus the keyword "noleveltranslate" for covers, see below
@@ -123,6 +125,30 @@ For trigger control buttons the preferred name is used as an optional prefix to 
 CBus fan controller objects can use either 'fan' or 'fan_pct' keywords. The former will use a preset mode of low/medium/high, while the latter discovers as a slider fan in Home Assistant.
 
 If needed, the best of both can also be had by specifying the keyword 'preset' along with fan_pct.
+
+#### Isensor notes
+
+An automation is used to publish Home Assistant values to MQTT so that an isensor can get updates from the topic= published value. An example in automations.yaml:
+
+```
+- id: '1714042033410'
+  alias: State of charge to MQTT
+  description: ''
+  trigger:
+  - platform: state
+    entity_id:
+    - sensor.powerwall_charge_actual
+  condition: []
+  action:
+  - service: mqtt.publish
+    metadata: {}
+    data:
+      qos: '2'
+      retain: true
+      topic: powerwall/soc
+      payload_template: '{{ trigger.to_state.state }}'
+  mode: single
+```
 
 #### Image defaults
 
