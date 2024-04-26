@@ -91,6 +91,7 @@ local ignoreMqtt = {}        -- To prevent message loops
 local ramp = {}              -- Keeps track of ramping to ignore some zero level MQTT publish events outstandingCbusMessage()
 local triggers = {}          -- Trigger groups and their levels
 local selects = {}           -- Select groups and their options/levels
+local inbound = {}           -- Sensors from Home Assistant
 local cover = {}             -- Quick lookup to determine whether an object is a cover (blind)
 local fan = {}               -- Quick lookup to determine whether an object is a fan (sweep fan)
 local bSensor = {}           -- Quick lookup to determine whether an object is a bsensor (a regular lighting group acting as status)
@@ -118,8 +119,8 @@ local imgDefault = {         -- Defaults for images - Simple image name, or a ta
 }
 local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
-  'MQTT', 'light', 'switch', 'cover', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'button', 'select',
-  'pn=', 'sa=', 'img=', 'unit=', 'class=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=', 'rate=', 'delay=',
+  'MQTT', 'light', 'switch', 'cover', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'isensor', 'button', 'select',
+  'pn=', 'sa=', 'img=', 'unit=', 'class=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=', 'rate=', 'delay=', 'topic=',
   'includeunit', 'preset', 'noleveltranslate', 'exactpn',
 }
 local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end cudRaw = nil
@@ -693,6 +694,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     lvl = {},       -- Levels
     rate = {},      -- Rate of open/close for cover
     delay = 0,      -- Delay before starting cover tracking
+    topic = '',     -- MQTT topic for inbound sensors
   }
   local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
   local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false, exactpn = false, }
@@ -767,145 +769,175 @@ local function addDiscover(net, app, group, channel, tags, name)
   for s, _ in pairs(special) do mqttDevices[s] = nil end
 
   local allow = {
-    light = {getPayload = function()
-      return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', bri_stat_t = mqttReadTopic..alias..'/level', bri_cmd_t = mqttWriteTopic..alias..'/ramp', pl_off = 'OFF', on_cmd_type = 'brightness',}
-      end },
-    switch = {getPayload = function()
-      return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF',}
-      end },
-    cover = {getPayload = function()
-      cover[alias] = true
-      if special.noleveltranslate then
-        mqttDevices[alias].noleveltranslate = true
-        return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
-      else
-        mqttDevices[alias].noleveltranslate = false
-        if _L.rate[2] == nil then _L.rate[2] = _L.rate[1] end
-        mqttDevices[alias].rate = _L.rate
-        mqttDevices[alias].delay = _L.delay
-        if not hasMembers(_L.rate) then log('Warning: No cover open/cose rate specified for '..alias..'. Transition tracking disabled.') end
-        if coverLevel[alias] == nil then coverLevel[alias] = grp.getvalue(alias) log('Warning: Initialising cover level for '..alias..' with '..grp.getvalue(alias)..'. This may not be correct.') end
-        return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/open', set_pos_t = mqttWriteTopic..alias..'/ramp',}
+    light = {
+      getPayload = function()
+        return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', bri_stat_t = mqttReadTopic..alias..'/level', bri_cmd_t = mqttWriteTopic..alias..'/ramp', pl_off = 'OFF', on_cmd_type = 'brightness',}
       end
-      end },
-    fan = {getPayload = function() fan[alias] = true storeLevel[alias] = true return {
-      pl_on = 'ON', pl_off = 'OFF',
-      stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp',
-      pr_modes = {'off', 'low', 'medium', 'high'},
-      pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "off" %} 0 {% elif value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
-      pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} low {% elif value | int == 170 %} medium {% elif value | int == 255 %} high {% endif %}',
-    } end },
-    fan_pct = {getPayload = function()
-      dType = 'fan' fan[alias] = true storeLevel[alias] = true local payload = {
-      pl_on = 'ON', pl_off = 'OFF',
-      stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp',
-      pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_cmd_tpl = '{% if value | int == 0 %} 0 {% elif value | int == 1 %} 86 {% elif value | int == 2 %} 170 {% elif value | int == 3 %} 255 {% endif %}',
-      pct_stat_t = mqttReadTopic..alias..'/level', pct_val_tpl = '{% if value | int == 0 %} 0 {% elif value | int == 86 %} 1 {% elif value | int == 170 %} 2 {% elif value | int == 255 %} 3 {% endif %}',
-      spd_rng_min = 1,
-      spd_rng_max = 3,
-      opt = false,
-      }
-      if special.preset then
-        payload.pr_modes = {'off', 'low', 'medium', 'high'}
-        payload.pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp'
-        payload.pr_mode_cmd_tpl = '{% if value == "off" %} 0 {% elif value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}'
-        payload.pr_mode_stat_t = mqttReadTopic..alias..'/level'
-        payload.pr_mode_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} low {% elif value | int == 170 %} medium {% elif value | int == 255 %} high {% endif %}'
+    },
+    switch = {
+      getPayload = function()
+        return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF',}
       end
-      return payload
-    end },
-    sensor = {getPayload = function()
-      local payload
-      local str = false
-      if channel ~= nil then payload = { stat_t = mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/level', } else payload = { stat_t = mqttReadTopic..alias..'/level', } end
-      if lighting[tostring(app)] and not special.dec then _L.dec = 0 end
-      if _L.class ~= '' then payload.dev_cla = _L.class end
-      if app == 250 then userParameter[alias] = true end
-      if app == 255 then unitParameter[alias] = true end
-      if #_L.lvl == 0 then
-        if app == 250 then _, _ = pcall(function () if tonumber(GetUserParam(net, group)) ~= nil then payload.val_tpl = '{{ value | float | round ('.._L.dec..') }}' end end)
-        else payload.val_tpl = '{{ value | float | round ('.._L.dec..') }}'
+    },
+    cover = {
+      getPayload = function()
+        cover[alias] = true
+        if special.noleveltranslate then
+          mqttDevices[alias].noleveltranslate = true
+          return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
+        else
+          mqttDevices[alias].noleveltranslate = false
+          if _L.rate[2] == nil then _L.rate[2] = _L.rate[1] end
+          mqttDevices[alias].rate = _L.rate
+          mqttDevices[alias].delay = _L.delay
+          if not hasMembers(_L.rate) then log('Warning: No cover open/cose rate specified for '..alias..'. Transition tracking disabled.') end
+          if coverLevel[alias] == nil then coverLevel[alias] = grp.getvalue(alias) log('Warning: Initialising cover level for '..alias..' with '..grp.getvalue(alias)..'. This may not be correct.') end
+          return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/open', set_pos_t = mqttWriteTopic..alias..'/ramp',}
         end
-        if not payload.val_tpl then str = true end
-      else
-        str = true
-        local count = 0
-        local tpl
-        for _, level in ipairs(_L.lvl) do
-          local tag, lvl = decodeLevel(net, app, group, level)
-          if tag ~= nil then
-            if count == 0 then tpl = '{% if value | float == '..lvl..' %}'..tag else tpl = tpl..'{% elif value | float == '..lvl..' %}'..tag end
-            count = count + 1
+      end
+    },
+    fan = {
+      getPayload = function()
+        fan[alias] = true
+        storeLevel[alias] = true return {
+          pl_on = 'ON', pl_off = 'OFF',
+          stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp',
+          pr_modes = {'off', 'low', 'medium', 'high'},
+          pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp', pr_mode_cmd_tpl = '{% if value == "off" %} 0 {% elif value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}',
+          pr_mode_stat_t = mqttReadTopic..alias..'/level', pr_mode_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} low {% elif value | int == 170 %} medium {% elif value | int == 255 %} high {% endif %}',
+        }
+      end
+    },
+    fan_pct = {
+      getPayload = function()
+        dType = 'fan' fan[alias] = true storeLevel[alias] = true
+        local payload = {
+          pl_on = 'ON', pl_off = 'OFF',
+          stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp',
+          pct_cmd_t = mqttWriteTopic..alias..'/ramp', pct_cmd_tpl = '{% if value | int == 0 %} 0 {% elif value | int == 1 %} 86 {% elif value | int == 2 %} 170 {% elif value | int == 3 %} 255 {% endif %}',
+          pct_stat_t = mqttReadTopic..alias..'/level', pct_val_tpl = '{% if value | int == 0 %} 0 {% elif value | int == 86 %} 1 {% elif value | int == 170 %} 2 {% elif value | int == 255 %} 3 {% endif %}',
+          spd_rng_min = 1,
+          spd_rng_max = 3,
+          opt = false,
+        }
+        if special.preset then
+          payload.pr_modes = {'off', 'low', 'medium', 'high'}
+          payload.pr_mode_cmd_t = mqttWriteTopic..alias..'/ramp'
+          payload.pr_mode_cmd_tpl = '{% if value == "off" %} 0 {% elif value == "low" %} 86 {% elif value == "medium" %} 170 {% elif value == "high" %} 255 {% endif %}'
+          payload.pr_mode_stat_t = mqttReadTopic..alias..'/level'
+          payload.pr_mode_val_tpl = '{% if value | int == 0 %} off {% elif value | int == 86 %} low {% elif value | int == 170 %} medium {% elif value | int == 255 %} high {% endif %}'
+        end
+        return payload
+      end
+    },
+    sensor = {
+      getPayload = function()
+        local payload
+        local str = false
+        if channel ~= nil then payload = { stat_t = mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/level', } else payload = { stat_t = mqttReadTopic..alias..'/level', } end
+        if lighting[tostring(app)] and not special.dec then _L.dec = 0 end
+        if _L.class ~= '' then payload.dev_cla = _L.class end
+        if app == 250 then userParameter[alias] = true end
+        if app == 255 then unitParameter[alias] = true end
+        if #_L.lvl == 0 then
+          if app == 250 then _, _ = pcall(function () if tonumber(GetUserParam(net, group)) ~= nil then payload.val_tpl = '{{ value | float | round ('.._L.dec..') }}' end end)
+          else payload.val_tpl = '{{ value | float | round ('.._L.dec..') }}'
+          end
+          if not payload.val_tpl then str = true end
+        else
+          str = true
+          local count = 0
+          local tpl
+          for _, level in ipairs(_L.lvl) do
+            local tag, lvl = decodeLevel(net, app, group, level)
+            if tag ~= nil then
+              if count == 0 then tpl = '{% if value | float == '..lvl..' %}'..tag else tpl = tpl..'{% elif value | float == '..lvl..' %}'..tag end
+              count = count + 1
+            else
+              return nil
+            end
+          end
+          payload.val_tpl = tpl..'{% else %}Unknown{% endif %}'
+        end
+        if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
+        if _L.unit ~= '' and not special.includeUnit then payload.unit_of_meas = _L.unit else if not str then payload.unit_of_meas = '' end end
+        return payload
+      end
+    },
+    binary_sensor = {
+      getPayload = function()
+        binarySensor[alias] = true
+        return {stat_t = mqttReadTopic..alias..'/state', pl_on = 'ON', pl_off = 'OFF',}
+      end
+    },
+    bsensor = {
+      getPayload = function()
+        bSensor[alias] = true dType = 'sensor'
+        return {stat_t = mqttReadTopic..alias..'/level', val_tpl = '{% if value | float == 0 %} '.._L.off..' {% else %} '.._L.on..' {% endif %}',}
+      end
+    },
+    isensor = {
+      getPayload = function()
+        if _L.topic == '' then log('Error: topic= keyword not specified for isensor at '..alias..', which is required') return nil end
+        return 'inbound'
+      end
+    },
+    button = {
+      getPayload = function()
+        button[alias] = true
+        if lighting[tostring(app)] then
+          lightingButton[alias] = true
+          return {cmd_t = mqttWriteTopic..alias..'/press',}
+        elseif app == 202 then
+          local i
+          mqttDevices[alias].trigger = {}
+          mqttDevices[alias].type = 'button'
+          if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels, which is most inefficient!
+          for _, i in ipairs(_L.lvl) do
+            local tag, lvl = decodeLevel(net, app, group, i, publishNoLevel and 'Level '..i or nil)
+            if tag then
+              boid = oid..'_'..lvl
+              table.insert(mqttDevices[alias].trigger, boid)
+              action = tag:gsub("%s+", "_"):lower() -- Replace spaces with underscores
+              if triggers[group] == nil then triggers[group] = {} end
+              triggers[group][action] = lvl
+              if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
+              local entity = getEntity(prefix..tag)
+              local name
+              if special.exactpn or not removeSaFromStartOfPn then name = prefix..tag else name = entity end
+              local objId if not entityIdAsIndentifier then objId = boid else objId = (_L.sa..' '..entity:trim()):lower():gsub('[%p%c]',''):gsub(' ','_'):gsub('__','_'):gsub('__','_') end
+              payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity, name, objId)
+              removeOld(dType, boid)
+              publish(payload, boid, entity, name, objId)
+            end
+          end
+          return 'buttons'
+        else
+          log('Warning: MQTT button keyword used for unsupported application group '..alias)
+          return nil
+        end
+      end
+    },
+    select = {
+      getPayload = function()
+        if #_L.lvl == 0 then log('Error: lvl= keyword not specified for select at '..alias..', which is required') return nil end
+        local level
+        local options = {}
+        selects[alias] = {}
+        for _ , level in ipairs(_L.lvl) do
+          local opt, sel = decodeLevel(net, app, group, level)
+          if opt ~= nil then
+            options[#options + 1] = opt
+            selects[alias][opt] = sel
+            if not selects[alias].allLvl then selects[alias].allLvl = {} end; selects[alias].allLvl[#selects[alias].allLvl + 1] = { lvl = sel, sel = opt }
           else
             return nil
           end
         end
-        payload.val_tpl = tpl..'{% else %}Unknown{% endif %}'
+        table.sort(selects[alias].allLvl, function (left, right) return left.lvl < right.lvl end)
+        return {stat_t = mqttReadTopic..alias..'/select', cmd_t = mqttWriteTopic..alias..'/select', options = options,}
       end
-      if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
-      if _L.unit ~= '' and not special.includeUnit then payload.unit_of_meas = _L.unit else if not str then payload.unit_of_meas = '' end end
-      return payload
-      end },
-    binary_sensor = {getPayload = function()
-      binarySensor[alias] = true
-      return {stat_t = mqttReadTopic..alias..'/state', pl_on = 'ON', pl_off = 'OFF',}
-      end },
-    bsensor = {getPayload = function()
-      bSensor[alias] = true dType = 'sensor'
-      return {stat_t = mqttReadTopic..alias..'/level', val_tpl = '{% if value | float == 0 %} '.._L.off..' {% else %} '.._L.on..' {% endif %}',}
-      end },
-    button = {getPayload = function()
-      button[alias] = true
-      if lighting[tostring(app)] then
-        lightingButton[alias] = true
-        return {cmd_t = mqttWriteTopic..alias..'/press',}
-      elseif app == 202 then
-        local i
-        mqttDevices[alias].trigger = {}
-        mqttDevices[alias].type = 'button'
-        if #_L.lvl == 0 then for i = 0,255 do _L.lvl[#_L.lvl + 1] = i end end -- If no "lvl=" specified then scan all levels, which is most inefficient!
-        for _, i in ipairs(_L.lvl) do
-          local tag, lvl = decodeLevel(net, app, group, i, publishNoLevel and 'Level '..i or nil)
-          if tag then
-            boid = oid..'_'..lvl
-            table.insert(mqttDevices[alias].trigger, boid)
-            action = tag:gsub("%s+", "_"):lower() -- Replace spaces with underscores
-            if triggers[group] == nil then triggers[group] = {} end
-            triggers[group][action] = lvl
-            if _L.pn == name then prefix = '' else prefix = _L.pn..' ' end
-            local entity = getEntity(prefix..tag)
-            local name
-            if special.exactpn or not removeSaFromStartOfPn then name = prefix..tag else name = entity end
-            local objId if not entityIdAsIndentifier then objId = boid else objId = (_L.sa..' '..entity:trim()):lower():gsub('[%p%c]',''):gsub(' ','_'):gsub('__','_'):gsub('__','_') end
-            payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity, name, objId)
-            removeOld(dType, boid)
-            publish(payload, boid, entity, name, objId)
-          end
-        end
-        return 'buttons'
-      else
-        log('Warning: MQTT button keyword used for unsupported application group '..alias)
-        return nil
-      end
-      end },
-    select = {getPayload = function()
-      if #_L.lvl == 0 then log('Error: lvl= keyword not specified for select at '..alias..', which is required') return nil end
-      local level
-      local options = {}
-      selects[alias] = {}
-      for _, level in ipairs(_L.lvl) do
-        local opt, sel = decodeLevel(net, app, group, level)
-        if opt ~= nil then
-          options[#options + 1] = opt
-          selects[alias][opt] = sel
-          if not selects[alias].allLvl then selects[alias].allLvl = {} end; selects[alias].allLvl[#selects[alias].allLvl + 1] = { lvl = sel, sel = opt }
-        else
-          return nil
-        end
-      end
-      table.sort(selects[alias].allLvl, function (left, right) return left.lvl < right.lvl end)
-      return {stat_t = mqttReadTopic..alias..'/select', cmd_t = mqttWriteTopic..alias..'/select', options = options,}
-      end },
+    },
   }
 
   -- Extract MQTT topic settings
@@ -936,7 +968,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   local entity = getEntity(_L.pn)
   local objId if not entityIdAsIndentifier then objId = oid else objId = (_L.sa..' '..entity:trim()):lower():gsub('[%p%c]',''):gsub(' ','_'):gsub('__','_'):gsub('__','_') end
 
-  if payload ~= nil and payload ~= 'buttons' then -- If payload recieved then publish
+  if payload ~= nil and payload ~= 'buttons' and payload ~= 'inbound' then -- If payload recieved then publish
     mqttDevices[alias].type = dType
     local name
     if special.exactpn or not removeSaFromStartOfPn then name = _L.pn else name = entity end
@@ -953,6 +985,10 @@ local function addDiscover(net, app, group, channel, tags, name)
     return
   elseif payload == 'buttons' then
     -- Trigger app buttons have already been published, so do nothing
+  elseif payload == 'inbound' then
+    -- Inbound sensor, so no discovery, just set up to receive the sensor and subscribe to the topic
+    inbound[_L.topic] = { alias=alias, }
+    client:subscribe(_L.topic, mqttQoS)
   else
     mqttDevices[alias] = nil
     error('Warning: a publish payload for '..name..' could not be built, so not published')
@@ -1694,7 +1730,12 @@ local function outstandingMqttMessage()
         end
       end
 
-      -- Messages from ENV board sensor topics - simpler, only messages inbound
+    elseif inbound[topic] then
+      if logging then log('Set '..inbound[topic].alias..' to '..payload) end
+      local value = tonumber(payload) if value == nil then value = payload end
+      grp.write(inbound[topic].alias, value)
+
+    -- Messages from ENV board sensor topics - simpler, only messages inbound
     elseif environmentSupport and envBoards[parts[1]] and parts[2] == 'sensor' and parts[4] == 'state' then
       device = parts[1]..'-'..parts[3]
       if envDevices[device] then
@@ -2011,7 +2052,7 @@ local timeout = 1
 local timeoutStart, connectStart
 
 while true do
-  local stat, err
+  local stat, err, k, v
 
   -- Check for new messages from CBus. The entire socket buffer is collected each iteration for efficiency.
   localbus:step()
@@ -2082,6 +2123,7 @@ while true do
     -- Subscribe to relevant topics
     client:subscribe(mqttWriteTopic..'#', mqttQoS)
     client:subscribe(mqttDiscoveryTopic..'#', mqttQoS)
+    for k, _ in pairs(inbound) do client:subscribe(k, mqttQoS) end
     if panasonicSupport then for k, _ in pairs(acBoards) do client:subscribe(k..'/#', mqttQoS) end end
     if airtopiaSupport then for k, _ in pairs(atBoards) do client:subscribe('airtopia/'..k..'/#', mqttQoS) end end
     if environmentSupport then for k, _ in pairs(envBoards) do client:subscribe(k..'/#', mqttQoS) end end
