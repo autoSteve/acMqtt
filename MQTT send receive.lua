@@ -1549,6 +1549,7 @@ local function outstandingPublish()
   local nClock = socket.gettime()
   local u
   local failed = 0
+  local inbound = 0
   local stat, err
 
   for _, u in ipairs(unpublished) do
@@ -1557,6 +1558,7 @@ local function outstandingPublish()
       failed = failed + 1
       log(err)
     end
+    if u.tags.isensor then inbound = inbound + 1 end
     -- Publish current levels
     local alias = u.net..'/'..u.app..'/'..u.group
     -- Measurement application
@@ -1586,7 +1588,12 @@ local function outstandingPublish()
   end
   if #unpublished > 0 then
     -- Ensure that newly tagged/removed groups with the MQTT keyword send updates
-    log('Published '..#unpublished - failed..' CBus discovery and current level topic'..(#unpublished - failed ~= 1 and 's' or '')..(logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..(failed ~= 0 and ' ('..failed..' failed)' or ''))
+    log(
+      'Published '..#unpublished - failed - inbound..' CBus discovery and current level topic'..(#unpublished - failed - inbound ~= 1 and 's' or '')..
+      (inbound > 0 and ', and configured '..inbound..' inbound subscription'..(inbound > 1 and 's' or '') or '')..
+      (logms and ' in '..string.format('%.3f', socket.gettime()-nClock)..' seconds' or '')..
+      (failed > 0 and ' ('..failed..' failed)' or '')
+    )
     unpublished = {}
   end
 end
