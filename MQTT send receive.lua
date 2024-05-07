@@ -325,6 +325,7 @@ local function eventCallback(event)
     else
       value = grp.getvalue(event.dst)
     end
+    if value == nil then log('Warning: nil value for '..event.dst..', which should not happen') return end
     local pre, comp
     if type(value) == 'number' then
       if mqttDevices[event.dst].value ~= nil then pre = string.format('%.5f', mqttDevices[event.dst].value) else pre = nil end
