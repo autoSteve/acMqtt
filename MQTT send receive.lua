@@ -261,13 +261,35 @@ client.ON_MESSAGE = function(mid, topic, payload)
     local parts = string.split(topic, '/')
     if payload ~= '' then
       if parts[3]:contains('cbus_mqtt_') then
-        if discovery[parts[3]] ~= nil and discovery[parts[3]] ~= parts[2] then
-          discoveryDelete[parts[3]..'/'..parts[2]] = true
-        end
         local j = json.decode(payload)
-        discovery[parts[3]] = parts[2] -- Table of CBus addresses with type as the value
-        discoveryName[parts[3]] = j.dev.name -- Used for rename detection
-        discoveryId[parts[3]] = j.obj_id -- Used for ID change detection
+        local disc = string.split(parts[3], '_')
+        local cnl
+        if #disc == 6 then
+          cnl = disc[6] disc[6] = nil disc = table.concat(disc, '_')
+          if discovery[disc] == nil then
+            discovery[disc] = { ['dtype']=parts[2], ['cnl']={ cnl, }, } -- Table of CBus addresses with type as the value, including a list of 'channels'
+          else
+            if #discovery[disc].cnl == 0
+              then log('Warning: Existing duplicate discovery topics for '..disc..' ... '..parts[2]..' and '..discovery[disc].dtype..', so removing all')
+              discoveryDelete[disc..'/'..parts[2]] = true
+              discoveryDelete[disc..'_'..cnl..'/'..parts[2]] = true
+            else
+              discovery[disc].dtype = parts[2]
+              discovery[disc].cnl[#discovery[disc].cnl+1] = cnl -- New 'channel' found
+            end
+          end
+        else
+          disc = parts[3]
+          if discovery[disc] ~= nil and discovery[disc].dtype ~= parts[2] then
+            log('Warning: Existing duplicate discovery topics for '..disc..' ... '..parts[2]..' and '..discovery[disc].dtype..', so removing all')
+            discoveryDelete[disc..'/'..parts[2]] = true
+            for _, cnl in ipairs(discovery[disc].cnl) do discoveryDelete[disc..'_'..cnl..'/'..discovery[disc].dtype] = true end
+          else
+            discovery[disc] = { ['dtype']=parts[2], ['cnl']={}, } -- Table of CBus addresses with type as the value
+          end
+        end
+        discoveryName[disc] = j.dev.name -- Used for rename detection
+        discoveryId[disc] = j.obj_id -- Used for ID change detection
       end
     end
   else
@@ -315,8 +337,8 @@ local function eventCallback(event)
       if logging then log('Not setting '..event.dst..' to '..value..', same as previous value') end
       return
     end
+    if logging then log('Setting '..event.dst..' to '..value..', previous='..tostring(mqttDevices[event.dst].value)) end
     mqttDevices[event.dst].value = value
-    if logging then log('Setting '..event.dst..' to '..value..', previous='..mqttDevices[event.dst].value) end
     cbusMessages[#cbusMessages + 1] = event.dst.."/"..value -- Queue the event
 
     -- Check whether to set the level as a tracked lastlevel
@@ -727,13 +749,25 @@ local function addDiscover(net, app, group, channel, tags, name)
   end
 
   local function removeOld(dType, oid)
-    -- If dType has changed for an existing discovery topic then remove the previous topic
-    local oldDiscovery = discovery[oid]
-    if oldDiscovery ~= nil and oldDiscovery ~= dType then
-      client:publish(mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config', '', mqttQoS, RETAIN)
-      if logging then log('Removed discovery topic '..mqttDiscoveryTopic..oldDiscovery..'/'..oid..'/config') end
+    -- If dType has changed for an existing discovery topic then remove the previous topic(s)
+    local disc = string.split(oid, '_')
+    local cnl
+    if #disc == 6 then
+      cnl = disc[6] disc[6] = nil disc = table.concat(disc, '_')
+      if discovery[disc] == nil then
+        discovery[disc] = { ['dtype']=dType, ['cnl']={ cnl, }, } -- Table of CBus addresses with type as the value, including a list of 'channels'
+      else
+        if #discovery[disc].cnl == 0 then discoveryDelete[disc..'/'..discovery[disc].dtype] = true end
+        discovery[disc].dtype = dType
+        discovery[disc].cnl[#discovery[disc].cnl+1] = cnl -- New 'channel' found
+      end
+    else
+      disc = oid
+      if discovery[disc] ~= nil then
+        for _, cnl in ipairs(discovery[disc].cnl) do discoveryDelete[disc..'_'..cnl..'/'..discovery[disc].dtype] = true end
+      end
+      discovery[disc] = { ['dtype']=dType, ['cnl']={}, } -- Table of CBus addresses with type as the value
     end
-    discovery[oid] = dType
   end
 
   local function publish(payload, oid, entity, name, objId)
@@ -1449,15 +1483,14 @@ local function cudCBusTopics()
           if lvl ~= nil then -- Check for levels being changed
             olvl = {}
             if mqttDevices[alias].tags.lvl then
-              olvl = {} local l local p = string.split(mqttDevices[alias].tags.lvl, '/')
+              local l local p = string.split(mqttDevices[alias].tags.lvl, '/')
               for _, l in ipairs(p) do _, olvl[#olvl+1] = decodeLevel(v.net, v.app, v.group, l) end
             end
             local diff = difference(olvl, lvl)
             if #diff > 0 then lvlDelete[alias] = diff end
             if len(lvl) > len(olvl) then change = true end
-          else
-            change = true
           end
+          change = true
         else
           change = true
         end
@@ -1991,6 +2024,7 @@ local function dupDelete()
     local parts = string.split(toDelete, '/')
     local oid = parts[1]
     local dType = parts[2]
+    if mqttJunk then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', 'junk', mqttQoS, RETAIN) end
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
     log('Removed discovery topic '..mqttDiscoveryTopic..dType..'/'..oid..'/config')
   end
@@ -2137,6 +2171,11 @@ while true do
     -- Connected... Now loop briefly to allow retained value retrieval for subscribed topics because synchronous
     while socket.gettime() - mqttConnected < 0.5 do client:loop(0) end
     if not reconnect then
+      if hasMembers(discoveryDelete) then
+        -- A type has changed for existing topics, so clean up discovery for the old topics
+        stat, err = pcall(dupDelete)
+        if not stat then log('Error processing delete discovery duplicates: '..err) discoveryDelete = {} end -- Log error and clear the queue, continue
+      end
       -- Full publish CBus topics
       stat, err = pcall(publishCurrent)
       if not stat then log('Error publishing current values: '..err) end -- Log and continue
