@@ -322,6 +322,8 @@ local function eventCallback(event)
         if event.meta == 'admin' then return end
         if value ~= target then return end
       end
+    elseif parts[2] == '202' then
+      value = tonumber(string.sub(event.datahex,3,4),16)
     else
       value = grp.getvalue(event.dst)
     end
