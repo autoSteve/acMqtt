@@ -301,6 +301,18 @@ end
 --[[
 C-Bus events, only queues a C-Bus message at the end of a ramp
 --]]
+local function hex2float(c)
+  if c == 0 then return 0.0 end
+  local c = string.gsub(string.format("%X", c),"(..)",function (x) return string.char(tonumber(x, 16)) end)
+  local b1,b2,b3,b4 = string.byte(c, 1, 4)
+  local sign = b1 > 0x7F
+  local expo = (b1 % 0x80) * 0x2 + math.floor(b2 / 0x80)
+  local mant = ((b2 % 0x80) * 0x100 + b3) * 0x100 + b4
+  if sign then sign = -1 else sign = 1 end
+  local n if mant == 0 and expo == 0 then n = sign * 0.0 elseif expo == 0xFF then if mant == 0 then n = sign * math.huge else n = 0.0/0.0 end else n = sign * math.ldexp(1.0 + mant / 0x800000, expo - 0x7F) end
+  return n
+end
+
 local function eventCallback(event)
   if mqttDevices[event.dst] then
     local function setLastLevel(val)
@@ -322,12 +334,31 @@ local function eventCallback(event)
         if event.meta == 'admin' then return end
         if value ~= target then return end
       end
-    elseif parts[2] == '202' then
-      value = tonumber(string.sub(event.datahex,3,4),16)
     else
-      value = grp.getvalue(event.dst)
+      --[[
+        To consider... (not specifically implemented, the grp.getvalue() level will be read and passed for these)
+        dt.time - 3-byte time / day, table
+        dt.date - 3-byte date, table
+        dt.rgb - RGB color, alias of dt.uint24
+      --]]
+      local tp = grp.find(event.dst).datatype
+      if tp == dt.text then
+        local chars = {} local p for p in event.datahex:gmatch("%x%x") do chars[#chars+1] = string.format('%c', tonumber(p, 16)) end
+        value = table.concat(chars)
+      elseif tp == dt.bool then
+        value = tonumber(event.datahex, 16) == 1
+      elseif tp == dt.uint32 then
+        value = tonumber(event.datahex, 16)
+      elseif tp == dt.int32 then
+        value = (tonumber(event.datahex, 16) + 2^31) % 2^32 - 2^31 -- Convert to twos compliment signed
+      elseif tp == dt.float32 then
+        --If LUA >=5.3, but alas, one day... For now, use ancient function above: value = string.unpack('f', string.pack('i4', '0x'..string.sub(event.datahex, 1, 8)))
+        value = hex2float(tonumber(string.sub(event.datahex, 1, 8), 16)) -- Only the first eight characters of datahex are needed (measurement and user parameter add additional data)
+      else -- Unknown, so just get the current value
+        value = grp.getvalue(event.dst)
+      end
     end
-    if value == nil then log('Warning: nil value for '..event.dst..', which should not happen') return end
+    if value == nil then log('Error: nil value for '..event.dst..', which should not happen, ignoring') return end
     local pre, comp
     if type(value) == 'number' then
       if mqttDevices[event.dst].value ~= nil then pre = string.format('%.5f', mqttDevices[event.dst].value) else pre = nil end
@@ -340,8 +371,9 @@ local function eventCallback(event)
       if logging then log('Not setting '..event.dst..' to '..value..', same as previous value') end
       return
     end
-    if logging then log('Setting '..event.dst..' to '..value..', previous='..tostring(mqttDevices[event.dst].value)) end
+    if logging then log('Setting '..event.dst..' to '..tostring(value)..', previous='..tostring(mqttDevices[event.dst].value)) end
     mqttDevices[event.dst].value = value
+    if type(value) == 'boolean' then value = value and 1 or 0 end
     cbusMessages[#cbusMessages + 1] = event.dst.."/"..value -- Queue the event
 
     -- Check whether to set the level as a tracked lastlevel
