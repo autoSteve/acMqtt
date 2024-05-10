@@ -418,6 +418,7 @@ local function publish(alias, app, level, noPre)
     if tonumber(level) ~= nil then
       state = (tonumber(level) ~= 0) and 'ON' or 'OFF'
     elseif type(level) == 'boolean' then
+      if level then level = 255 else level = 0 end
       state = level and 'ON' or 'OFF'
     else
       state = level
@@ -427,7 +428,7 @@ local function publish(alias, app, level, noPre)
     if not binarySensor[alias] then
       if bSensor[alias] then -- It's a bSensor
         client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
-        client:publish(mqttReadTopic..alias..'/state', level, mqttQoS, RETAIN)
+        client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
         if logging then log('Publishing '..mqttReadTopic..alias..' to '..level) end
       elseif selects[alias] then -- It's a select
         local l
@@ -806,6 +807,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     else
       disc = oid
       if discovery[disc] ~= nil then
+        if discovery[disc].dtype ~= dType then discoveryDelete[disc..'/'..discovery[disc].dtype] = true end
         for _, cnl in ipairs(discovery[disc].cnl) do discoveryDelete[disc..'_'..cnl..'/'..discovery[disc].dtype] = true end
       end
       discovery[disc] = { ['dtype']=dType, ['cnl']={}, } -- Table of CBus addresses with type as the value
@@ -1044,7 +1046,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   local entity = getEntity(_L.pn)
   local objId if not entityIdAsIndentifier then objId = oid else objId = (_L.sa..' '..entity:trim()):lower():gsub('[%p%c]',''):gsub(' ','_'):gsub('__','_'):gsub('__','_') end
 
-  if payload ~= nil and payload ~= 'buttons' and payload ~= 'inbound' then -- If payload recieved then publish
+  if payload ~= nil and payload ~= 'buttons' and payload ~= 'inbound' then -- If payload received then publish
     mqttDevices[alias].type = dType
     local name
     if special.exactpn or not removeSaFromStartOfPn then name = _L.pn else name = entity end
