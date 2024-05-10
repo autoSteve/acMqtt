@@ -150,6 +150,10 @@ setmetatable(_G, {
   __index = function (_, n) if not exclude[n] and not declaredNames[n] then log('Warning: Read undeclared global variable "'..n..'"') end return nil end,
 })
 
+--[[
+Utility funtions
+--]]
+
 local function len(tbl) local i = 0 for _, _ in pairs(tbl) do i = i + 1 end return i end -- Get number of table members
 local function hasMembers(tbl) for _, _ in pairs(tbl) do return true end return false end -- Get whether any table members
 string.contains = function (text, prefix) local pos = text:find(prefix, 1, true); if pos then return pos >= 1 else return false end end -- Test whether a string contains a substring, ignoring nil
@@ -186,6 +190,33 @@ local function removeIrrelevant(keywords)
   end
   return table.concat(curr, ',')
 end
+local function hex2float(raw)
+  if tonumber(raw, 16) == 0 then return 0.0 end
+  local raw = string.gsub(raw, "(..)", function (x) return string.char(tonumber(x, 16)) end)
+  local byte1, byte2, byte3, byte4 = string.byte(raw, 1, 4)
+  local sign = byte1 > 0x7F
+  local exponent = (byte1 % 0x80) * 0x02 + math.floor(byte2 / 0x80)
+  local mantissa = ((byte2 % 0x80) * 0x100 + byte3) * 0x100 + byte4
+  if sign then sign = -1 else sign = 1 end
+  local n if mantissa == 0 and exponent == 0 then n = sign * 0.0 elseif exponent == 0xFF then if mantissa == 0 then n = sign * math.huge else n = 0.0/0.0 end else n = sign * math.ldexp(1.0 + mantissa / 0x800000, exponent - 0x7F) end
+  return n
+end
+
+local convertDatahex = { -- Convert a datahex value to the event type
+  [dt.text]    = function (dh) return(string.gsub(dh, "(..)", function (x) return string.char(tonumber(x, 16)) end)) end, -- Convert string of hex to string of chars
+  [dt.string]  = function (dh) return(string.gsub(dh, "(..)", function (x) return string.char(tonumber(x, 16)) end)) end,
+  [dt.uint32]  = function (dh) return(tonumber(dh, 16)) end,
+  [dt.uint16]  = function (dh) return(tonumber(dh, 16)) end,
+  [dt.uint8]   = function (dh) return(tonumber(dh, 16)) end,
+  [dt.int64]   = function (dh) return((tonumber(dh, 16) + 2^63) % 2^64 - 2^63) end, -- Convert to twos compliment signed
+  [dt.int32]   = function (dh) return((tonumber(dh, 16) + 2^31) % 2^32 - 2^31) end,
+  [dt.int16]   = function (dh) return((tonumber(dh, 16) + 2^15) % 2^16 - 2^15) end,
+  [dt.int8]    = function (dh) return((tonumber(dh, 16) + 2^7) % 2^8 - 2^7) end,
+  [dt.bool]    = function (dh) return(tonumber(dh, 16) == 1) end,
+  [dt.float32] = function (dh) return(hex2float(string.sub(dh, 1, 8))) end, -- Only the first eight characters of datahex are needed (measurement and unit parameter add additional data)
+  -- If LUA >= 5.3, would not need hex2float... Instead return(string.unpack('f', string.pack('i4', '0x'..string.sub(dh, 1, 8))))
+  -- To consider, currently unsupported... dt.time, dt.date, dt.rgb/dt.uint24, dt.float16
+}
 
 
 --[[
@@ -303,17 +334,10 @@ C-Bus events, only queues a C-Bus message at the end of a ramp
 --]]
 local function eventCallback(event)
   if mqttDevices[event.dst] then
-    local function setLastLevel(val)
-      if val ~= 0 and val ~= lastLevel[event.dst] then
-        lastLevel[event.dst] = val
-        if logging then log('Set lastLevel to '..val..' for '..event.dst) end
-        storage.set('lastlvl', lastLevel)
-      end
-    end
-
-    local value
-    local ramp
+    local value, ramp
     local parts = string.split(event.dst, '/')
+    local tp = grp.find(event.dst).datatype
+    
     if lighting[parts[2]] then
       value = tonumber(string.sub(event.datahex,1,2),16)
       local target = tonumber(string.sub(event.datahex,3,4),16)
@@ -322,14 +346,17 @@ local function eventCallback(event)
         if event.meta == 'admin' then return end
         if value ~= target then return end
       end
-    elseif parts[2] == '202' then
-      value = tonumber(string.sub(event.datahex,3,4),16)
     else
-      value = grp.getvalue(event.dst)
+      if convertDatahex[tp] ~= nil then
+        value = convertDatahex[tp](event.datahex)
+      else
+        log('Error: Unsupported data type '..dt..' for '..event.dst..', content of datahex '..event.datahex..', not setting')
+        return
+      end
     end
-    if value == nil then log('Warning: nil value for '..event.dst..', which should not happen') return end
+    if value == nil then log('Error: nil value for '..event.dst..', which should not happen, ignoring') return end
     local pre, comp
-    if type(value) == 'number' then
+    if tp == dt.float32 then -- Compare to five decimal places, because floats are an approximation
       if mqttDevices[event.dst].value ~= nil then pre = string.format('%.5f', mqttDevices[event.dst].value) else pre = nil end
       comp = string.format('%.5f', value)
     else
@@ -338,13 +365,23 @@ local function eventCallback(event)
     end
     if comp == pre then -- Don't publish if already at the level
       if logging then log('Not setting '..event.dst..' to '..value..', same as previous value') end
+      if logging then log('Content of datahex: '..event.datahex..'. Type='..grp.find(event.dst).datatype..'. pre='..pre..'. comp='..comp) end
       return
     end
-    if logging then log('Setting '..event.dst..' to '..value..', previous='..tostring(mqttDevices[event.dst].value)) end
+    if logging then log('Setting '..event.dst..' to '..tostring(value)..', previous='..tostring(mqttDevices[event.dst].value)) end
     mqttDevices[event.dst].value = value
+    if type(value) == 'boolean' then value = value and 'ON' or 'OFF' end
     cbusMessages[#cbusMessages + 1] = event.dst.."/"..value -- Queue the event
 
     -- Check whether to set the level as a tracked lastlevel
+    local function setLastLevel(val)
+      if val ~= 0 and val ~= lastLevel[event.dst] then
+        lastLevel[event.dst] = val
+        if logging then log('Set lastLevel to '..val..' for '..event.dst) end
+        storage.set('lastlvl', lastLevel)
+      end
+    end
+
     if lighting[parts[2]] then
       if useLastLevel then
         setLastLevel(value)
@@ -383,12 +420,20 @@ local function publish(alias, app, level, noPre)
       if level == 5 then level = -1 end
     end
   else
-    state = (tonumber(level) ~= 0) and 'ON' or 'OFF'
+    if tonumber(level) ~= nil then
+      state = (tonumber(level) ~= 0) and 'ON' or 'OFF'
+    elseif type(level) == 'boolean' then
+      if level then level = 255 else level = 0 end
+      state = level and 'ON' or 'OFF'
+    else
+      state = level
+    end
   end
   if not userParameter[alias] then
     if not binarySensor[alias] then
       if bSensor[alias] then -- It's a bSensor
         client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
+        client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
         if logging then log('Publishing '..mqttReadTopic..alias..' to '..level) end
       elseif selects[alias] then -- It's a select
         local l
@@ -767,6 +812,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     else
       disc = oid
       if discovery[disc] ~= nil then
+        if discovery[disc].dtype ~= dType then discoveryDelete[disc..'/'..discovery[disc].dtype] = true end
         for _, cnl in ipairs(discovery[disc].cnl) do discoveryDelete[disc..'_'..cnl..'/'..discovery[disc].dtype] = true end
       end
       discovery[disc] = { ['dtype']=dType, ['cnl']={}, } -- Table of CBus addresses with type as the value
@@ -819,14 +865,14 @@ local function addDiscover(net, app, group, channel, tags, name)
     cover = {
       getPayload = function()
         cover[alias] = true
+        if _L.rate[2] == nil then _L.rate[2] = _L.rate[1] end
+        mqttDevices[alias].rate = _L.rate
+        mqttDevices[alias].delay = _L.delay
         if special.noleveltranslate then
           mqttDevices[alias].noleveltranslate = true
           return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
         else
           mqttDevices[alias].noleveltranslate = false
-          if _L.rate[2] == nil then _L.rate[2] = _L.rate[1] end
-          mqttDevices[alias].rate = _L.rate
-          mqttDevices[alias].delay = _L.delay
           if not hasMembers(_L.rate) then log('Warning: No cover open/cose rate specified for '..alias..'. Transition tracking disabled.') end
           if coverLevel[alias] == nil then coverLevel[alias] = grp.getvalue(alias) log('Warning: Initialising cover level for '..alias..' with '..grp.getvalue(alias)..'. This may not be correct.') end
           return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/open', set_pos_t = mqttWriteTopic..alias..'/ramp',}
@@ -1005,7 +1051,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   local entity = getEntity(_L.pn)
   local objId if not entityIdAsIndentifier then objId = oid else objId = (_L.sa..' '..entity:trim()):lower():gsub('[%p%c]',''):gsub(' ','_'):gsub('__','_'):gsub('__','_') end
 
-  if payload ~= nil and payload ~= 'buttons' and payload ~= 'inbound' then -- If payload recieved then publish
+  if payload ~= nil and payload ~= 'buttons' and payload ~= 'inbound' then -- If payload received then publish
     mqttDevices[alias].type = dType
     local name
     if special.exactpn or not removeSaFromStartOfPn then name = _L.pn else name = entity end
@@ -1682,8 +1728,8 @@ local function outstandingMqttMessage()
         log('MQTT error: Invalid message format: '..topic)
 
       elseif parts[6] == 'switch' then
-        if payload == 'ON' then      SetCBusLevel(net, app, group, 255, 0); if logging then log('Payload is ON for '..alias) end
-        elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then log('Payload is OFF for '..alias) end
+        if payload == 'ON' then      grp.write(alias, 255); if logging then log('Payload is ON for '..alias) end
+        elseif payload == 'OFF' then grp.write(alias, 0);   if logging then log('Payload is OFF for '..alias) end
         end
 
       elseif parts[6] == 'select' then
