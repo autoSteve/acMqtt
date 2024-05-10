@@ -301,31 +301,12 @@ end
 --[[
 C-Bus events, only queues a C-Bus message at the end of a ramp
 --]]
-local function hex2float(c)
-  if c == 0 then return 0.0 end
-  local c = string.gsub(string.format("%X", c),"(..)",function (x) return string.char(tonumber(x, 16)) end)
-  local b1,b2,b3,b4 = string.byte(c, 1, 4)
-  local sign = b1 > 0x7F
-  local expo = (b1 % 0x80) * 0x2 + math.floor(b2 / 0x80)
-  local mant = ((b2 % 0x80) * 0x100 + b3) * 0x100 + b4
-  if sign then sign = -1 else sign = 1 end
-  local n if mant == 0 and expo == 0 then n = sign * 0.0 elseif expo == 0xFF then if mant == 0 then n = sign * math.huge else n = 0.0/0.0 end else n = sign * math.ldexp(1.0 + mant / 0x800000, expo - 0x7F) end
-  return n
-end
-
 local function eventCallback(event)
   if mqttDevices[event.dst] then
-    local function setLastLevel(val)
-      if val ~= 0 and val ~= lastLevel[event.dst] then
-        lastLevel[event.dst] = val
-        if logging then log('Set lastLevel to '..val..' for '..event.dst) end
-        storage.set('lastlvl', lastLevel)
-      end
-    end
-
-    local value
-    local ramp
+    local value, ramp
     local parts = string.split(event.dst, '/')
+    local tp = grp.find(event.dst).datatype
+    
     if lighting[parts[2]] then
       value = tonumber(string.sub(event.datahex,1,2),16)
       local target = tonumber(string.sub(event.datahex,3,4),16)
@@ -335,37 +316,43 @@ local function eventCallback(event)
         if value ~= target then return end
       end
     else
-      --[[
-        To consider... (not specifically implemented, the grp.getvalue() level will be read and passed for these)
-        dt.time - 3-byte time / day, table
-        dt.date - 3-byte date, table
-        dt.rgb - RGB color, alias of dt.uint24
-      --]]
-      local tp = grp.find(event.dst).datatype
-      if tp == dt.text then
-        local chars = {} local p for p in event.datahex:gmatch("%x%x") do chars[#chars+1] = string.format('%c', tonumber(p, 16)) end
-        value = table.concat(chars)
-      elseif tp == dt.bool then
-        value = tonumber(event.datahex, 16) == 1
-      elseif tp == dt.uint32 then
-        value = tonumber(event.datahex, 16)
-      elseif tp == dt.int32 then
-        value = (tonumber(event.datahex, 16) + 2^31) % 2^32 - 2^31 -- Convert to twos compliment signed
-      elseif tp == dt.uint16 then
-        value = tonumber(event.datahex, 16)
-      elseif tp == dt.int16 then
-        value = (tonumber(event.datahex, 16) + 2^15) % 2^16 - 2^15 -- Convert to twos compliment signed
-      elseif tp == dt.float32 then
-        --If LUA >=5.3, but alas, one day... For now, use ancient function above: value = string.unpack('f', string.pack('i4', '0x'..string.sub(event.datahex, 1, 8)))
-        value = hex2float(tonumber(string.sub(event.datahex, 1, 8), 16)) -- Only the first eight characters of datahex are needed (measurement and user parameter add additional data)
-      else -- Unknown, so abort the set
+      local function hex2float(raw)
+        if tonumber(raw, 16) == 0 then return 0.0 end
+        local raw = string.gsub(raw, "(..)", function (x) return string.char(tonumber(x, 16)) end)
+        local byte1, byte2, byte3, byte4 = string.byte(raw, 1, 4)
+        local sign = byte1 > 0x7F
+        local exponent = (byte1 % 0x80) * 0x02 + math.floor(byte2 / 0x80)
+        local mantissa = ((byte2 % 0x80) * 0x100 + byte3) * 0x100 + byte4
+        if sign then sign = -1 else sign = 1 end
+        local n if mantissa == 0 and exponent == 0 then n = sign * 0.0 elseif exponent == 0xFF then if mantissa == 0 then n = sign * math.huge else n = 0.0/0.0 end else n = sign * math.ldexp(1.0 + mantissa / 0x800000, exponent - 0x7F) end
+        return n
+      end
+
+      local convert = {
+        [dt.text]    = function () return(string.gsub(event.datahex, "(..)", function (x) return string.char(tonumber(x, 16)) end)) end, -- Convert string of hex to string of chars
+        [dt.string]  = function () return(string.gsub(event.datahex, "(..)", function (x) return string.char(tonumber(x, 16)) end)) end,
+        [dt.uint32]  = function () return(tonumber(event.datahex, 16)) end,
+        [dt.uint16]  = function () return(tonumber(event.datahex, 16)) end,
+        [dt.uint8]   = function () return(tonumber(event.datahex, 16)) end,
+        [dt.int64]   = function () return((tonumber(event.datahex, 16) + 2^63) % 2^64 - 2^63) end, -- Convert to twos compliment signed
+        [dt.int32]   = function () return((tonumber(event.datahex, 16) + 2^31) % 2^32 - 2^31) end,
+        [dt.int16]   = function () return((tonumber(event.datahex, 16) + 2^15) % 2^16 - 2^15) end,
+        [dt.int8]    = function () return((tonumber(event.datahex, 16) + 2^7) % 2^8 - 2^7) end,
+        [dt.bool]    = function () return(tonumber(event.datahex, 16) == 1) end,
+        [dt.float32] = function () return(hex2float(string.sub(event.datahex, 1, 8))) end, -- Only the first eight characters of datahex are needed (measurement and user parameter add additional data)
+        -- If LUA >= 5.3, would not need hex2float... Instead return(string.unpack('f', string.pack('i4', '0x'..string.sub(event.datahex, 1, 8))))
+        -- To consider, currently unsupported... dt.time, dt.date, dt.rgb/dt.uint24, dt.float16
+      }
+      if convert[tp] ~= nil then
+        value = convert[tp]()
+      else
         log('Error: Unsupported data type '..dt..' for '..event.dst..', content of datahex '..event.datahex..' not setting')
         return
       end
     end
     if value == nil then log('Error: nil value for '..event.dst..', which should not happen, ignoring') return end
     local pre, comp
-    if type(value) == 'number' then
+    if tp == dt.float32 then -- Compare to five decimal places, because floats are an approximation
       if mqttDevices[event.dst].value ~= nil then pre = string.format('%.5f', mqttDevices[event.dst].value) else pre = nil end
       comp = string.format('%.5f', value)
     else
@@ -383,6 +370,14 @@ local function eventCallback(event)
     cbusMessages[#cbusMessages + 1] = event.dst.."/"..value -- Queue the event
 
     -- Check whether to set the level as a tracked lastlevel
+    local function setLastLevel(val)
+      if val ~= 0 and val ~= lastLevel[event.dst] then
+        lastLevel[event.dst] = val
+        if logging then log('Set lastLevel to '..val..' for '..event.dst) end
+        storage.set('lastlvl', lastLevel)
+      end
+    end
+
     if lighting[parts[2]] then
       if useLastLevel then
         setLastLevel(value)
