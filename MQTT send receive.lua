@@ -373,7 +373,7 @@ local function eventCallback(event)
     end
     if logging then log('Setting '..event.dst..' to '..tostring(value)..', previous='..tostring(mqttDevices[event.dst].value)) end
     mqttDevices[event.dst].value = value
-    if type(value) == 'boolean' then value = value and 1 or 0 end
+    if type(value) == 'boolean' then value = value and 'ON' or 'OFF' end
     cbusMessages[#cbusMessages + 1] = event.dst.."/"..value -- Queue the event
 
     -- Check whether to set the level as a tracked lastlevel
@@ -415,12 +415,19 @@ local function publish(alias, app, level, noPre)
       if level == 5 then level = -1 end
     end
   else
-    state = (tonumber(level) ~= 0) and 'ON' or 'OFF'
+    if tonumber(level) ~= nil then
+      state = (tonumber(level) ~= 0) and 'ON' or 'OFF'
+    elseif type(level) == 'boolean' then
+      state = level and 'ON' or 'OFF'
+    else
+      state = level
+    end
   end
   if not userParameter[alias] then
     if not binarySensor[alias] then
       if bSensor[alias] then -- It's a bSensor
         client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
+        client:publish(mqttReadTopic..alias..'/state', level, mqttQoS, RETAIN)
         if logging then log('Publishing '..mqttReadTopic..alias..' to '..level) end
       elseif selects[alias] then -- It's a select
         local l
@@ -1714,8 +1721,8 @@ local function outstandingMqttMessage()
         log('MQTT error: Invalid message format: '..topic)
 
       elseif parts[6] == 'switch' then
-        if payload == 'ON' then      SetCBusLevel(net, app, group, 255, 0); if logging then log('Payload is ON for '..alias) end
-        elseif payload == 'OFF' then SetCBusLevel(net, app, group, 0, 0);   if logging then log('Payload is OFF for '..alias) end
+        if payload == 'ON' then      grp.write(alias, 255); if logging then log('Payload is ON for '..alias) end
+        elseif payload == 'OFF' then grp.write(alias, 0);   if logging then log('Payload is OFF for '..alias) end
         end
 
       elseif parts[6] == 'select' then
