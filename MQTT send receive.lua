@@ -351,6 +351,10 @@ local function eventCallback(event)
         value = tonumber(event.datahex, 16)
       elseif tp == dt.int32 then
         value = (tonumber(event.datahex, 16) + 2^31) % 2^32 - 2^31 -- Convert to twos compliment signed
+      elseif tp == dt.uint16 then
+        value = tonumber(event.datahex, 16)
+      elseif tp == dt.int16 then
+        value = (tonumber(event.datahex, 16) + 2^15) % 2^16 - 2^15 -- Convert to twos compliment signed
       elseif tp == dt.float32 then
         --If LUA >=5.3, but alas, one day... For now, use ancient function above: value = string.unpack('f', string.pack('i4', '0x'..string.sub(event.datahex, 1, 8)))
         value = hex2float(tonumber(string.sub(event.datahex, 1, 8), 16)) -- Only the first eight characters of datahex are needed (measurement and user parameter add additional data)
