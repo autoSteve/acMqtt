@@ -369,7 +369,7 @@ local function eventCallback(event)
     end
     if comp == pre then -- Don't publish if already at the level
       if logging then log('Not setting '..event.dst..' to '..value..', same as previous value') end
-      if logging then log('Content of datahex: '..event.datahex..'. Type='..tp..'. pre='..pre..'. comp='..comp) end
+      if logging then log('Content of datahex: '..event.datahex..'. Type='..grp.find(event.dst).datatype..'. pre='..pre..'. comp='..comp) end
       return
     end
     if logging then log('Setting '..event.dst..' to '..tostring(value)..', previous='..tostring(mqttDevices[event.dst].value)) end
