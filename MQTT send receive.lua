@@ -851,14 +851,14 @@ local function addDiscover(net, app, group, channel, tags, name)
     cover = {
       getPayload = function()
         cover[alias] = true
+        if _L.rate[2] == nil then _L.rate[2] = _L.rate[1] end
+        mqttDevices[alias].rate = _L.rate
+        mqttDevices[alias].delay = _L.delay
         if special.noleveltranslate then
           mqttDevices[alias].noleveltranslate = true
           return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
         else
           mqttDevices[alias].noleveltranslate = false
-          if _L.rate[2] == nil then _L.rate[2] = _L.rate[1] end
-          mqttDevices[alias].rate = _L.rate
-          mqttDevices[alias].delay = _L.delay
           if not hasMembers(_L.rate) then log('Warning: No cover open/cose rate specified for '..alias..'. Transition tracking disabled.') end
           if coverLevel[alias] == nil then coverLevel[alias] = grp.getvalue(alias) log('Warning: Initialising cover level for '..alias..' with '..grp.getvalue(alias)..'. This may not be correct.') end
           return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/open', set_pos_t = mqttWriteTopic..alias..'/ramp',}
