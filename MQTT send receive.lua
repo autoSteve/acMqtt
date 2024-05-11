@@ -355,18 +355,15 @@ local function eventCallback(event)
       end
     end
     if value == nil then log('Error: nil value for '..event.dst..', which should not happen, ignoring') return end
-    local pre, comp
-    if tp == dt.float32 then -- Compare to five decimal places, because floats are an approximation
+    if tp == dt.float32 then -- For floats don't set if this event is the same value. Compare to five decimal places, because these are an approximation
+      local pre, comp
       if mqttDevices[event.dst].value ~= nil then pre = string.format('%.5f', mqttDevices[event.dst].value) else pre = nil end
       comp = string.format('%.5f', value)
-    else
-      pre = mqttDevices[event.dst].value
-      comp = value
-    end
-    if comp == pre then -- Don't publish if already at the level
-      if logging then log('Not setting '..event.dst..' to '..value..', same as previous value') end
-      if logging then log('Content of datahex: '..event.datahex..'. Type='..grp.find(event.dst).datatype..'. pre='..pre..'. comp='..comp) end
-      return
+      if comp == pre then
+        if logging then log('Not setting '..event.dst..' to '..value..', same as previous value') end
+        if logging then log('Content of datahex: '..event.datahex..'. Type='..grp.find(event.dst).datatype..'. pre='..pre..'. comp='..comp) end
+        return
+      end
     end
     if logging then log('Setting '..event.dst..' to '..tostring(value)..', previous='..tostring(mqttDevices[event.dst].value)) end
     mqttDevices[event.dst].value = value
