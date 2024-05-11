@@ -420,8 +420,8 @@ local function publish(alias, app, level, noPre)
     if tonumber(level) ~= nil then
       state = (tonumber(level) ~= 0) and 'ON' or 'OFF'
     elseif type(level) == 'boolean' then
-      if level then level = 255 else level = 0 end
-      state = level and 'ON' or 'OFF'
+      level = level and 'ON' or 'OFF'
+      state = level
     else
       state = level
     end
