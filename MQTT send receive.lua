@@ -784,7 +784,7 @@ local function addDiscover(net, app, group, channel, tags, name)
 
   local function addCommonPayload(payload, oid, entity, name, objId)
     -- Add payload common to all
-    payload.name = ''
+    payload.name = nil
     payload.obj_id = objId
     payload.uniq_id = oid
     payload.avty_t = mqttCbus..'status'
