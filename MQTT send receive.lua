@@ -784,12 +784,13 @@ local function addDiscover(net, app, group, channel, tags, name)
 
   local function addCommonPayload(payload, oid, entity, name, objId)
     -- Add payload common to all
-    payload.name = ''
     payload.obj_id = objId
     payload.uniq_id = oid
     payload.avty_t = mqttCbus..'status'
     payload.dev = { name=name, ids=_L.sa..' '..entity:trim(), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
     if _L.img ~= '' then payload.ic = _L.img end
+    payload = json.encode(payload):sub(1, -2) -- Convert to JSON, removing the last '}'
+    payload = payload..',"name":null}' -- Force a 'null' name to be present in the payload
     return payload
   end
 
@@ -818,14 +819,13 @@ local function addDiscover(net, app, group, channel, tags, name)
 
   local function publish(payload, oid, entity, name, objId)
     -- Publish to MQTT broker
-    local j = json.encode(payload)
     if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
     if logging then log('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa) end
     if discoveryName[oid] ~= nil and discoveryName[oid] ~= name then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
     if forceChangeId then
       if discoveryId[oid] ~= nil and discoveryId[oid] ~= objId then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
     end
-    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', j, mqttQoS, RETAIN)
+    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', payload, mqttQoS, RETAIN)
   end
 
   -- Build an OID (measurement application / unit parameter gets a channel as well), also add to mqttDevices
