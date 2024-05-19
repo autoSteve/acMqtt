@@ -784,13 +784,13 @@ local function addDiscover(net, app, group, channel, tags, name)
 
   local function addCommonPayload(payload, oid, entity, name, objId)
     -- Add payload common to all
+    payload.name = json.null
     payload.obj_id = objId
     payload.uniq_id = oid
     payload.avty_t = mqttCbus..'status'
     payload.dev = { name=name, ids=_L.sa..' '..entity:trim(), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
     if _L.img ~= '' then payload.ic = _L.img end
-    payload = json.encode(payload):sub(1, -2) -- Convert to JSON, removing the last '}'
-    payload = payload..',"name":null}' -- Force a 'null' name to be present in the payload
+    payload = json.encode(payload)
     return payload
   end
 
