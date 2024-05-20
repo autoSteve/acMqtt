@@ -44,6 +44,32 @@ Lighting, measurement, user parameter, unit parameter and trigger control applic
 
 **Note**: All keywords are case sensitive.
 
+#### TL>DR examples
+
+* MQTT, light, sa=Outside, pn=Outside Laundry Door Light
+* MQTT, switch, sa=Bathroom 1, img=mdi:radiator, 
+* MQTT, fan_pct, preset, sa=Hutch, img=mdi:ceiling-fan,      *(a L5501RFCP sweep fan controller group)*
+* MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
+* MQTT, cover, sa=Bathroom 2, img=mdi:blinds, rate=15.9/16.0
+* MQTT, cover, sa=Bathroom 2, img=mdi:blinds, noleveltranslate
+* MQTT, select, sa=Bathroom 2, lvl=0/137/255, 
+* MQTT, select, sa=Bathroom 2, lvl=Closed/Half open/Open, 
+* MQTT, select, sa=Bathroom 2, lvl=Closed:0/Half open:137/Open:255, 
+* MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
+* MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
+* MQTT, button, sa=Entry / Egress, lvl=0/1/2/5/127, pn=Inside      *(a trigger control group with various levels)*
+* MQTT, button, sa=Outside, img=mdi:gate-open,      *(a lighting group button to open a gate)*
+* MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
+* MQTT, sensor, sa=Family room, pn=Alarm state, lvl=Disarmed:0/Armed:1,       *(a lighting group sensor to display alarm state)*
+
+For the bsensor example of a carport motion sensor, set up a CBus group address on the PIR unit to trigger on movement with a short timer like 5s in a block entry and then add the MQTT keywords to that group.
+
+For some PIR sensors, like the 5753PEIRL the light level may be broadcast periodically to a group address. Getting this into HomeAssistant as a percentage is then trivial with keywords like these:
+
+* MQTT, sensor, sa=Carport, pn=Carport Light Level, unit=%, dec=0, scale=0.390625,
+
+#### The details
+
 Add the keyword 'MQTT' to groups for CBus discovery, plus...
 
 A type of light, fan, fan_pct (or fanpct), cover, select, sensor, switch, binary_sensor (or binarysensor), bsensor, isensor or button (default if not specified is 'light').
@@ -165,30 +191,6 @@ local imgDefault = { -- Defaults for images - Simple image name, or a table of '
   ['gate']        = {['open'] = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
 }
 ```
-
-#### Keyword examples
-
-* MQTT, light, sa=Outside, pn=Outside Laundry Door Light
-* MQTT, switch, sa=Bathroom 1, img=mdi:radiator, 
-* MQTT, fan_pct, preset, sa=Hutch, img=mdi:ceiling-fan, 
-* MQTT, fan, sa=Hutch, img=mdi:ceiling-fan, 
-* MQTT, cover, sa=Bathroom 2, img=mdi:blinds, rate=15.9/16.0
-* MQTT, cover, sa=Bathroom 2, img=mdi:blinds, noleveltranslate
-* MQTT, select, sa=Bathroom 2, lvl=0/137/255, 
-* MQTT, select, sa=Bathroom 2, lvl=Closed/Half open/Open, 
-* MQTT, select, sa=Bathroom 2, lvl=Closed:0/Half open:137/Open:255, 
-* MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1, 
-* MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000, 
-* MQTT, button, sa=Entry / Egress, lvl=0/1/2/5/127, pn=Inside      *(a trigger control group with various levels)*
-* MQTT, button, sa=Outside, img=mdi:gate-open,      *(a lighting group button to open a gate)*
-* MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion
-* MQTT, sensor, sa=Family room, pn=Alarm state, lvl=Disarmed:0/Armed:1,       *(a lighting group sensor to display alarm state)*
-
-For the bsensor example of a carport motion sensor, set up a CBus group address on the PIR unit to trigger on movement with a short timer like 5s in a block entry and then add the MQTT keywords to that group.
-
-For some PIR sensors, like the 5753PEIRL the light level may be broadcast periodically to a group address. Getting this into HomeAssistant as a percentage is then trivial with keywords like these:
-
-* MQTT, sensor, sa=Carport, pn=Carport Light Level, unit=%, dec=0, scale=0.390625,
 
 #### Variables at the top of the script
 Aside from the obvious local broker, change checking, and Airtopia, Panasonic and ESPhome support variables at the stop of the script, there are three script behaviour modifying variables. These can be important to select individual preferences.
