@@ -384,15 +384,12 @@ local function eventCallback(event)
       if useLastLevel then
         setLastLevel(value)
       else
-        if storeLevel ~= nil then
-          if storeLevel[event.dst] then setLastLevel(value) end
-        else
-          if storage.get('lastlvl') then storage.delete('lastlvl') end
-        end
+        if storeLevel ~= nil and storeLevel[event.dst] then setLastLevel(value) end
       end
     end
   elseif (panasonicSupport and ac[event.dst]) or (airtopiaSupport and at[event.dst]) then
     local parts = string.split(event.dst, '/')
+    local value
     local tp = grp.find(event.dst).datatype
     if convertDatahex[tp] ~= nil then
       value = convertDatahex[tp](event.datahex)
@@ -2001,10 +1998,10 @@ local function outstandingCbusMessage()
     alias = cmd.alias
 
     if panasonicSupport and ac[alias] then -- AC message to MQTT (no ramping involved for AC groups)
-      stat, err = pcall(publishAc, alias, cmd.channel, ac[alias].select)
+      stat, err = pcall(publishAc, alias, cmd.value, ac[alias].select)
       if not stat then log(err) end
     elseif airtopiaSupport and at[alias] then -- AT message to MQTT (no ramping involved for AT groups)
-      stat, err = pcall(publishAt, alias, cmd.channel)
+      stat, err = pcall(publishAt, alias, cmd.value)
       if not stat then log(err) end
     else -- CBus message to MQTT
       if cmd.app ~= 228 and cmd.app ~= 255 then -- i.e. not measurement application / unit parameter
