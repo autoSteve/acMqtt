@@ -392,10 +392,16 @@ local function eventCallback(event)
       end
     end
   elseif (panasonicSupport and ac[event.dst]) or (airtopiaSupport and at[event.dst]) then
-    local value = grp.getvalue(event.dst)
+    local parts = string.split(event.dst, '/')
+    local tp = grp.find(event.dst).datatype
+    if convertDatahex[tp] ~= nil then
+      value = convertDatahex[tp](event.datahex)
+    else
+      log('Error: Unsupported data type '..dt..' for '..event.dst..', content of datahex '..event.datahex..', not setting')
+      return
+    end
     if logging then log('Setting '..event.dst..' to '..value) end
     cbusMessages[#cbusMessages + 1] = { ['alias']=event.dst, ['net']=tonumber(parts[1]), ['app']=tonumber(parts[2]), ['group']=tonumber(parts[3]), ['value']=value, }
-    if parts[4] ~= nil then cbusMessages[#cbusMessages].channel = tonumber(parts[4]) end
   end
 end
 
