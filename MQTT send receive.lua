@@ -368,7 +368,8 @@ local function eventCallback(event)
     if logging then log('Setting '..event.dst..' to '..tostring(value)..', previous='..tostring(mqttDevices[event.dst].value)) end
     mqttDevices[event.dst].value = value
     if type(value) == 'boolean' then value = value and 'ON' or 'OFF' end
-    cbusMessages[#cbusMessages + 1] = event.dst.."/"..value -- Queue the event
+    cbusMessages[#cbusMessages + 1] = { ['alias']=event.dst, ['net']=tonumber(parts[1]), ['app']=tonumber(parts[2]), ['group']=tonumber(parts[3]), ['value']=value, }
+    if parts[4] ~= nil then cbusMessages[#cbusMessages].channel = tonumber(parts[4]) end
 
     -- Check whether to set the level as a tracked lastlevel
     local function setLastLevel(val)
@@ -383,17 +384,21 @@ local function eventCallback(event)
       if useLastLevel then
         setLastLevel(value)
       else
-        if storeLevel ~= nil then
-          if storeLevel[event.dst] then setLastLevel(value) end
-        else
-          if storage.get('lastlvl') then storage.delete('lastlvl') end
-        end
+        if storeLevel ~= nil and storeLevel[event.dst] then setLastLevel(value) end
       end
     end
   elseif (panasonicSupport and ac[event.dst]) or (airtopiaSupport and at[event.dst]) then
-    local value = grp.getvalue(event.dst)
+    local parts = string.split(event.dst, '/')
+    local value
+    local tp = grp.find(event.dst).datatype
+    if convertDatahex[tp] ~= nil then
+      value = convertDatahex[tp](event.datahex)
+    else
+      log('Error: Unsupported data type '..dt..' for '..event.dst..', content of datahex '..event.datahex..', not setting')
+      return
+    end
     if logging then log('Setting '..event.dst..' to '..value) end
-    cbusMessages[#cbusMessages + 1] = event.dst.."/"..value -- Queue the event
+    cbusMessages[#cbusMessages + 1] = { ['alias']=event.dst, ['net']=tonumber(parts[1]), ['app']=tonumber(parts[2]), ['group']=tonumber(parts[3]), ['value']=value, }
   end
 end
 
@@ -1987,33 +1992,26 @@ end
 Publish the next queued messages for MQTT
 --]]
 local function outstandingCbusMessage()
-  local cmd, stat, err, parts, alias, final
+  local cmd, stat, err, alias, final
 
   for _, cmd in ipairs(cbusMessages) do
-    parts = string.split(cmd, '/')
-    alias = parts[1]..'/'..parts[2]..'/'..parts[3]
+    alias = cmd.alias
 
     if panasonicSupport and ac[alias] then -- AC message to MQTT (no ramping involved for AC groups)
-      stat, err = pcall(publishAc, alias, parts[4], ac[alias].select)
+      stat, err = pcall(publishAc, alias, cmd.value, ac[alias].select)
       if not stat then log(err) end
     elseif airtopiaSupport and at[alias] then -- AT message to MQTT (no ramping involved for AT groups)
-      stat, err = pcall(publishAt, alias, parts[4])
+      stat, err = pcall(publishAt, alias, cmd.value)
       if not stat then log(err) end
     else -- CBus message to MQTT
-      local net = tonumber(parts[1]) local app = tonumber(parts[2]) local group = tonumber(parts[3]);
-      if app ~= 228 and app ~= 255 then -- i.e. not measurement application / unit parameter
-        local payload = tonumber(parts[4]) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
-        if not lighting[parts[2]] then -- Possibly a string payload for user parameter
+      if cmd.app ~= 228 and cmd.app ~= 255 then -- i.e. not measurement application / unit parameter
+        local payload = tonumber(cmd.value) -- Always a number for lighting app, but payload could be nil for user param at this point if a string
+        if not lighting[tostring(cmd.app)] then -- Possibly a string payload for user parameter
           if payload == nil then
-            payload = parts[4]
-            local pt = 5 -- Accommodate an unlimited number of slashes in a string payload
-            while parts[pt] ~= nil do
-              payload = payload..'/'..parts[pt]
-              pt = pt + 1
-            end
+            payload = cmd.value
           end
         end
-        stat, err = pcall(publish, alias, app, payload) if not stat then log(err) end
+        stat, err = pcall(publish, alias, cmd.app, payload) if not stat then log(err) end
         if cover[alias] and not mqttDevices[alias].noleveltranslate and hasMembers(mqttDevices[alias].rate) then
           if not transition[alias] then
             if payload == 0 then transition[alias] = { state='closing', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to open') end
@@ -2026,12 +2024,10 @@ local function outstandingCbusMessage()
             end
           end
         end
-      elseif app == 228 then -- Special case for measurement app
-        alias = alias..'/'..parts[4]
-        stat, err = pcall(publishMeasurement, alias, net, group, tonumber(parts[4]), tonumber(parts[5])) if not stat then log(err) end
-      elseif app == 255 then -- Special case for unit param
-        alias = alias..'/'..parts[4]
-        stat, err = pcall(publishUnitParam, alias, tonumber(parts[5])) if not stat then log(err) end
+      elseif cmd.app == 228 then -- Special case for measurement app
+        stat, err = pcall(publishMeasurement, alias, cmd.net, cmd.group, cmd.channel, tonumber(cmd.value)) if not stat then log(err) end
+      elseif cmd.app == 255 then -- Special case for unit param
+        stat, err = pcall(publishUnitParam, alias, tonumber(cmd.value)) if not stat then log(err) end
       end
     end
   end
@@ -2109,30 +2105,7 @@ if panasonicSupport then cud[#cud + 1] = { name = 'Panasonic', func = cudAc, ini
 if airtopiaSupport then cud[#cud + 1] = { name = 'Airtopia', func = cudAt, init = false } end
 
 local i, c
-for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function
-
-local function validateIncoming(cmd) -- Reject any weird socket messages received
-  if cmd:contains('>') then
-    local incoming = string.split(cmd, '>')
-    local _, count = incoming[1]:gsub('/', ''); if count < 2 or count > 3 then return false end
-    local parts = string.split(incoming[1], '/')
-    local payload = incoming[2]
-    local dstC, n
-    if parts[2] and (parts[2] == '228' or parts[2] == '255') then dstC = 4 else dstC = 3 end -- Measurement/Unit param app is four dest parts, else three
-    if payload == nil then return false end
-    for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dest parts are not whole decimal numbers
-    return true
-  else
-    local _, count = cmd:gsub('/', ''); if count < 3 or count > 4 then return false end
-    local parts = string.split(cmd, '/')
-    local dstC, payload, n
-    if parts[2] and (parts[2] == '228' or parts[2] == '255') then dstC = 4; payload = parts[5] else dstC = 3; payload = parts[4] end -- Measurement/Unit param app is four dest parts, else three
-    if payload == nil then return false end
-    for i = 1,dstC,1 do n = tonumber(parts[i], 10); if n == nil then return false end end -- Test whether any dest parts are not whole decimal numbers
-    return true
-  end
-  return false
-end
+for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function, spread evenly over the check changes interval
 
 local warningTimeout = 30
 local timeout = 1
