@@ -47,10 +47,9 @@ local mqttJunk = true        -- Whether to publish junk before a blank publish m
 --[[
 Timing variables. Adjust to taste if you know what you're doing. These provide a good compromise, but your deployment may vary.
 --]]
-local busTimeout = 0.1       -- Lower = higher CPU, but better responsiveness (0 .05 = 1/20th of a second or 50ms, 0.005 = 5ms)
+local busTimeout = 0.1       -- Lower = higher CPU, but better responsiveness (0.05 = 1/20th of a second or 50ms, 0.005 = 5ms)
 local mqttTimeout = 0        -- In milliseconds, go with zero unless you know what you're doing
 local ignoreTimeout = 2      -- Timeout for stale MQTT ignore messages in seconds (two seconds is a long time...)
-local rampTimeout = 5        -- Time beyond ramp to declare a ramp orphan in seconds (legacy firmware only)
 
 --[[
 Topic prefixes for read/write/publish. The mqttDiscovery topic is recommended to be set to 'homeassistant/'
@@ -88,7 +87,6 @@ local cbusMessages = {}      -- Message queue
 local mqttMessages = {}      -- Message queue
 local ignoreCbus = {}        -- To prevent message loops
 local ignoreMqtt = {}        -- To prevent message loops
-local ramp = {}              -- Keeps track of ramping to ignore some zero level MQTT publish events outstandingCbusMessage()
 local triggers = {}          -- Trigger groups and their levels
 local selects = {}           -- Select groups and their options/levels
 local inbound = {}           -- Sensors from Home Assistant
@@ -2032,26 +2030,6 @@ local function outstandingCbusMessage()
     end
   end
   cbusMessages = {}
-end
-
-
---[[
-Remove any orphaned ramp flags (legacy firmware)
---]]
-local function checkRampOrphans()
-  local k, v; local orphan = {}
-  for k, v in pairs(ramp) do
-    if socket.gettime() > v.ts + v.ramp + rampTimeout then
-      -- Is an older ramp timestamp beyond ramp duration plus margin (should never occur, but does occasionally when set up for firmware < 1.15.0).
-      -- Remove the orphan, and publish the final target, which will be zero.
-      -- Will occur when a ramp to off does not begin with a zero level during the ramp, or if a ramp to zero starts when the group is already at zero.
-      orphan[#orphan + 1] = k
-      local parts = string.split(k, '/')
-      local net = tonumber(parts[1]) local app = tonumber(parts[2]) local group = tonumber(parts[3])
-      publish(k, app, v.target)
-    end
-  end
-  for _, k in ipairs(orphan) do ramp[k] = nil; if logging then log('Removing orphaned ramp for '..k) end end
 end
 
 
