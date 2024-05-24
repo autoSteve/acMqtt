@@ -115,6 +115,7 @@ local imgDefault = {         -- Defaults for images - Simple image name, or a ta
   exhaust         = 'mdi:fan',
   gate            = {open = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
   pir             = 'mdi:motion-sensor',
+  temperature     = 'mdi:thermometer',
 }
 local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
@@ -1028,8 +1029,8 @@ local function addDiscover(net, app, group, channel, tags, name)
   dType = getKeyValue(alias, tags, _L, synonym, special, allow)
   if dType == nil then dType = 'light' end -- Use light as default HomeAssistant type if not specified
   
-  -- Default images for a lighting group
-  if _L.img == '' and lighting[tostring(app)] then
+  -- Default images
+  if _L.img == '' then
     local pnl = _L.pn:lower()
     for k, v in pairs(imgDefault) do
       if pnl:contains(k) then
@@ -1041,7 +1042,13 @@ local function addDiscover(net, app, group, channel, tags, name)
         end
       end
     end
-    if _L.img == '' then _L.img = 'mdi:lightbulb' end
+    if _L.img == '' then
+      if lighting[tostring(app)] then
+        _L.img = 'mdi:lightbulb' -- Lighting default
+      elseif app == '228' or app == '250' or app == '255' then
+        _L.img = 'mdi:eye' -- Measurement and user/unit parameter default
+      end
+    end
   end
 
   if dType == 'light' and app == 228 then dType = 'sensor'; log('Warning: publishing measurement app '..alias..' as a sensor, not light') end -- Measurement app sensor with incorrect/missing type
