@@ -182,13 +182,14 @@ The image keyword "img="" will default to several different "likely" values base
 
 ```
 local imgDefault = { -- Defaults for images - Simple image name, or a table of 'also contains' keywords (which must include an #else entry)
-  ['heat']        = 'mdi:radiator',
-  ['blind']       = 'mdi:blinds',
-  ['under floor'] = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
-  ['towel rail']  = {['enable'] = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
-  ['fan']         = {['sweep'] = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
-  ['exhaust']     = 'mdi:fan',
-  ['gate']        = {['open'] = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
+  heat            = 'mdi:radiator',
+  blind           = 'mdi:blinds',
+  ['under floor'] = {enable = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
+  ['towel rail']  = {enable = 'mdi:radiator-disabled', ['#else'] = 'mdi:radiator'},
+  fan             = {sweep = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
+  exhaust         = 'mdi:fan',
+  gate            = {open = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
+  pir             = 'mdi:motion-sensor',
 }
 ```
 
