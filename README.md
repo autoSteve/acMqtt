@@ -178,7 +178,7 @@ An automation is used to publish Home Assistant values to MQTT so that an isenso
 
 #### Image defaults
 
-The image keyword "img="" will default to several different "likely" values based on name or preferred name keywords. If the script gets it wrong, then add an img= keyword, or contact me by raising an issue for cases where it's stupidly wrong or where other defaults would be handy. Default is mdi:lightbulb for lighting groups. Here's the current set...
+The image keyword "img="" will default to several different "likely" values based on name or preferred name keywords. If the script gets it wrong, then add an img= keyword, or contact me by raising an issue for cases where it's stupidly wrong or where other defaults would be handy. Default is mdi:lightbulb for lighting groups, and mdi:eye for measurement application/user/unit parameter. Here's the current set...
 
 ```
 local imgDefault = { -- Defaults for images - Simple image name, or a table of 'also contains' keywords (which must include an #else entry)
@@ -190,6 +190,7 @@ local imgDefault = { -- Defaults for images - Simple image name, or a table of '
   exhaust         = 'mdi:fan',
   gate            = {open = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
   pir             = 'mdi:motion-sensor',
+  temperature     = 'mdi:thermometer',
 }
 ```
 
