@@ -114,6 +114,7 @@ local imgDefault = {         -- Defaults for images - Simple image name, or a ta
   fan             = {sweep = 'mdi:ceiling-fan', ['#else'] = 'mdi:fan'},
   exhaust         = 'mdi:fan',
   gate            = {open = 'mdi:gate-open', ['#else'] = 'mdi:gate'},
+  pir             = 'mdi:motion-sensor',
 }
 local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
