@@ -291,7 +291,7 @@ client.ON_MESSAGE = function(mid, topic, payload)
     -- Record discovery topics to check for duplication
     local parts = string.split(topic, '/')
     if payload ~= '' then
-      if parts[3]:contains('cbus_mqtt_') then
+      if parts[3] ~= nil and parts[3]:contains('cbus_mqtt_') then
         local j = json.decode(payload)
         local disc = string.split(parts[3], '_')
         local cnl
