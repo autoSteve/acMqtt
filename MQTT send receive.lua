@@ -746,7 +746,7 @@ local function addDiscover(net, app, group, channel, tags, name)
 
   if not name then -- Need a name from tag lookup for everything but measurement app
     if channel == nil then
-      error('Error: nil channel for name '..str(name)..' at '..net..'/'..app..'/'..group..'... a name is required')
+      error('Error: nil channel for name '..tostring(name)..' at '..net..'/'..app..'/'..group..'... a name is required')
     else
       if app == 228 then name = 'Measurement '..alias else name = 'Unit parameter '..alias end
     end
