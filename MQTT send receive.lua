@@ -17,7 +17,7 @@ local environmentSupport = false   -- Monitor keyword 'ENV' for ESPHome environm
 
 --[[
   ** NOTE: This script at one stage relied on an event-based script 'MQTT final' or 'MQTT'. This event script is no longer needed, and can be deleted.
-  ** If named correctly, this resident script will disable the event-based script on startup, but even if it is enabled it will not cause any issue.\
+  ** If named correctly, this resident script will disable the event-based script on startup, but even if it is enabled it will not cause any issue.
 --]]
 
 --[[
@@ -120,7 +120,7 @@ local imgDefault = {         -- Defaults for images - Simple image name, or a ta
 local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
   'MQTT', 'light', 'switch', 'cover', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'isensor', 'button', 'select',
-  'pn=', 'sa=', 'img=', 'unit=', 'class=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=', 'rate=', 'delay=', 'topic=',
+  'pn=', 'sa=', 'img=', 'unit=', 'class=', 'state_class=', 'disco=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=', 'rate=', 'delay=', 'topic=',
   'includeunit', 'preset', 'noleveltranslate', 'exactpn',
 }
 local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end cudRaw = nil
@@ -141,7 +141,7 @@ local NORETAIN = false
 local started = socket.gettime()
 local heartbeat = started
 
--- Runtime global variable checking. Globals must be explicitly declared, which will catch variable name typos
+-- Runtime global variable checking. Globals must be explicitly declared, which will catch most variable name typos.
 local declaredNames = { vprint = true, vprinthex = true, maxgroup = true, mosquitto = true, rr = true, _ = true, }
 local function declare(name, initval) rawset(_G, name, initval) declaredNames[name] = true end
 local exclude = { ngx = true, }
@@ -151,7 +151,7 @@ setmetatable(_G, {
 })
 
 --[[
-Utility funtions
+Utility functions
 --]]
 
 local function len(tbl) local i = 0 for _, _ in pairs(tbl) do i = i + 1 end return i end -- Get number of table members
@@ -190,7 +190,7 @@ local function removeIrrelevant(keywords)
   end
   return table.concat(curr, ',')
 end
-local function hex2float(raw)
+local function hex2float32(raw)
   if tonumber(raw, 16) == 0 then return 0.0 end
   local raw = string.gsub(raw, "(..)", function (x) return string.char(tonumber(x, 16)) end)
   local byte1, byte2, byte3, byte4 = string.byte(raw, 1, 4)
@@ -213,8 +213,8 @@ local convertDatahex = { -- Convert a datahex value to the event type
   [dt.int16]   = function (dh) return((tonumber(dh, 16) + 2^15) % 2^16 - 2^15) end,
   [dt.int8]    = function (dh) return((tonumber(dh, 16) + 2^7) % 2^8 - 2^7) end,
   [dt.bool]    = function (dh) return(tonumber(dh, 16) == 1) end,
-  [dt.float32] = function (dh) return(hex2float(string.sub(dh, 1, 8))) end, -- Only the first eight characters of datahex are needed (measurement and unit parameter add additional data)
-  -- If LUA >= 5.3, would not need hex2float... Instead return(string.unpack('f', string.pack('i4', '0x'..string.sub(dh, 1, 8))))
+  [dt.float32] = function (dh) return(hex2float32(string.sub(dh, 1, 8))) end, -- Only the first eight characters of datahex are needed (measurement and unit parameter add additional data)
+  -- If LUA >= 5.3, would not need hex2float32... Instead return(string.unpack('f', string.pack('i4', '0x'..string.sub(dh, 1, 8)))) -- for a float32
   -- To consider, currently unsupported... dt.time, dt.date, dt.rgb/dt.uint24, dt.float16
 }
 
@@ -298,7 +298,7 @@ client.ON_MESSAGE = function(mid, topic, payload)
         if #disc == 6 then
           cnl = disc[6] disc[6] = nil disc = table.concat(disc, '_')
           if discovery[disc] == nil then
-            discovery[disc] = { ['dtype']=parts[2], ['cnl']={ cnl, }, } -- Table of CBus addresses with type as the value, including a list of 'channels'
+            discovery[disc] = { dtype=parts[2], cnl={ cnl, }, } -- Table of CBus addresses with dtype/chnnels as the value
           else
             if #discovery[disc].cnl == 0
               then log('Warning: Existing duplicate discovery topics for '..disc..' ... '..parts[2]..' and '..discovery[disc].dtype..', so removing all')
@@ -316,7 +316,7 @@ client.ON_MESSAGE = function(mid, topic, payload)
             discoveryDelete[disc..'/'..parts[2]] = true
             for _, cnl in ipairs(discovery[disc].cnl) do discoveryDelete[disc..'_'..cnl..'/'..discovery[disc].dtype] = true end
           else
-            discovery[disc] = { ['dtype']=parts[2], ['cnl']={}, } -- Table of CBus addresses with type as the value
+            discovery[disc] = { dtype=parts[2], cnl={}, } -- Table of CBus addresses with dtype/chnnels as the value
           end
         end
         discoveryName[disc] = j.dev.name -- Used for rename detection
@@ -350,12 +350,12 @@ local function eventCallback(event)
       if convertDatahex[tp] ~= nil then
         value = convertDatahex[tp](event.datahex)
       else
-        log('Error: Unsupported data type '..dt..' for '..event.dst..', content of datahex '..event.datahex..', not setting')
+        log('Error: Unsupported data type '..tp..' for '..event.dst..', content of datahex '..event.datahex..', not setting')
         return
       end
     end
     if value == nil then log('Error: nil value for '..event.dst..', which should not happen, ignoring') return end
-    if tp == dt.float32 then -- For floats don't set if this event is the same value. Compare to five decimal places, because these are an approximation
+    if tp == dt.float32 or tp == dt.float16 then -- For floats don't set if this event is the same value. Compare to five decimal places, because floats are an approximation
       local pre, comp
       if mqttDevices[event.dst].value ~= nil then pre = string.format('%.5f', mqttDevices[event.dst].value) else pre = nil end
       comp = string.format('%.5f', value)
@@ -394,7 +394,7 @@ local function eventCallback(event)
     if convertDatahex[tp] ~= nil then
       value = convertDatahex[tp](event.datahex)
     else
-      log('Error: Unsupported data type '..dt..' for '..event.dst..', content of datahex '..event.datahex..', not setting')
+      log('Error: Unsupported data type '..tp..' for '..event.dst..', content of datahex '..event.datahex..', not setting')
       return
     end
     if logging then log('Setting '..event.dst..' to '..value) end
@@ -754,19 +754,21 @@ local function addDiscover(net, app, group, channel, tags, name)
 
   -- All keywords except MQTT are optional (some exceptions), with 'light' as default discovery type. Defaults:
   local _L = {
-    pn = name,      -- Preferred name
-    sa = '',        -- Suggested area
-    img = '',       -- Image
-    unit = '',      -- Units
-    class = '',     -- HomeAssistant class
-    dec = 2,        -- Decimal places
-    scale = 1,      -- Scale (multiplier or divider)
-    on = 'On',      -- bsensor 'on' string
-    off = 'Off',    -- bsensor 'off' string
-    lvl = {},       -- Levels
-    rate = {},      -- Rate of open/close for cover
-    delay = 0,      -- Delay before starting cover tracking
-    topic = '',     -- MQTT topic for inbound sensors
+    pn = name,        -- Preferred name
+    sa = '',          -- Suggested area
+    img = '',         -- Image
+    unit = '',        -- Units
+    class = '',       -- HA class
+    state_class = '', -- HA state_class
+    disco = {},       -- HA generic discovery parameters
+    dec = 2,          -- Decimal places
+    scale = 1,        -- Scale (multiplier or divider)
+    on = 'On',        -- bsensor 'on' string
+    off = 'Off',      -- bsensor 'off' string
+    lvl = {},         -- Levels
+    rate = {},        -- Rate of open/close for cover
+    delay = 0,        -- Delay before starting cover tracking
+    topic = '',       -- MQTT topic for inbound sensors
   }
   local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
   local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false, exactpn = false, }
@@ -795,6 +797,12 @@ local function addDiscover(net, app, group, channel, tags, name)
     payload.avty_t = mqttCbus..'status'
     payload.dev = { name=name, ids=_L.sa..' '..entity:trim(), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
     if _L.img ~= '' then payload.ic = _L.img end
+    if #_L.disco > 0 then
+      for _, raw_param in ipairs(_L.disco) do
+        param = string.split(raw_param, ':')
+        payload[param[1]:trim()] = param[2]:trim()
+      end
+    end
     payload = json.encode(payload)
     return payload
   end
@@ -922,6 +930,7 @@ local function addDiscover(net, app, group, channel, tags, name)
         if channel ~= nil then payload = { stat_t = mqttReadTopic..net..'/'..app..'/'..group..'_'..channel..'/level', } else payload = { stat_t = mqttReadTopic..alias..'/level', } end
         if lighting[tostring(app)] and not special.dec then _L.dec = 0 end
         if _L.class ~= '' then payload.dev_cla = _L.class end
+        if _L.state_class ~= '' then payload.stat_cla = _L.state_class end
         if app == 250 then userParameter[alias] = true end
         if app == 255 then unitParameter[alias] = true end
         if #_L.lvl == 0 then
