@@ -127,6 +127,8 @@ The keyword `disco=` is used to add arbitrary discovery variables to the MQTT di
 
 This keyword allows for any current and future variable to be set where an existing tested keyword may not exist.
 
+Note that `disco=` discovery topic variables will override any discovery variable set by another means (example, set `state_class=total, disco=state_class:measurement,` and the resulting `state_class` will be `measurement`).
+
 #### Cover notes
 
 There are three modes of operation for cover devices.
