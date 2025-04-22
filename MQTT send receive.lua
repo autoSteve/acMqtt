@@ -961,13 +961,20 @@ local function addDiscover(net, app, group, channel, tags, name)
     binary_sensor = {
       getPayload = function()
         binarySensor[alias] = true
-        return {stat_t = mqttReadTopic..alias..'/state', pl_on = 'ON', pl_off = 'OFF',}
+        local payload = {stat_t = mqttReadTopic..alias..'/state', pl_on = 'ON', pl_off = 'OFF',}
+        if _L.class ~= '' then payload.dev_cla = _L.class end
+        if _L.state_class ~= '' then payload.stat_cla = _L.state_class end
+        return payload
       end
     },
     bsensor = {
       getPayload = function()
         bSensor[alias] = true dType = 'sensor'
-        return {stat_t = mqttReadTopic..alias..'/level', val_tpl = '{% if value | float == 0 %} '.._L.off..' {% else %} '.._L.on..' {% endif %}',}
+        local payload
+        payload = {stat_t = mqttReadTopic..alias..'/level', val_tpl = '{% if value | float == 0 %} '.._L.off..' {% else %} '.._L.on..' {% endif %}',}
+        if _L.class ~= '' then payload.dev_cla = _L.class end
+        if _L.state_class ~= '' then payload.stat_cla = _L.state_class end
+        return payload
       end
     },
     isensor = {
