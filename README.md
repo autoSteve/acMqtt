@@ -88,8 +88,8 @@ And in addition to the type...
 * `sa=`     Suggested area
 * `img=`    Image (sensible automated defaults are provided, see below)
 * `pn=`     Preferred name (defaults to CBus group name, however unit parameters have no name, so treat this as mandatory in that special case)
-* `class=`  Device class to use in Home Assistant (User param/sensor/binary_sensor/bsensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
-* `state_class=` State class to use in Home Assistant (User param/sensor/binary_sensor/bsensor only)
+* `class=`  Device class to use in Home Assistant (User param/sensor/binary_sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
+* `state_class=` State class to use in Home Assistant (User param/sensor/binary_sensor only)
 * `disco=`  Custom discovery parameter to add (see below)
 * `dec=`    Decimal places (User param/sensor only)
 * `unit=`   Unit of measurement (User param/sensor only)
@@ -198,7 +198,11 @@ And the keywords: `MQTT, isensor, topic=powerwall/soc,`
 
 #### Image defaults
 
-The image keyword `img=` will default to several different "likely" values based on name or preferred name keywords. If the script gets it wrong, then add an `img=` keyword, or contact me by raising an issue for cases where it's stupidly wrong or where other defaults would be handy. Default is `mdi:lightbulb` for lighting groups, and `mdi:eye` for measurement application/user/unit parameter. Here's the current set...
+The image keyword `img=` will default to several different "likely" values based on name or preferred name words matched. If the script gets it wrong, then add an `img=` keyword, or contact me by raising an issue for cases where it's stupidly wrong or where other defaults would be handy. Default is `mdi:lightbulb` for lighting groups, and `mdi:eye` for measurement application/user/unit parameter.
+
+Note that if a `class=` keyword is specified (for device class), then the image defaults _do not apply_, and instead the image default for the device class in Home Assistant will apply regardless of name or preferred name words matched.
+
+Here's the current set of match words...
 
 ```
 local imgDefault = { -- Defaults for images - Simple image name, or a table of 'also contains' keywords (which must include an #else entry)
