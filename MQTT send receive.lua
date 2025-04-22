@@ -1045,7 +1045,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   if dType == nil then dType = 'light' end -- Use light as default HomeAssistant type if not specified
   
   -- Default images
-  if _L.img == '' then
+  if _L.img == '' and _L.class == '' then
     local pnl = _L.pn:lower()
     for k, v in pairs(imgDefault) do
       if pnl:contains(k) then
