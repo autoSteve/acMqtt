@@ -75,21 +75,21 @@ For some PIR sensors, like the 5753PEIRL the light level may be broadcast period
 
 #### The details
 
-Add the keyword 'MQTT' to groups for CBus discovery, plus...
+Add the keyword `MQTT` to groups for CBus discovery, plus...
 
 A type of `light`, `fan`, `fan_pct` (or `fanpct`), `cover`, `select`, `sensor`, `switch`, `binary_sensor` (or `binarysensor`), `bsensor`, `isensor` or `button` (default if not specified is `light`).
 * `light`, `cover`, `select`, `sensor`, `switch`, `binary_sensor` and `button` are self-explanatory, being the Home Assistant equivalents.
 * Using `cover` by default assumes that a L5501RBCP blind relay is in "level translation mode". Using a select would also work well, with predictable level presets for open, closed, and part open at half way. See the cover notes below for more.
 * The `fan` keyword is specifically for sweep fan controllers like a L5501RFCP. See the sweep fan notes below. (For simple exhaust fans use `switch`.)
-* A `bsensor` is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. Motion detected/Motion not detected.
-* An `isensor` is an inbound sensor, with values subscribed in MQTT topics. Use an automation in Home Assistant to publish sensor vaules to MQTT.
+* A `bsensor` is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. `State is active`/`State is inactive`. This could be used where there is no appropriate `binary_sensor` device class for the use case. (The state in Home Assistant will be of type text, and not a boolean ON/OFF.)
+* An `isensor` is an inbound sensor, with values subscribed in MQTT topics. Use an automation in Home Assistant to publish sensor values to MQTT.
 
 And in addition to the type...
 * `sa=`     Suggested area
 * `img=`    Image (sensible automated defaults are provided, see below)
 * `pn=`     Preferred name (defaults to CBus group name, however unit parameters have no name, so treat this as mandatory in that special case)
-* `class=`  Device class to use in Home Assistant (User param/sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
-* `state_class=` State class to use in Home Assistant (User param/sensor only)
+* `class=`  Device class to use in Home Assistant (User param/sensor/binary_sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
+* `state_class=` State class to use in Home Assistant (User param/sensor/binary_sensor only)
 * `disco=`  Custom discovery parameter to add (see below)
 * `dec=`    Decimal places (User param/sensor only)
 * `unit=`   Unit of measurement (User param/sensor only)
@@ -100,7 +100,7 @@ And in addition to the type...
 * `rate=`   Rate of cover open/close for tracking, see below (cover only)
 * `delay=`  Delay cover tracking, see below (cover only)
 * `topic=`  A MQTT topic to subscribe to (isensor only)
-* Plus the keyword `includeunits` for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, *not* the `unit=` keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without includeunits is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
+* Plus the keyword `includeunits` for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, *not* the `unit=` keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without `includeunits` is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
 * Plus the keyword `preset` in conjunction with `fan_pct` if both a percentage slider and a preset option are desired.
 * Plus the keyword `noleveltranslate` in conjunction with `cover`, see below
 
@@ -198,7 +198,11 @@ And the keywords: `MQTT, isensor, topic=powerwall/soc,`
 
 #### Image defaults
 
-The image keyword `img=` will default to several different "likely" values based on name or preferred name keywords. If the script gets it wrong, then add an `img=` keyword, or contact me by raising an issue for cases where it's stupidly wrong or where other defaults would be handy. Default is `mdi:lightbulb` for lighting groups, and `mdi:eye` for measurement application/user/unit parameter. Here's the current set...
+The image keyword `img=` will default to several different "likely" values based on name or preferred name words matched. If the script gets it wrong, then add an `img=` keyword, or contact me by raising an issue for cases where it's stupidly wrong or where other defaults would be handy. Default is `mdi:lightbulb` for lighting groups, and `mdi:eye` for measurement application/user/unit parameter.
+
+Note that if a `class=` keyword is specified (for device class), then the image defaults _do not apply_, and instead the image default for the device class in Home Assistant will apply regardless of name or preferred name words matched.
+
+Here's the current set of match words...
 
 ```
 local imgDefault = { -- Defaults for images - Simple image name, or a table of 'also contains' keywords (which must include an #else entry)
