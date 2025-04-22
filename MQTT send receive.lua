@@ -758,7 +758,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     sa = '',          -- Suggested area
     img = '',         -- Image
     unit = '',        -- Units
-    class = '',       -- HA class
+    class = '',       -- HA device_class
     state_class = '', -- HA state_class
     disco = {},       -- HA generic discovery parameters
     dec = 2,          -- Decimal places
@@ -964,17 +964,16 @@ local function addDiscover(net, app, group, channel, tags, name)
         local payload = {stat_t = mqttReadTopic..alias..'/state', pl_on = 'ON', pl_off = 'OFF',}
         if _L.class ~= '' then payload.dev_cla = _L.class end
         if _L.state_class ~= '' then payload.stat_cla = _L.state_class end
+        if _L.on ~= 'On' then log('Warning: on= keyword should not be specified for binary_sensor '..alias..', ignored') end
+        if _L.off ~= 'Off' then log('Warning: off= keyword should not be specified for binary_sensor '..alias..', ignored') end
         return payload
       end
     },
     bsensor = {
       getPayload = function()
         bSensor[alias] = true dType = 'sensor'
-        local payload
-        payload = {stat_t = mqttReadTopic..alias..'/level', val_tpl = '{% if value | float == 0 %} '.._L.off..' {% else %} '.._L.on..' {% endif %}',}
-        if _L.class ~= '' then payload.dev_cla = _L.class end
-        if _L.state_class ~= '' then payload.stat_cla = _L.state_class end
-        return payload
+        if _L.class ~= '' then log('Warning: class= keyword should not be specified for bsensor '..alias..', ignored') end
+        return {stat_t = mqttReadTopic..alias..'/level', val_tpl = '{% if value | float == 0 %} '.._L.off..' {% else %} '.._L.on..' {% endif %}',}
       end
     },
     isensor = {
