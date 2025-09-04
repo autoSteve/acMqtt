@@ -30,6 +30,7 @@ Documentation available at https://github.com/autoSteve/acMqtt
 
 --[[
 General configuration variables follow. Change as required, but probably no need to.
+NOTE: If you want to run two instances of this script (like on two automation controllers, then you MUST 1) use a unique mqttClientId, 2) use a unique mqttCbus topic prefix
 --]]
 local logging = false        -- Enable detailed logging
 local logms = false          -- Display timestamp duration of certain operations
@@ -1740,7 +1741,7 @@ local function outstandingMqttMessage()
     local parts = string.split(topic, '/')
 
     -- Messages from CBus write topics
-    if parts[1] == 'cbus' and parts[2] == 'write' then
+    if parts[1] == mqttCbus:gsub('/', '') and parts[2] == 'write' then
       local net = tonumber(parts[3]) local app = tonumber(parts[4]) local group = tonumber(parts[5])
       local alias = net..'/'..app..'/'..group
       if logging then log('Set '..topic..' to '..payload) end
