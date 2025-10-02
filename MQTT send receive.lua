@@ -70,7 +70,7 @@ local reconnect = false      -- Reconnection does not perform a full publish
 local discovery = {}         -- MQTT discovery topics lookup
 local discoveryDelete = {}   -- If duplicate discovery topics are detected on startup then they will be removed
 local discoveryName = {}     -- Device names (used for rename detection)
-local discoveryId = {}       -- Device obj_id (used for rename detection)
+local discoveryId = {}       -- Device def_ent_id (used for rename detection)
 local mqttDevices = {}       -- CBus groups to send MQTT topics for
 local ac = {}                -- Panasonic AC device details
 local acDevices = {}         -- Quick lookup to determine whether an object is an AC device
@@ -321,7 +321,7 @@ client.ON_MESSAGE = function(mid, topic, payload)
           end
         end
         discoveryName[disc] = j.dev.name -- Used for rename detection
-        discoveryId[disc] = j.obj_id -- Used for ID change detection
+        discoveryId[disc] = j.def_ent_id -- Used for ID change detection
       end
     end
   else
@@ -790,10 +790,10 @@ local function addDiscover(net, app, group, channel, tags, name)
     return entity
   end
 
-  local function addCommonPayload(payload, oid, entity, name, objId)
+  local function addCommonPayload(payload, oid, entity, name, entity_id)
     -- Add payload common to all
     payload.name = json.null
-    payload.obj_id = objId
+    payload.def_ent_id = entity_id
     payload.uniq_id = oid
     payload.avty_t = mqttCbus..'status'
     payload.dev = { name=name, ids=_L.sa..' '..entity:trim(), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
@@ -831,13 +831,13 @@ local function addDiscover(net, app, group, channel, tags, name)
     end
   end
 
-  local function publish(payload, oid, entity, name, objId)
+  local function publish(payload, oid, entity, name, entity_id)
     -- Publish to MQTT broker
     if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
     if logging then log('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa) end
     if discoveryName[oid] ~= nil and discoveryName[oid] ~= name then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
     if forceChangeId then
-      if discoveryId[oid] ~= nil and discoveryId[oid] ~= objId then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
+      if discoveryId[oid] ~= nil and discoveryId[oid] ~= entity_id then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
     end
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', payload, mqttQoS, RETAIN)
   end
@@ -1006,10 +1006,10 @@ local function addDiscover(net, app, group, channel, tags, name)
               local entity = getEntity(prefix..tag)
               local name
               if special.exactpn or not removeSaFromStartOfPn then name = prefix..tag else name = entity end
-              local objId if not entityIdAsIndentifier then objId = boid else objId = (_L.sa..' '..entity:trim()):lower():gsub('[%p%c]',''):gsub(' ','_'):gsub('__','_'):gsub('__','_') end
-              payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity, name, objId)
+              local entity_id if not entityIdAsIndentifier then entity_id = boid else entity_id = (_L.sa..' '..entity:trim()):lower():gsub('[%p%c]',''):gsub(' ','_'):gsub('__','_'):gsub('__','_') end
+              payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity, name, entity_id)
               removeOld(dType, boid)
-              publish(payload, boid, entity, name, objId)
+              publish(payload, boid, entity, name, entity_id)
             end
           end
           return 'buttons'
@@ -1073,15 +1073,15 @@ local function addDiscover(net, app, group, channel, tags, name)
   payload = allow[dType].getPayload()
 
   local entity = getEntity(_L.pn)
-  local objId if not entityIdAsIndentifier then objId = oid else objId = (_L.sa..' '..entity:trim()):lower():gsub('[%p%c]',''):gsub(' ','_'):gsub('__','_'):gsub('__','_') end
+  local entity_id if not entityIdAsIndentifier then entity_id = oid else entity_id = (_L.sa..' '..entity:trim()):lower():gsub('[%p%c]',''):gsub(' ','_'):gsub('__','_'):gsub('__','_') end
 
   if payload ~= nil and payload ~= 'buttons' and payload ~= 'inbound' then -- If payload received then publish
     mqttDevices[alias].type = dType
     local name
     if special.exactpn or not removeSaFromStartOfPn then name = _L.pn else name = entity end
-    payload = addCommonPayload(payload, oid, entity, name, objId)
+    payload = addCommonPayload(payload, oid, entity, name, entity_id)
     removeOld(dType, oid)
-    publish(payload, oid, entity, name, objId)
+    publish(payload, oid, entity, name, entity_id)
     mqttDevices[alias].value = grp.getvalue(alias)
     if not oldLightingButton and lightingButton[alias] then -- If changing to a lighting button then clear status topics
       local t = mqttReadTopic..alias..'/state'
@@ -1118,7 +1118,7 @@ local function addAtDiscover(name, sa, unit)
 
   payload = {
     name = '',
-    obj_id = oid,
+    def_ent_id = oid,
     uniq_id = oid,
     avty_t = mqttCbus..'status',
     dev = { name=name, ids=sa..' '..name, sa=sa, mf='Schneider Electric', mdl='Airtopia' },
@@ -1150,7 +1150,7 @@ local function addAtDiscover(name, sa, unit)
   if unit == nil then unit = 'A' end
   payload = {
     name = '',
-    obj_id = oid..'_power',
+    def_ent_id = oid..'_power',
     uniq_id = oid..'_power',
     avty_t = mqttCbus..'status',
     dev = { name=name..' Power Consumption', ids=sa..' '..name..' Power Consumption', sa=sa, mf='Schneider Electric', mdl='Airtopia' },
