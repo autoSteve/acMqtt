@@ -793,7 +793,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   local function addCommonPayload(payload, oid, entity, name, entity_id)
     -- Add payload common to all
     payload.name = json.null
-    payload.def_ent_id = entity_id
+    payload.def_ent_id = dType..'.'..entity_id
     payload.uniq_id = oid
     payload.avty_t = mqttCbus..'status'
     payload.dev = { name=name, ids=_L.sa..' '..entity:trim(), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
@@ -1118,7 +1118,7 @@ local function addAtDiscover(name, sa, unit)
 
   payload = {
     name = '',
-    def_ent_id = oid,
+    def_ent_id = 'climate.'..oid,
     uniq_id = oid,
     avty_t = mqttCbus..'status',
     dev = { name=name, ids=sa..' '..name, sa=sa, mf='Schneider Electric', mdl='Airtopia' },
@@ -1150,7 +1150,7 @@ local function addAtDiscover(name, sa, unit)
   if unit == nil then unit = 'A' end
   payload = {
     name = '',
-    def_ent_id = oid..'_power',
+    def_ent_id = 'sensor.'..oid..'_power',
     uniq_id = oid..'_power',
     avty_t = mqttCbus..'status',
     dev = { name=name..' Power Consumption', ids=sa..' '..name..' Power Consumption', sa=sa, mf='Schneider Electric', mdl='Airtopia' },
