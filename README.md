@@ -44,7 +44,7 @@ Newly added keywords can be regularly detected by both the *MQTT send receive* a
 Checking for changes adds a low workload to the automation controller, so is recommended. I run ten seconds these days without any significant load impact, mostly because my NAC is a crash test dummy for you. Five seconds or less would be a bit too aggresive in my opinion, but again it seems to not add significant load. Maybe do a shorter check interval while setting things up, and then back it off or disable it entirely when your config is stable, adding zero extra load.
 
 ### CBus (*MQTT send receive*)
-Lighting, measurement, user parameter, unit parameter and trigger control applications are implemented. (Unit parameter as a sensor only.)
+Lighting, measurement, user parameter, unit parameter, trigger control and enable applications are implemented. (Unit parameter as a sensor only.)
 
 > [!NOTE]
 > All keywords are case sensitive.
@@ -63,6 +63,7 @@ Lighting, measurement, user parameter, unit parameter and trigger control applic
 * `MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1,`
 * `MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000,`
 * `MQTT, button, sa=Entry / Egress, lvl=0/1/2/5/127, pn=Inside,`      *(a trigger control group with various levels)*
+* `MQTT, switch, sa=Entry / Egress, lvl=0/255`        *(an enable group with various levels)*
 * `MQTT, button, sa=Outside, img=mdi:gate-open,`      *(a lighting group button to open a gate)*
 * `MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion,`
 * `MQTT, sensor, sa=Family room, pn=Alarm state, lvl=Disarmed:0/Armed:1,`       *(a lighting group sensor to display alarm state)*
@@ -94,7 +95,7 @@ And in addition to the type...
 * `dec=`    Decimal places (User param/sensor only)
 * `unit=`   Unit of measurement (User param/sensor only)
 * `scale=`  Multiplier / divider (User param/sensor only)
-* `lvl=`    List of applicable levels, separated by "/" (Trigger button, select and lighting sensors only)
+* `lvl=`    List of applicable levels, separated by "/" (Trigger/Enable button, select and lighting sensors only)
 * `on=`     Preferred value shown in HA for a 'bsensor' ON value (bsensor only)
 * `off=`    Preferred value shown in HA for a 'bsensor' OFF value (bsensor only)
 * `rate=`   Rate of cover open/close for tracking, see below (cover only)
@@ -106,7 +107,7 @@ And in addition to the type...
 
 #### On `lvl=`
 
-Using `lvl=` for trigger control buttons is highly recommended. This will attempt to publish only certain levels, greatly improving discovery performance. If not specified the script will publish all levels having a tag.
+Using `lvl=` for trigger control and enable buttons is highly recommended. This will attempt to publish only certain levels, greatly improving discovery performance. If not specified the script will publish all levels having a tag.
 
 Using `lvl=` for select is mandatory. This defines the selection name and its corresponding CBus level for the group.
 
@@ -162,7 +163,7 @@ Status update smoothness in Home Assistant is dependent on *MQTT send receive* n
 
 #### Button notes
 
-For trigger control buttons the preferred name is used as an optional prefix to the trigger level tag to name the button. Button can be used for both lighting and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
+For trigger control/Enable buttons the preferred name is used as an optional prefix to the level tag to name the button. Button can be used for lighting, enable and trigger control, with lighting group buttons not getting a prefix. Lighting group buttons operate by pulsing the CBus group for one second, acting as a bell press.
 
 #### Sweep fan notes
 
