@@ -442,7 +442,7 @@ local function publish(alias, app, level, noPre)
         local l
         for _, l in ipairs(selects[alias].allLvl) do
           if tonumber(level) <= l.lvl then
-            if selectExact and tonumber(level) ~= l.lvl and app ~= 202 then
+            if selectExact and tonumber(level) ~= l.lvl and app ~= 202 and app ~= 203 then
               -- Current CBus level does not match the select, so optionally adjust the CBus level
               if logging then log('Warning: Forcing level to set for select '..alias..' to nearest level '..l.lvl..' ('..tonumber(level)..' requested, but selectExact=true)') end
               grp.write(alias, l.lvl)
@@ -493,7 +493,7 @@ local function publish(alias, app, level, noPre)
     if logging then log('Publishing '..mqttReadTopic..alias..' to '..v) end
   end
   if not noPre then
-    if app ~= 202 then -- Not trigger
+    if app ~= 202 and app ~= 203 then -- Not trigger or enable
       local p = level
       if tonumber(level) ~= nil then p = string.format('%.3f', level) end
     end
@@ -989,7 +989,7 @@ local function addDiscover(net, app, group, channel, tags, name)
         if lighting[tostring(app)] then
           lightingButton[alias] = true
           return {cmd_t = mqttWriteTopic..alias..'/press',}
-        elseif app == 202 then
+        elseif app == 202 or app == 203 then
           local i
           mqttDevices[alias].trigger = {}
           mqttDevices[alias].type = 'button'
@@ -1547,7 +1547,7 @@ local function cudCBusTopics()
       mqttDevices[alias].keywords = curr
     else
       if mqttDevices[alias].keywords ~= curr then -- Modified group
-        if v.app == 202 then
+        if v.app == 202 or v.app == 203 then
           lvl = nil
           if v.tags.lvl then
             lvl = {} local l local p = string.split(v.tags.lvl, '/')
@@ -1586,7 +1586,7 @@ local function cudCBusTopics()
     local topic, oid, trigger
     if not found[alias] then
       kill[#kill + 1] = alias
-      if v.app == 202 and v.type == 'button' then
+      if (v.app == 202 or v.app == 203) and v.type == 'button' then
         for _, trigger in ipairs(v.trigger) do
           topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
       	  client:publish(topic, '', mqttQoS, RETAIN); log('Removed discovery topic '..topic)
@@ -1685,6 +1685,8 @@ local function outstandingPublish()
         local level = nil;
         if u.app == 202 then
           pcall(function () level = GetTriggerLevel(u.group) end)
+        elseif u.app == 203 then
+          pcall(function () level = GetEnableLevel(u.group) end)
         else
           pcall(function () level = GetCBusLevel(u.net, u.app, u.group) end)
         end
@@ -1757,10 +1759,12 @@ local function outstandingMqttMessage()
         end
 
       elseif parts[6] == 'select' then
-        if app ~= 202 then
-          SetCBusLevel(net, app, group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
-        else
+        if app == 202 then
           SetTriggerLevel(group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
+        elseif app == 203 then
+          SetEnableLevel(group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
+        else
+          SetCBusLevel(net, app, group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
         end
 
       elseif parts[6]:contains('press') and payload == 'PRESS' then -- Lighting group press
