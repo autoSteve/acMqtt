@@ -3,6 +3,7 @@ CBus Automation Controller integration: Home Assistant, MQTT, Philips Hue and mo
 
 Functions:
 * Get Home Assistant talking to CBus, with MQTT discovery to eliminate any manual CBus config in HA
+* Optionally dynamically set eDLT/DLT labels from HA
 * Optionally return to previously set lighting levels when a 'turn on' command is issued (supports very old versions of HA)
 * Optionally include Philips Hue hub devices in CBus scenes, like having 'All Off' from a button or using AC visualisations
 * Optionally Panasonic air conditioners via ESPHome
@@ -14,7 +15,7 @@ Functions:
 
 The pieces of the puzzle include:
 * Home Assistant 'HAOS' running somewhere. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker going (but you could use a separately installed MQTT broker elsewhere on your network and use 'core'). HA Cloud talks to Google Assistant/Alexa, so a subscription is required if you want that.
-* Home Assistant plug-ins: 'Mosquitto broker', and file editor is also handy.
+* Home Assistant plug-ins: 'Mosquitto broker', and file editor or Studio Code Server is also handy.
 * Lua code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2).
 * Keywords added to Automation Controller objects.
 
@@ -41,7 +42,7 @@ Automation controller object keywords are used to tell the scripts which objects
 
 Newly added keywords can be regularly detected by both the *MQTT send receive* and 'HUE send receive' scripts. This is configurable by setting the option `checkForChanges` that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is thirty seconds, and that is also a configurable variable.
 
-Checking for changes adds a low workload to the automation controller, so is recommended. I run ten seconds these days without any significant load impact, mostly because my NAC is a crash test dummy for you. Five seconds or less would be a bit too aggresive in my opinion, but again it seems to not add significant load. Maybe do a shorter check interval while setting things up, and then back it off or disable it entirely when your config is stable, adding zero extra load.
+Checking for changes adds a low workload to the automation controller, so is recommended. I run ten seconds these days without any significant load impact, mostly because my NAC is a crash test dummy for you. Five seconds or less would be a bit too aggressive in my opinion, but again it seems to not add significant load. Maybe do a shorter check interval while setting things up, and then back it off or disable it entirely when your config is stable, adding zero extra load.
 
 ### CBus (*MQTT send receive*)
 Lighting, measurement, user parameter, unit parameter, trigger control and enable control applications are implemented. (Unit parameter as a sensor only.)
@@ -51,7 +52,7 @@ Lighting, measurement, user parameter, unit parameter, trigger control and enabl
 
 #### TL>DR examples
 
-* `MQTT, light, sa=Outside, pn=Outside Laundry Door Light,`
+* `MQTT, light, sa=Outside, pn=Outside Laundry Door Light, label,`
 * `MQTT, switch, sa=Bathroom 1, img=mdi:radiator,`
 * `MQTT, fan_pct, preset, sa=Hutch, img=mdi:ceiling-fan,`      *(a L5501RFCP sweep fan controller group)*
 * `MQTT, fan, sa=Hutch, img=mdi:ceiling-fan,`
@@ -103,7 +104,8 @@ And in addition to the type...
 * `topic=`  A MQTT topic to subscribe to (isensor only)
 * Plus the keyword `includeunits` for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, *not* the `unit=` keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without `includeunits` is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
 * Plus the keyword `preset` in conjunction with `fan_pct` if both a percentage slider and a preset option are desired.
-* Plus the keyword `noleveltranslate` in conjunction with `cover`, see below
+* Plus the keyword `noleveltranslate` in conjunction with `cover`, see below.
+* Plus the keyword `label`, see below (sets up for eDLT/DLT label changing).
 
 #### On `lvl=`
 
@@ -129,6 +131,46 @@ The keyword `disco=` is used to add arbitrary discovery variables to the MQTT di
 This keyword allows for any current and future variable to be set where an existing tested keyword may not exist.
 
 Note that `disco=` discovery topic variables will override any discovery variable set by another means (example, set `state_class=total, disco=state_class:measurement,` and the resulting `state_class` will be `measurement`).
+
+#### eDLT/DLT dynamic label setting
+
+To set eDLT/DLT screen labels from Home Assistant it is possible to publish a MQTT topic with a payload describing the label to set, which *MQTT send receive* will listen for.
+
+The topic to publish has the form `cbus/write/0/56/16/label`, being set a new label at the 'Local' network, 'Lighting' application, address '16'. To simplify Home Assistant configuration, adding the keyword `label` will create an attribute called `label_topic` that may be referenced in an automation. (Example: `{{ state_attr('light.kitchen_bench_south_lights', 'label_topic') }}`, which will retrieve the correct topic to publish to.) You are, of course free to use a manually constructed topic.
+
+The payload for the MQTT publish action can be as simple as "New label", but a more flexible JSON payload may also be sent. Example:
+
+```
+{
+  "language": "Dutch (Netherlands)",
+  "variant": 2,
+  "label": "New label"
+}
+```
+
+All keys except `"label"` are optional in the JSON form, with `"variant"` defaulting to `1`, and `"language"` defaulting to `"English"`
+
+> [!NOTE]
+>
+> Only publish MQTT topics _without_ the "Retain" option. If messages are published as retained then *MQTT send receive* will re-set the label on startup. (Hopefully restarts are few and far between, but this behaviour may be unwanted.) QOS does not matter, but I prefer to use `2`, deliver exactly once.
+
+An example automation:
+
+```yaml
+alias: test_label_set
+description: ""
+triggers: []
+conditions: []
+actions:
+  - action: mqtt.publish
+    metadata: {}
+    data:
+      evaluate_payload: false
+      qos: "2"
+      payload: "{\"variant\": 1, \"label\": \"Hello world\"}"
+      topic: "{{ state_attr('light.kitchen_bench_south_lights', 'label_topic') }}"
+mode: single
+```
 
 #### Cover notes
 

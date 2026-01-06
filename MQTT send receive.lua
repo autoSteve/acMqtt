@@ -91,6 +91,7 @@ local ignoreMqtt = {}        -- To prevent message loops
 local triggers = {}          -- Trigger groups and their levels
 local selects = {}           -- Select groups and their options/levels
 local inbound = {}           -- Sensors from Home Assistant
+local label = {}             -- Table of aliases having a label keyword
 local cover = {}             -- Quick lookup to determine whether an object is a cover (blind)
 local fan = {}               -- Quick lookup to determine whether an object is a fan (sweep fan)
 local bSensor = {}           -- Quick lookup to determine whether an object is a bsensor (a regular lighting group acting as status)
@@ -122,7 +123,7 @@ local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
   'MQTT', 'light', 'switch', 'cover', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'isensor', 'button', 'select',
   'pn=', 'sa=', 'img=', 'unit=', 'class=', 'state_class=', 'disco=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=', 'rate=', 'delay=', 'topic=',
-  'includeunit', 'preset', 'noleveltranslate', 'exactpn',
+  'includeunit', 'preset', 'noleveltranslate', 'exactpn', 'label'
 }
 local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end cudRaw = nil
 
@@ -772,7 +773,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     topic = '',       -- MQTT topic for inbound sensors
   }
   local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
-  local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false, exactpn = false, }
+  local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false, exactpn = false, label = false }
 
   local lvl = false
   local dType, action, boid, dSa, payload, prefix, tag, k, t
@@ -796,6 +797,9 @@ local function addDiscover(net, app, group, channel, tags, name)
     payload.def_ent_id = dType..'.'..entity_id
     payload.uniq_id = oid
     payload.avty_t = mqttCbus..'status'
+    if special.label then
+      payload.json_attr_t = mqttAttrTopic..oid
+    end
     payload.dev = { name=name, ids=_L.sa..' '..entity:trim(), sa=_L.sa, mf='Schneider Electric', mdl='CBus' }
     if _L.img ~= '' then payload.ic = _L.img end
     if #_L.disco > 0 then
@@ -831,7 +835,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     end
   end
 
-  local function publish(payload, oid, entity, name, entity_id)
+  local function publish(payload, is_boid, oid, entity, name, entity_id)
     -- Publish to MQTT broker
     if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
     if logging then log('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa) end
@@ -840,6 +844,18 @@ local function addDiscover(net, app, group, channel, tags, name)
       if discoveryId[oid] ~= nil and discoveryId[oid] ~= entity_id then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
     end
     client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', payload, mqttQoS, RETAIN)
+    if not is_boid then
+      if special.label then
+        label[alias] = mqttAttrTopic..oid
+        client:publish(mqttAttrTopic..oid, json.encode({label_topic=mqttWriteTopic..alias..'/label'}), mqttQoS, RETAIN)
+      else
+        if label[alias] ~= nil then
+          if mqttJunk then client:publish(mqttAttrTopic..oid, 'junk', mqttQoS, RETAIN) end
+          client:publish(mqttAttrTopic..oid, '', mqttQoS, RETAIN)
+          label[alias] = nil
+        end
+      end
+    end
   end
 
   -- Build an OID (measurement application / unit parameter gets a channel as well), also add to mqttDevices
@@ -1009,7 +1025,17 @@ local function addDiscover(net, app, group, channel, tags, name)
               local entity_id if not entityIdAsIndentifier then entity_id = boid else entity_id = (_L.sa..' '..entity:trim()):lower():gsub('[%p%c]',''):gsub(' ','_'):gsub('__','_'):gsub('__','_') end
               payload = addCommonPayload({ cmd_t = mqttWriteTopic..alias..'/'..action..'/press', }, boid, entity, name, entity_id)
               removeOld(dType, boid)
-              publish(payload, boid, entity, name, entity_id)
+              publish(payload, true, boid, entity, name, entity_id)
+              if special.label then
+                label[alias] = mqttAttrTopic..oid
+                client:publish(mqttAttrTopic..oid, json.encode({label_topic=mqttWriteTopic..alias..'/label'}), mqttQoS, RETAIN)
+              else
+                if label[alias] ~= nil then
+                  if mqttJunk then client:publish(mqttAttrTopic..oid, 'junk', mqttQoS, RETAIN) end
+                  client:publish(mqttAttrTopic..oid, '', mqttQoS, RETAIN)
+                  label[alias] = nil
+                end
+              end
             end
           end
           return 'buttons'
@@ -1081,7 +1107,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     if special.exactpn or not removeSaFromStartOfPn then name = _L.pn else name = entity end
     payload = addCommonPayload(payload, oid, entity, name, entity_id)
     removeOld(dType, oid)
-    publish(payload, oid, entity, name, entity_id)
+    publish(payload, false, oid, entity, name, entity_id)
     mqttDevices[alias].value = grp.getvalue(alias)
     if not oldLightingButton and lightingButton[alias] then -- If changing to a lighting button then clear status topics
       local t = mqttReadTopic..alias..'/state'
@@ -1599,6 +1625,11 @@ local function cudCBusTopics()
           if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
           client:publish(t, '', mqttQoS, RETAIN)
         end
+        if label[alias] ~= nil then
+          if mqttJunk then client:publish(label[alias], 'junk', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
+          client:publish(label[alias], '', mqttQoS, RETAIN)
+          label[alias] = nil
+        end
       else
         topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
       	client:publish(topic, '', mqttQoS, RETAIN); log('Removed discovery topic '..topic)
@@ -1616,6 +1647,11 @@ local function cudCBusTopics()
         if v.type == 'select' then
           if mqttJunk then client:publish(topic..'/select', 'junk', mqttQoS, RETAIN) end
           client:publish(topic..'/select', '', mqttQoS, RETAIN)
+        end
+        if label[alias] ~= nil then
+          if mqttJunk then client:publish(label[alias], 'junk', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
+          client:publish(label[alias], '', mqttQoS, RETAIN)
+          label[alias] = nil
         end
         includeUnits[alias] = nil
       end
@@ -1844,6 +1880,24 @@ local function outstandingMqttMessage()
             SetCBusLevel(net, app, group, toSet, ramp)
           end
           goto next
+        end
+      elseif parts[6] == 'label' then
+        local command = {}
+        local err, stat
+      	stat, err = pcall(function ()
+          command = json.decode(payload)
+          if command.language == nil then command.language = 1 end
+          if command.variant == nil then command.variant = 1 else command.variant = tonumber(command.variant) end
+        end)
+      	if not stat then command = {language='English', variant=1, label=payload} end
+        if command.variant >= 1 and command.variant <=4 then
+          stat, err = pcall(function () GetCBusLanguageID(command.language) end)
+          if not stat then
+            log('Invalid language '..command.language..' specified for set label '..alias)
+          else
+            if logging then log('Payload for '..alias..' is set label '..command.label) end
+            SetCBusLabel(net, app, group, command.language, 'Variant '..command.variant, command.label)
+          end
         end
       end
 
