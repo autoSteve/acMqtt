@@ -142,9 +142,9 @@ The payload for the MQTT publish action can be as simple as "New label", but a m
 
 ```
 {
-  "language": "Dutch (Netherlands)",
+  "language": "Swedish",
   "variant": 2,
-  "label": "New label"
+  "label": "Ny etikett"
 }
 ```
 
