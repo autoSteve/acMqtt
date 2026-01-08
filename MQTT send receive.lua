@@ -1884,7 +1884,7 @@ local function outstandingMqttMessage()
         end
       elseif parts[6] == 'label' then
         local command = {}
-        local err, stat
+        local err, stat, valid
         valid = true
       	stat, err = pcall(function ()
           command = json.decode(payload)
