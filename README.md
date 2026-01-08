@@ -175,6 +175,10 @@ actions:
 mode: single
 ```
 
+> [!NOTE]
+>
+> Unicode labels are only supported on eDLT units, and not the original DLT.
+
 #### Cover notes
 
 There are three modes of operation for cover devices.
