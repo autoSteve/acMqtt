@@ -144,11 +144,14 @@ The payload for the MQTT publish action can be as simple as "New label", but a m
 {
   "language": "Swedish",
   "variant": 2,
-  "label": "Ny etikett"
+  "label": "Ny etikett",
+  "unicode": true
 }
 ```
 
-All keys except `"label"` are optional in the JSON form, with `"variant"` defaulting to `1`, and `"language"` defaulting to `"English"`
+All keys except `"label"` are optional in the JSON form, with `"variant"` defaulting to `1`, `"language"` defaulting to `"English"`, and `"unicode"` defaulting to `false`.
+
+If the label being set is for an action selector (application 202), then a JSON key for `"actsel"` must also be included as a 0-255 number.
 
 > [!NOTE]
 >
