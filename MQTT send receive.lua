@@ -1885,19 +1885,47 @@ local function outstandingMqttMessage()
       elseif parts[6] == 'label' then
         local command = {}
         local err, stat
+        valid = true
       	stat, err = pcall(function ()
           command = json.decode(payload)
           if command.language == nil then command.language = 1 end
           if command.variant == nil then command.variant = 1 else command.variant = tonumber(command.variant) end
+          if command.unicode == nil then command.unicode = false end
+          if command.actsel == nil then command.actsel = -1 end
         end)
       	if not stat then command = {language='English', variant=1, label=payload} end
-        if command.variant >= 1 and command.variant <=4 then
-          stat, err = pcall(function () GetCBusLanguageID(command.language) end)
-          if not stat then
-            log('Invalid language '..command.language..' specified for set label '..alias)
-          else
-            if logging then log('Payload for '..alias..' is set label '..command.label) end
-            SetCBusLabel(net, app, group, command.language, 'Variant '..command.variant, command.label)
+        if not (type(command.language) == "number" or type(command.language) == "string") then valid = false end
+        if type(command.variant) ~= "number" then valid = false end
+        if type(command.unicode) ~= "boolean" then valid = false end
+        if type(command.actsel) ~= "number" then valid = false end
+        if not valid then
+          log('Parameter type mismatch specified for set label '..alias)
+        elseif app == 202 and (command.actsel < 0 or command.actsel > 255) then
+          log('Invalid action selector value for set label '..alias)
+        elseif app == 202 and command.actsel == -1 then
+          log('An action selector must be specified for set label '..alias)
+        else
+          if command.variant >= 1 and command.variant <=4 then
+            stat, err = pcall(function () GetCBusLanguageID(command.language) end)
+            if not stat then
+              log('Invalid language '..command.language..' specified for set label '..alias)
+            else
+              if app ~= 202 then
+                if logging then log('Payload for '..alias..' is set label '..command.label) end
+                if command.unicode then
+                  SetCBusUnicodeLabel(net, app, group, command.language, 'Variant '..command.variant, command.label)
+                else
+                  SetCBusLabel(net, app, group, command.language, 'Variant '..command.variant, command.label)
+                end
+              else
+                if logging then log('Payload for '..alias..' is set label '..command.label..' for selector '..command.actsel) end
+                if command.unicode then
+                  SetCBusActSelUnicodeLabel(net, group, command.language, 'Variant '..command.variant, command.actsel, command.label)
+                else
+                  SetCBusActSelLabel(net, group, command.language, 'Variant '..command.variant, command.actsel, command.label)
+                end
+              end
+            end
           end
         end
       end
