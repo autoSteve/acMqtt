@@ -1905,7 +1905,7 @@ local function outstandingMqttMessage()
         elseif app == 202 and command.actsel == -1 then
           log('An action selector must be specified for set label '..alias)
         else
-          if command.variant >= 1 and command.variant <=4 then
+          if command.variant >= 1 and command.variant <= 4 then
             stat, err = pcall(function () GetCBusLanguageID(command.language) end)
             if not stat then
               log('Invalid language '..command.language..' specified for set label '..alias)
@@ -1920,7 +1920,7 @@ local function outstandingMqttMessage()
               else
                 if logging then log('Payload for '..alias..' is set label '..command.label..' for selector '..command.actsel) end
                 if command.unicode then
-                  SetCBusActSelUnicodeLabel(net, group, command.language, 'Variant '..command.variant, command.actsel, command.label)
+                  SetCBusActSelUnicode(net, group, command.language, 'Variant '..command.variant, command.actsel, command.label)
                 else
                   SetCBusActSelLabel(net, group, command.language, 'Variant '..command.variant, command.actsel, command.label)
                 end
