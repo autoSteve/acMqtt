@@ -60,6 +60,7 @@ adjusts. All topic prefixes must end in '/'.
 local mqttCbus = 'cbus/'
 local mqttReadTopic = mqttCbus..'read/'
 local mqttWriteTopic = mqttCbus..'write/'
+local mqttAttrTopic = mqttCbus..'attribute/'
 local mqttDiscoveryTopic = 'homeassistant/'
 
 --[[
