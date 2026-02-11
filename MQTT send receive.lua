@@ -271,10 +271,12 @@ log('AC firmware version '..rawVersion)
 Build a table of identified lighting applications in use
 These are between a standard reserved range of 0x30 and 0x5f
 --]]
-
-local rawApps = GetCBusApplication(0)
-local apps={}; for _, app in pairs(rawApps) do apps[app]=true end
-local lighting={}; for app=0x30,0x5f do if apps[app] ~= nil then lighting[tostring(app)]=true end end
+local lighting={}
+for _, network in pairs(GetCBusNetwork()) do
+  local rawApps = GetCBusApplication(network)
+  local apps={}; for _, app in pairs(rawApps) do apps[app]=true end
+  for app=0x30,0x5f do if apps[app] ~= nil then lighting[tostring(app)]=true end end
+end
 local lightingLog = {}; for k in pairs(lighting) do table.insert(lightingLog, k) end
 log('Lighting application(s) identified: '..table.concat(lightingLog, ", "))
 
