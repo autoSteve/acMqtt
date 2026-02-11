@@ -2,7 +2,6 @@
 local mqttBroker = '192.168.10.21'
 local mqttUsername = 'mqtt'
 local mqttPassword = 'password'
-local lighting = { ['56'] = true, } -- Array of applications that are used for lighting (do not remove should lastLevel not be required)
 local checkForChanges = true       -- When true the script will periodically check for create/update/delete of object keywords (disable to lower CPU load, and manually restart on keyword change)
 local checkChanges = 30            -- Interval in seconds to check for changes to object keywords
 
@@ -263,7 +262,21 @@ if eventInstalled then script.disable(eventName) log('Disabling event script '..
 if acInstalled then script.disable(acName) log('Disabling event script '..acName..', as no longer required') end
 if atInstalled then script.disable(atName) log('Disabling event script '..atName..', as no longer required') end
 
-local version = string.split(io.readfile('/lib/genohm-scada/version'):trim(), '.')
+local rawVersion = io.readfile('/lib/genohm-scada/version')
+local version = string.split(rawVersion:trim(), '.')
+log('AC firmware version '..rawVersion)
+
+
+--[[
+Build a table of identified lighting applications in use
+These are between a standard reserved range of 0x30 and 0x5f
+--]]
+
+local rawApps = GetCBusApplication(0)
+local apps={}; for _, app in pairs(rawApps) do apps[app]=true end
+local lighting={}; for app=0x30,0x5f do if apps[app] ~= nil then lighting[tostring(app)]=true end end
+local lightingLog = {}; for k in pairs(lighting) do table.insert(lightingLog, k) end
+log('Lighting application(s) identified: '..table.concat(lightingLog, ", "))
 
 
 --[[
@@ -282,11 +295,20 @@ client.ON_CONNECT = function(success)
   end
 end
 
-client.ON_DISCONNECT = function(...)
+client.ON_DISCONNECT = function(success, rc, stat, props)
   log('Mosquitto broker disconnected')
   mqttStatus = 2
   init = true
   reconnect = true
+  if mqttQoS == 2 and rc ~= 0 then
+    log('Warning: Disconnect saw status '..rc..'. Error: ' .. stat)
+  end
+end
+
+client.ON_PUBLISH = function(mid, rc, stat, props)
+  if mqttQoS == 2 and rc ~= 0 then
+    log('Warning: Message '..mid..' was not delivered. Status '..rc..'. Error: ' .. stat)
+  end
 end
 
 client.ON_MESSAGE = function(mid, topic, payload)
@@ -1905,6 +1927,9 @@ local function outstandingMqttMessage()
         elseif app == 202 and command.actsel == -1 then
           log('An action selector must be specified for set label '..alias)
         else
+          if type(command.language) == "number" then command.language = math.floor(command.language) end
+          command.variant = math.floor(command.variant)
+          command.actsel = math.floor(command.actsel)
           if command.variant >= 1 and command.variant <= 4 then
             stat, err = pcall(function () GetCBusLanguageID(command.language) end)
             if not stat then
