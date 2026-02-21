@@ -61,6 +61,12 @@ local mqttReadTopic = mqttCbus..'read/'
 local mqttWriteTopic = mqttCbus..'write/'
 local mqttAttrTopic = mqttCbus..'attribute/'
 local mqttDiscoveryTopic = 'homeassistant/'
+--[[
+The node_id to include in discovery topic strings.
+While not best practice in conjunction with using a unique_id (which this script does) this may be desired behaviour.
+If doing so it is recommended to set this variable as `mqttDiscoveryNodeId = mqttCbus`, or if a quoted string then ensure it ends in '/'.
+--]]
+local mqttDiscoveryNodeId = ''
 
 --[[
 Variables not to be messed with unless you definitely know what you're doing.
@@ -140,6 +146,9 @@ local airtopiaStates = {}    -- Current state topics in use (used for clean up)
 local RETAIN = true          -- Boolean aliases for MQTT retain and no-retain settings
 local NORETAIN = false
 
+local mqttDiscoveryNodeId = mqttDiscoveryNodeId
+if mqttDiscoveryNodeId == nil then mqttDiscoveryNodeId = '' end
+
 local started = socket.gettime()
 local heartbeat = started
 
@@ -151,6 +160,7 @@ setmetatable(_G, {
   __newindex = function (t, n, v) if not declaredNames[n] then log('Warning: Write to undeclared global variable "'..n..'"') end rawset(t, n, v) end,
   __index = function (_, n) if not exclude[n] and not declaredNames[n] then log('Warning: Read undeclared global variable "'..n..'"') end return nil end,
 })
+
 
 --[[
 Utility functions
@@ -192,7 +202,7 @@ local function removeIrrelevant(keywords)
   end
   return table.concat(curr, ',')
 end
-local function hex2float32(raw)
+local function hex2float32(raw) -- Pure Lua IEEE 754 conversion
   if tonumber(raw, 16) == 0 then return 0.0 end
   local raw = string.gsub(raw, "(..)", function (x) return string.char(tonumber(x, 16)) end)
   local byte1, byte2, byte3, byte4 = string.byte(raw, 1, 4)
@@ -704,16 +714,20 @@ Get level name and value
 local function decodeLevel(net, app, group, level, default)
   if level:contains('/') then log('Error: Legacy separator "/" being used for '..net..'/'..app..'/'..group..'! Use ":" instead') return nil, nil end
   local parts = string.split(level, ':')
-  local lvl = -1
+  local lvl = -999
   if #parts == 2 then -- A select option and level
     lvl = tonumber(parts[2])
     if lvl == nil then log('Error: Invalid lvl= for '..net..'/'..app..'/'..group..', level "'..parts[2]..'" is probably not numeric') return nil, nil end
-    if lvl < 0 or lvl > 255  then log('Error: Invalid lvl= for '..net..'/'..app..'/'..group..', level "'..parts[2]..'" is outside acceptable range') return nil, nil end
+    if lvl < -1 or lvl > 255  then log('Error: Invalid lvl= for '..net..'/'..app..'/'..group..', level "'..parts[2]..'" is outside acceptable range') return nil, nil end
     return parts[1], lvl
   elseif #parts == 1 and tonumber(parts[1]) then -- Level numbers only
     lvl = tonumber(parts[1])
-    if lvl < 0 or lvl > 255 then log('Error: Invalid lvl= for '..net..'/'..app..'/'..group..', level '..lvl..' is outside acceptable range') return nil, nil end
-    parts[1] = GetCBusLevelTag(net, app, group, lvl)
+    if lvl < -1 or lvl > 255 then log('Error: Invalid lvl= for '..net..'/'..app..'/'..group..', level '..lvl..' is outside acceptable range') return nil, nil end
+    if lvl >= 0 then
+      parts[1] = GetCBusLevelTag(net, app, group, lvl)
+    else
+      parts[1] = "Indicator kill"
+    end
     if parts[1] == nil then
       if default == nil then
         log('Error: No level tag for '..net..'/'..app..'/'..group..', level '..lvl..' which is required when specifying numeric only for lvl=') return nil, nil
@@ -724,7 +738,11 @@ local function decodeLevel(net, app, group, level, default)
     end
     return parts[1], lvl
   elseif #parts == 1 then -- Level tags only
-    lvl = GetCBusLevelAddress(net, app, group, parts[1])
+    if parts[1] == "Indicator kill" then
+      lvl = -1
+    else
+    	lvl = GetCBusLevelAddress(net, app, group, parts[1])
+    end
     if lvl == nil then log('Error: Invalid lvl= for '..net..'/'..app..'/'..group..', level '..parts[1]) return nil end
     return parts[1], lvl
   end
@@ -863,12 +881,13 @@ local function addDiscover(net, app, group, channel, tags, name)
   local function publish(payload, is_boid, oid, entity, name, entity_id)
     -- Publish to MQTT broker
     if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
-    if logging then log('Publishing '..mqttDiscoveryTopic..dType..'/'..oid..'/config as '.._L.pn..' in area '..dSa) end
-    if discoveryName[oid] ~= nil and discoveryName[oid] ~= name then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
+    if logging then log('Publishing '..mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config as '.._L.pn..' in area '..dSa) end
+    local old_topic
+    if discoveryName[oid] ~= nil and discoveryName[oid] ~= name then old_topic = mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config'; client:publish(old_topic, '', mqttQoS, RETAIN) end -- Remove old discovery topic
     if forceChangeId then
-      if discoveryId[oid] ~= nil and discoveryId[oid] ~= entity_id then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN) end -- Remove old discovery topic
+      if discoveryId[oid] ~= nil and discoveryId[oid] ~= entity_id then old_topic = mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config'; client:publish(old_topic, '', mqttQoS, RETAIN) end -- Remove old discovery topic
     end
-    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', payload, mqttQoS, RETAIN)
+    client:publish(mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config', payload, mqttQoS, RETAIN)
     if not is_boid then
       if special.label then
         label[alias] = mqttAttrTopic..oid
@@ -1194,8 +1213,8 @@ local function addAtDiscover(name, sa, unit)
 
   -- Publish to MQTT broker
   local j = json.encode(payload)
-  if logging then log('Publishing '..mqttDiscoveryTopic..'climate/'..oid..'/config') end
-  client:publish(mqttDiscoveryTopic..'climate/'..oid..'/config', j, mqttQoS, RETAIN)
+  if logging then log('Publishing '..mqttDiscoveryTopic..'climate/'..mqttDiscoveryNodeId..oid..'/config') end
+  client:publish(mqttDiscoveryTopic..'climate/'..mqttDiscoveryNodeId..oid..'/config', j, mqttQoS, RETAIN)
 
   -- Add a power consumption sensor discovery topic
   if unit == nil then unit = 'A' end
@@ -1209,8 +1228,8 @@ local function addAtDiscover(name, sa, unit)
     unit_of_meas = unit,
   }
   local j = json.encode(payload)
-  if logging then log('Publishing'..mqttDiscoveryTopic..'sensor/'..oid..'_power'..'/config') end
-  client:publish(mqttDiscoveryTopic..'sensor/'..oid..'_power'..'/config', j, mqttQoS, RETAIN)
+  if logging then log('Publishing'..mqttDiscoveryTopic..'sensor/'..mqttDiscoveryNodeId..oid..'_power'..'/config') end
+  client:publish(mqttDiscoveryTopic..'sensor/'..mqttDiscoveryNodeId..oid..'_power'..'/config', j, mqttQoS, RETAIN)
 end
 
 
@@ -1495,8 +1514,8 @@ local function cudAt()
   for _, k in ipairs(kill) do
     atBoards[k] = nil;
     -- Clean up discovery topics
-    topic = mqttDiscoveryTopic..'climate/'..'cbus_mqtt_'..k..'/config'; client:publish(topic, '', mqttQoS, RETAIN) log('Removed discovery topic '..topic)
-    topic = mqttDiscoveryTopic..'sensor/'..'cbus_mqtt_'..k..'_power/config'; client:publish(topic, '', mqttQoS, RETAIN) log('Removed discovery topic '..topic)
+    topic = mqttDiscoveryTopic..'climate/'..mqttDiscoveryNodeId..'cbus_mqtt_'..k..'/config'; client:publish(topic, '', mqttQoS, RETAIN) log('Removed discovery topic '..topic)
+    topic = mqttDiscoveryTopic..'sensor/'..mqttDiscoveryNodeId..'cbus_mqtt_'..k..'_power/config'; client:publish(topic, '', mqttQoS, RETAIN) log('Removed discovery topic '..topic)
     -- Clean up state and cmd topics under airtopia/device
     for _, v in ipairs(airtopiaStates) do client:publish('airtopia/'..k..'/state/'..v, '', mqttQoS, RETAIN) end
     for _, v in ipairs(airtopiaCmds) do client:publish('airtopia/'..k..'/cmd/'..v, '', mqttQoS, RETAIN) end
@@ -1639,7 +1658,7 @@ local function cudCBusTopics()
       kill[#kill + 1] = alias
       if (v.app == 202 or v.app == 203) and v.type == 'button' then
         for _, trigger in ipairs(v.trigger) do
-          topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
+          topic = mqttDiscoveryTopic..v.type..'/'..mqttDiscoveryNodeId..trigger..'/config'
       	  client:publish(topic, '', mqttQoS, RETAIN); log('Removed discovery topic '..topic)
           local t = tonumber(string.match(trigger, '_(%w+)$'))
           local act, tk, tv
@@ -1656,7 +1675,7 @@ local function cudCBusTopics()
           label[alias] = nil
         end
       else
-        topic = mqttDiscoveryTopic..v.type..'/'..v.oid..'/config'
+        topic = mqttDiscoveryTopic..v.type..'/'..mqttDiscoveryNodeId..v.oid..'/config'
       	client:publish(topic, '', mqttQoS, RETAIN); log('Removed discovery topic '..topic)
         local count
         _, count = alias:gsub('/','')
@@ -1691,7 +1710,7 @@ local function cudCBusTopics()
             trigger = nil
             for i, t in ipairs(v.trigger) do if lvl == tonumber(string.match(t, '_(%w+)$')) then trigger = t; remove = i; break end end
             if trigger then
-              topic = mqttDiscoveryTopic..v.type..'/'..trigger..'/config'
+              topic = mqttDiscoveryTopic..v.type..'/'..mqttDiscoveryNodeId..trigger..'/config'
               client:publish(topic, '', mqttQoS, RETAIN); log('Remove discovery topic for '..topic..' (trigger level '..lvl..')')
               t = mqttWriteTopic..alias..'/'..act..'/press'
               if mqttJunk then client:publish(t, 'junk', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
@@ -1821,9 +1840,9 @@ local function outstandingMqttMessage()
 
       elseif parts[6] == 'select' then
         if app == 202 then
-          SetTriggerLevel(group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
+          SetTriggerLevel(group, selects[alias][payload]); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
         elseif app == 203 then
-          SetEnableLevel(group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
+          SetEnableLevel(group, selects[alias][payload]); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
         else
           SetCBusLevel(net, app, group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
         end
@@ -2182,9 +2201,9 @@ local function dupDelete()
     local parts = string.split(toDelete, '/')
     local oid = parts[1]
     local dType = parts[2]
-    if mqttJunk then client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', 'junk', mqttQoS, RETAIN) end
-    client:publish(mqttDiscoveryTopic..dType..'/'..oid..'/config', '', mqttQoS, RETAIN)
-    log('Removed discovery topic '..mqttDiscoveryTopic..dType..'/'..oid..'/config')
+    if mqttJunk then client:publish(mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config', 'junk', mqttQoS, RETAIN) end
+    client:publish(mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config', '', mqttQoS, RETAIN)
+    log('Removed discovery topic '..mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config')
   end
   discoveryDelete = {}
 end
