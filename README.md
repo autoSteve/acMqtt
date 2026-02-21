@@ -122,6 +122,10 @@ Further, for `select` only, if it is desirable to allow CBus levels other than t
 
 A special case exists to use `lvl=` with a lighting group sensor. This is where it is preferred to present the CBus level display text instead of the group level (or any display text by using the format `lvl=State zero:0/State one:1`, which will not look up the level tag).
 
+Another special case exists for setting the 'Indicator kill' level (`-1`), where the default label used is "Indicator kill" where only a level number is specified.
+
+Do not use a level of `-1` for the enable control application. The code presently allows this, but it is an invalid thing to do.
+
 #### On `disco=`
 
 The keyword `disco=` is used to add arbitrary discovery variables to the MQTT discovery topic. Example:
