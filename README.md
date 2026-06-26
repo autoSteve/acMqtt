@@ -79,8 +79,9 @@ For some PIR sensors, like the 5753PEIRL the light level may be broadcast period
 
 Add the keyword `MQTT` to groups for CBus discovery, plus...
 
-A type of `light`, `fan`, `fan_pct` (or `fanpct`), `cover`, `select`, `sensor`, `switch`, `binary_sensor` (or `binarysensor`), `bsensor`, `isensor` or `button` (default if not specified is `light`).
+A type of `light`, `fan`, `fan_pct` (or `fanpct`), `cover`, `select`, `sensor`, `switch`, `binary_sensor` (or `binarysensor`), `bsensor`, `isensor`, `event` or `button` (default if not specified is `light`).
 * `light`, `cover`, `select`, `sensor`, `switch`, `binary_sensor` and `button` are self-explanatory, being the Home Assistant equivalents.
+* An `event` is a Home Assistant event entity, with (presently) specific configuration.
 * Using `cover` by default assumes that a L5501RBCP blind relay is in "level translation mode". Using a select would also work well, with predictable level presets for open, closed, and part open at half way. See the cover notes below for more.
 * The `fan` keyword is specifically for sweep fan controllers like a L5501RFCP. See the sweep fan notes below. (For simple exhaust fans use `switch`.)
 * A `bsensor` is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. `State is active`/`State is inactive`. This could be used where there is no appropriate `binary_sensor` device class for the use case. (The state in Home Assistant will be of type text, and not a boolean ON/OFF.)
@@ -135,6 +136,16 @@ The keyword `disco=` is used to add arbitrary discovery variables to the MQTT di
 This keyword allows for any current and future variable to be set where an existing tested keyword may not exist.
 
 Note that `disco=` discovery topic variables will override any discovery variable set by another means (example, set `state_class=total, disco=state_class:measurement,` and the resulting `state_class` will be `measurement`).
+
+#### The `event` type
+
+The `event` type only applies to the trigger application (`202`).
+
+When specified, an event entity will be created in Home Assistant having one possible event outcome: `triggered`.
+
+When the level of the trigger group address is set to level `255` in CBus the triggered event will occur. When the group address is set to any other value the event is not triggered.
+
+There are myriad other ways that this *could* be implemented, but this is how it operates. Ideas for expanded capability and function for this feature are welcome.
 
 #### eDLT/DLT dynamic label setting
 
