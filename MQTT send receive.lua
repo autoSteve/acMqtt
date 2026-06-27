@@ -512,11 +512,9 @@ local function publish(alias, app, level, noPre)
           if logging then log('Publishing state and open '..mqttReadTopic..alias..' to '..state..'/'..v) end
         end
       elseif event[alias] then -- It's an event
-        if level == 255 then
-          state = '{"event_type": "triggered"}'
+          state = '{"event_type": "triggered", "level": '..level..'}'
           client:publish(mqttReadTopic..alias..'/state', state, mqttQoS)
-          if logging then log('Publishing state '..mqttReadTopic..alias..' to '..state) end
-        end
+          if logging then log('Publishing state '..state..' to '..mqttReadTopic..alias) end
       else -- It's a bog standard group
         local v
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
