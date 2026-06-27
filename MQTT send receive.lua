@@ -755,6 +755,15 @@ local function decodeLevel(net, app, group, level, default)
   end
 end
 
+--[[
+Attempt to delete a MQTT topic.
+]]
+local function attemptToDeleteTopic(topic)
+  if mqttJunk then
+    client:publish(topic, '{}', mqttQoS, RETAIN)
+  end
+    client:publish(topic, '', mqttQoS, RETAIN)
+end
 
 --[[
 Get key/value pairs. Returns a keyword if found in 'allow'. (allow, synonym and special parameters are optional).
@@ -901,8 +910,7 @@ local function addDiscover(net, app, group, channel, tags, name)
         client:publish(mqttAttrTopic..oid, json.encode({label_topic=mqttWriteTopic..alias..'/label'}), mqttQoS, RETAIN)
       else
         if label[alias] ~= nil then
-          if mqttJunk then client:publish(mqttAttrTopic..oid, '{}', mqttQoS, RETAIN) end
-          client:publish(mqttAttrTopic..oid, '', mqttQoS, RETAIN)
+          attemptToDeleteTopic(mqttAttrTopic..oid)
           label[alias] = nil
         end
       end
@@ -1091,8 +1099,7 @@ local function addDiscover(net, app, group, channel, tags, name)
                 client:publish(mqttAttrTopic..oid, json.encode({label_topic=mqttWriteTopic..alias..'/label'}), mqttQoS, RETAIN)
               else
                 if label[alias] ~= nil then
-                  if mqttJunk then client:publish(mqttAttrTopic..oid, '{}', mqttQoS, RETAIN) end
-                  client:publish(mqttAttrTopic..oid, '', mqttQoS, RETAIN)
+                  attemptToDeleteTopic(mqttAttrTopic..oid)
                   label[alias] = nil
                 end
               end
@@ -1170,10 +1177,8 @@ local function addDiscover(net, app, group, channel, tags, name)
     publish(payload, false, oid, entity, name, entity_id)
     mqttDevices[alias].value = grp.getvalue(alias)
     if not oldLightingButton and lightingButton[alias] then -- If changing to a lighting button then clear status topics
-      local t = mqttReadTopic..alias..'/state'
-      if mqttJunk then client:publish(t, '{}', mqttQoS, RETAIN) end client:publish(t, '', mqttQoS, RETAIN)
-      t = mqttReadTopic..alias..'/level'
-      if mqttJunk then client:publish(t, '{}', mqttQoS, RETAIN) end client:publish(t, '', mqttQoS, RETAIN)
+      attemptToDeleteTopic(mqttReadTopic..alias..'/state')
+      attemptToDeleteTopic(mqttReadTopic..alias..'/level')
     end
     return
   elseif payload == 'buttons' then
@@ -1682,12 +1687,10 @@ local function cudCBusTopics()
             if t == tv then act = tk break end
           end
           t = mqttWriteTopic..alias..'/'..act..'/press'
-          if mqttJunk then client:publish(t, '{}', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
-          client:publish(t, '', mqttQoS, RETAIN)
+          attemptToDeleteTopic(t)
         end
         if label[alias] ~= nil then
-          if mqttJunk then client:publish(label[alias], '{}', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
-          client:publish(label[alias], '', mqttQoS, RETAIN)
+          attemptToDeleteTopic(label[alias])
           label[alias] = nil
         end
       else
@@ -1700,17 +1703,13 @@ local function cudCBusTopics()
         else
           topic = mqttReadTopic..alias
         end
-        if mqttJunk then client:publish(topic..'/state', '{}', mqttQoS, RETAIN) end
-        client:publish(topic..'/state', '', mqttQoS, RETAIN)
-        if mqttJunk then client:publish(topic..'/level', '{}', mqttQoS, RETAIN) end
-        client:publish(topic..'/level', '', mqttQoS, RETAIN)
+        attemptToDeleteTopic(topic..'/state')
+        attemptToDeleteTopic(topic..'/level')
         if v.type == 'select' then
-          if mqttJunk then client:publish(topic..'/select', '{}', mqttQoS, RETAIN) end
-          client:publish(topic..'/select', '', mqttQoS, RETAIN)
+          attemptToDeleteTopic(topic..'/select')
         end
         if label[alias] ~= nil then
-          if mqttJunk then client:publish(label[alias], '{}', mqttQoS, RETAIN) end -- Publish junk to all topics to be deleted to ensure that they are actually deleted (some topics may not have been written yet)
-          client:publish(label[alias], '', mqttQoS, RETAIN)
+          attemptToDeleteTopic(label[alias])
           label[alias] = nil
         end
         includeUnits[alias] = nil
@@ -1729,8 +1728,7 @@ local function cudCBusTopics()
               topic = mqttDiscoveryTopic..v.type..'/'..mqttDiscoveryNodeId..trigger..'/config'
               client:publish(topic, '', mqttQoS, RETAIN); log('Remove discovery topic for '..topic..' (trigger level '..lvl..')')
               t = mqttWriteTopic..alias..'/'..act..'/press'
-              if mqttJunk then client:publish(t, '{}', mqttQoS, RETAIN) end -- Publish junk to topic to be deleted (some topics may not have been written yet)
-              client:publish(t, '', mqttQoS, RETAIN)
+              attemptToDeleteTopic(t)
               triggers[v.group][act] = nil
             end
             if remove then table.remove(v.trigger, remove) end
@@ -2217,8 +2215,7 @@ local function dupDelete()
     local parts = string.split(toDelete, '/')
     local oid = parts[1]
     local dType = parts[2]
-    if mqttJunk then client:publish(mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config', '{}', mqttQoS, RETAIN) end
-    client:publish(mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config', '', mqttQoS, RETAIN)
+    attemptToDeleteTopic(mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config')
     log('Removed discovery topic '..mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config')
   end
   discoveryDelete = {}
