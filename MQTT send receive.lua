@@ -25,7 +25,7 @@ Resident, zero sleep interval, name: 'MQTT send receive'
 Manage CBus, Panasonic and Airtopia AC and environment events for MQTT, and publish discovery topics. Used with Home Assistant.
 
 Documentation available at https://github.com/autoSteve/acMqtt
-Downloaded Major Version: 1.0.0
+Downloaded version: 1.0.0
 --]]
 
 --[[
@@ -105,7 +105,7 @@ local bSensor = {}           -- Quick lookup to determine whether an object is a
 local binarySensor = {}      -- Quick lookup to determine whether an object is a binary sensor
 local button = {}            -- Quick lookup to determine whether an object is a button
 local lightingButton = {}    -- Quick lookup to determine whether an object is a lighting group as a button
-local event = {}             -- Quick lookup to determine whether an onject is an event
+local event = {}             -- Quick lookup to determine whether an object is an event
 local userParameter = {}     -- Quick lookup to determine whether an object is a user parameter
 local unitParameter = {}     -- Quick lookup to determine whether an object is a unit parameter
 local storeLevel = {}        -- Force store the last level for certain object types (fan, fan_pct)
@@ -758,7 +758,7 @@ end
 
 --[[
 Attempt to delete a MQTT topic.
-]]
+--]]
 local function attemptToDeleteTopic(topic)
   if mqttJunk then
     client:publish(topic, '{}', mqttQoS, RETAIN)
