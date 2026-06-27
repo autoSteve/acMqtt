@@ -763,7 +763,7 @@ local function attemptToDeleteTopic(topic)
   if mqttJunk then
     client:publish(topic, '{}', mqttQoS, RETAIN)
   end
-    client:publish(topic, '', mqttQoS, RETAIN)
+  client:publish(topic, '', mqttQoS, RETAIN)
 end
 
 --[[
