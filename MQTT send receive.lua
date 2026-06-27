@@ -923,6 +923,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   bSensor[alias] = nil
   binarySensor[alias] = nil
   button[alias] = nil
+  event[alias] = nil
   local oldLightingButton = lightingButton[alias] lightingButton[alias] = nil
   userParameter[alias] = nil
   unitParameter[alias] = nil
