@@ -512,6 +512,8 @@ local function publish(alias, app, level, noPre)
           if logging then log('Publishing state and open '..mqttReadTopic..alias..' to '..state..'/'..v) end
         end
       elseif event[alias] then -- It's an event
+          -- Note that events will be sent to MQTT when the trigger control level changes, 
+          -- as well as when the level is just set to the same value again.  
           state = '{"event_type": "triggered", "level": '..level..'}'
           client:publish(mqttReadTopic..alias..'/state', state, mqttQoS)
           if logging then log('Publishing state '..state..' to '..mqttReadTopic..alias) end
@@ -1050,6 +1052,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     },
     event = {
       getPayload = function()
+        -- https://www.home-assistant.io/integrations/event.mqtt/
         if app ~= 202 then log('Error: event '..alias..' only supports the trigger control application') return nil end
         event[alias] = true
         return {event_types = {'triggered'}, stat_t = mqttReadTopic..alias..'/state', }
