@@ -475,7 +475,7 @@ local function publish(alias, app, level, noPre)
       if bSensor[alias] then -- It's a bSensor
         client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
-        if logging then log('Publishing '..mqttReadTopic..alias..' to '..level) end
+        if logging then log('Publishing to '..mqttReadTopic..alias..' with level '..level) end
       elseif selects[alias] then -- It's a select
         local l
         for _, l in ipairs(selects[alias].allLvl) do
@@ -489,7 +489,7 @@ local function publish(alias, app, level, noPre)
             end
             client:publish(mqttReadTopic..alias..'/select', l.sel, mqttQoS, RETAIN)
             client:publish(mqttReadTopic..alias..'/level', l.lvl, mqttQoS, RETAIN)
-            if logging then log('Publishing select '..mqttReadTopic..alias..' to '..l.sel..' ('..l.lvl..')') end
+            if logging then log('Publishing to '..mqttReadTopic..alias..' with select '..l.sel..' ('..l.lvl..')') end
             break
           end
         end
@@ -498,7 +498,7 @@ local function publish(alias, app, level, noPre)
         if mqttDevices[alias].noleveltranslate then
           client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
           if level ~= -1 then client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN) end
-          if logging then log('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..level) end
+          if logging then log('Publishing to '..mqttReadTopic..alias..' with state and level '..state..'/'..level) end
         else
           local v
           if hasMembers(mqttDevices[alias].rate) then
@@ -510,31 +510,31 @@ local function publish(alias, app, level, noPre)
           end
           client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
           client:publish(mqttReadTopic..alias..'/open', v, mqttQoS, RETAIN)
-          if logging then log('Publishing state and open '..mqttReadTopic..alias..' to '..state..'/'..v) end
+          if logging then log('Publishing to '..mqttReadTopic..alias..' with state and open '..state..'/'..v) end
         end
       elseif event[alias] then -- It's an event
           -- Note that events will be sent to MQTT when the trigger control level changes, 
           -- as well as when the level is just set to the same value again.  
           state = '{"event_type": "triggered", "level": '..level..'}'
           client:publish(mqttReadTopic..alias..'/state', state, mqttQoS)
-          if logging then log('Publishing state '..state..' to '..mqttReadTopic..alias) end
+          if logging then log('Publishing to '..mqttReadTopic..alias..' with state '..state) end
       else -- It's a bog standard group
         local v
         client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
         if publishAdj[alias] then v = tonumber(string.format('%.'..publishAdj[alias].dec..'f', level * publishAdj[alias].scale)) else v = level end
         client:publish(mqttReadTopic..alias..'/level', v, mqttQoS, RETAIN)
-        if logging then log('Publishing state and level '..mqttReadTopic..alias..' to '..state..'/'..v) end
+        if logging then log('Publishing to '..mqttReadTopic..alias..' with state and level '..state..'/'..v) end
       end
     else -- It's a binary sensor / trigger
       client:publish(mqttReadTopic..alias..'/state', state, mqttQoS, RETAIN)
       client:publish(mqttReadTopic..alias..'/level', level, mqttQoS, RETAIN)
-      if logging then log('Publishing '..mqttReadTopic..alias..' to '..state..' ('..level..')') end
+      if logging then log('Publishing to '..mqttReadTopic..alias..' with '..state..' ('..level..')') end
     end
   else -- It's a user parameter
     local v
     if publishAdj[alias] then v = tonumber(string.format('%.'..publishAdj[alias].dec..'f', level * publishAdj[alias].scale)) else v = level end
     client:publish(mqttReadTopic..alias..'/level', v, mqttQoS, RETAIN)
-    if logging then log('Publishing '..mqttReadTopic..alias..' to '..v) end
+    if logging then log('Publishing to '..mqttReadTopic..alias..' with '..v) end
   end
   if not noPre then
     if app ~= 202 and app ~= 203 then -- Not trigger or enable
