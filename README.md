@@ -1,50 +1,56 @@
 # acMqtt
+
 CBus Automation Controller integration: Home Assistant, MQTT, Philips Hue and more
 
 Functions:
-* Get Home Assistant talking to CBus, with MQTT discovery to eliminate any manual CBus config in HA
-* Optionally dynamically set eDLT/DLT labels from HA
-* Optionally return to previously set lighting levels when a 'turn on' command is issued (supports very old versions of HA)
-* Optionally include Philips Hue hub devices in CBus scenes, like having 'All Off' from a button or using AC visualisations
-* Optionally Panasonic air conditioners via ESPHome
-* Optionally ESPHome sensors for temperature and relative humidity (example .yaml files are for this.)
-* Optionally Airtopia I/R blasters
+
+- Get Home Assistant talking to CBus, with MQTT discovery to eliminate any manual CBus config in HA
+- Optionally dynamically set eDLT/DLT labels from HA
+- Optionally return to previously set lighting levels when a 'turn on' command is issued (supports very old versions of HA)
+- Optionally include Philips Hue hub devices in CBus scenes, like having 'All Off' from a button or using AC visualisations
+- Optionally Panasonic air conditioners via ESPHome
+- Optionally ESPHome sensors for temperature and relative humidity (example .yaml files are for this.)
+- Optionally Airtopia I/R blasters
 
 > [!NOTE]
 > If you're using a 'generic' zigbee coordinator instead of Philips Hue then check out https://github.com/geoffwatts/cbus2zigbee. I'm contributing to his brilliant effort to make that the 'go to' for zigbee/C-Bus AC integration. Hue hub is dead to me.
 
 The pieces of the puzzle include:
-* Home Assistant 'HAOS' running somewhere. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker going (but you could use a separately installed MQTT broker elsewhere on your network and use 'core'). HA Cloud talks to Google Assistant/Alexa, so a subscription is required if you want that.
-* Home Assistant plug-ins: 'Mosquitto broker', and file editor or Studio Code Server is also handy.
-* Lua code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2).
-* Keywords added to Automation Controller objects.
+
+- Home Assistant 'HAOS' running somewhere. Home Assistant 'Core' as a container is not enough, as add-ins are required to get a MQTT broker going (but you could use a separately installed MQTT broker elsewhere on your network and use 'core'). HA Cloud talks to Google Assistant/Alexa, so a subscription is required if you want that.
+- Home Assistant plug-ins: 'Mosquitto broker', and file editor or Studio Code Server is also handy.
+- Lua code on a C-Bus Automation Controller (SHAC/NAC/AC2/NAC2).
+- Keywords added to Automation Controller objects.
 
 The Lua scripts for the automation controller (all scripts do NOT have to be called these names):
-* *MQTT send receive*: resident, zero sleep suggested, but higher will just mean slower restart speed on failure
-* *HUE send receive*: (for Philips Hue) resident, zero sleep suggested, but higher will just mean slower restart speed on failure
-* *Heartbeat*: (optional) resident, zero sleep ... monitors for failure of *MQTT send receive* and *HUE send receive* and re-starts them when unresponsive (stuck in loop, lock-up, etc.)
+
+- _MQTT send receive_: resident, zero sleep suggested, but higher will just mean slower restart speed on failure
+- _HUE send receive_: (for Philips Hue) resident, zero sleep suggested, but higher will just mean slower restart speed on failure
+- _Heartbeat_: (optional) resident, zero sleep ... monitors for failure of _MQTT send receive_ and _HUE send receive_ and re-starts them when unresponsive (stuck in loop, lock-up, etc.)
 
 > [!NOTE]
-> Carefully examine the environment specific variable comments at the top of *MQTT send receive* and set as appropriate to your needs.
+> Carefully examine the environment specific variable comments at the top of _MQTT send receive_ and set as appropriate to your needs.
 >
-> To enable support for ESPHome environment sensors, Panasonic A/C, or Airtopia A/C alter the variables *environmentSupport*, *panasonicSupport* or *airtopiaSupport* as appropriate.
+> To enable support for ESPHome environment sensors, Panasonic A/C, or Airtopia A/C alter the variables _environmentSupport_, _panasonicSupport_ or _airtopiaSupport_ as appropriate.
 >
-> If implemented, legacy event scripts *MQTT final* or *MQTT* (which aren't used any more) will be disabled on start of *MQTT send receive*.
+> If implemented, legacy event scripts _MQTT final_ or _MQTT_ (which aren't used any more) will be disabled on start of _MQTT send receive_.
 
 ## About errors
 
 If you get errors in the log (error or event log), then feel free to raise an issue and I'll try to help.
 
-Warnings are also thrown for obvious code defects that are encountered. If you get something like 'Warning: Read undeclared global variable "someVariableName"' then *definitely* raise an issue.
+Warnings are also thrown for obvious code defects that are encountered. If you get something like 'Warning: Read undeclared global variable "someVariableName"' then _definitely_ raise an issue.
 
 ## Keywords used for Automation Controller objects
+
 Automation controller object keywords are used to tell the scripts which objects to use, publish, and how they should be used. This varies based on circumstance, as described below.
 
-Newly added keywords can be regularly detected by both the *MQTT send receive* and 'HUE send receive' scripts. This is configurable by setting the option `checkForChanges` that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is thirty seconds, and that is also a configurable variable.
+Newly added keywords can be regularly detected by both the _MQTT send receive_ and 'HUE send receive' scripts. This is configurable by setting the option `checkForChanges` that is near the top of both scripts. If this option is set to false then the scripts must be restarted (disable it, then enable) so that modified keywords are read. The default interval for change checks is thirty seconds, and that is also a configurable variable.
 
 Checking for changes adds a low workload to the automation controller, so is recommended. I run ten seconds these days without any significant load impact, mostly because my NAC is a crash test dummy for you. Five seconds or less would be a bit too aggressive in my opinion, but again it seems to not add significant load. Maybe do a shorter check interval while setting things up, and then back it off or disable it entirely when your config is stable, adding zero extra load.
 
-### CBus (*MQTT send receive*)
+### CBus (_MQTT send receive_)
+
 Lighting, measurement, user parameter, unit parameter, trigger control and enable control applications are implemented. (Unit parameter as a sensor only.)
 
 > [!NOTE]
@@ -52,61 +58,69 @@ Lighting, measurement, user parameter, unit parameter, trigger control and enabl
 
 #### TL>DR examples
 
-* `MQTT, light, sa=Outside, pn=Outside Laundry Door Light, label,`
-* `MQTT, switch, sa=Bathroom 1, img=mdi:radiator,`
-* `MQTT, fan_pct, preset, sa=Hutch, img=mdi:ceiling-fan,`      *(a L5501RFCP sweep fan controller group)*
-* `MQTT, fan, sa=Hutch, img=mdi:ceiling-fan,`
-* `MQTT, cover, sa=Bathroom 2, img=mdi:blinds, rate=15.9/16.0,`
-* `MQTT, cover, sa=Bathroom 2, img=mdi:blinds, noleveltranslate,`
-* `MQTT, select, sa=Bathroom 2, lvl=0/137/255,`
-* `MQTT, select, sa=Bathroom 2, lvl=Closed/Half open/Open,`
-* `MQTT, select, sa=Bathroom 2, lvl=Closed:0/Half open:137/Open:255,`
-* `MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1,`
-* `MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000,`
-* `MQTT, button, sa=Entry / Egress, lvl=0/1/2/5/127, pn=Inside,`      *(a trigger control group with various levels)*
-* `MQTT, switch, sa=Entry / Egress, lvl=0/255`        *(an enable control group with various levels)*
-* `MQTT, button, sa=Outside, img=mdi:gate-open,`      *(a lighting group button to open a gate)*
-* `MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion,`
-* `MQTT, sensor, sa=Family room, pn=Alarm state, lvl=Disarmed:0/Armed:1,`       *(a lighting group sensor to display alarm state)*
+- `MQTT, light, sa=Outside, pn=Outside Laundry Door Light, label,`
+- `MQTT, switch, sa=Bathroom 1, img=mdi:radiator,`
+- `MQTT, fan_pct, preset, sa=Hutch, img=mdi:ceiling-fan,` _(a L5501RFCP sweep fan controller group)_
+- `MQTT, fan, sa=Hutch, img=mdi:ceiling-fan,`
+- `MQTT, cover, sa=Bathroom 2, img=mdi:blinds, rate=15.9/16.0,`
+- `MQTT, cover, sa=Bathroom 2, img=mdi:blinds, noleveltranslate,`
+- `MQTT, select, sa=Bathroom 2, lvl=0/137/255,`
+- `MQTT, select, sa=Bathroom 2, lvl=Closed/Half open/Open,`
+- `MQTT, select, sa=Bathroom 2, lvl=Closed:0/Half open:137/Open:255,`
+- `MQTT, sensor, sa=Pool, pn=Pool Pool Temperature, unit= °C, dec=1,`
+- `MQTT, sensor, sa=Pool, pn=Pool Level, unit= mm, dec=0, scale=1000,`
+- `MQTT, button, sa=Entry / Egress, lvl=0/1/2/5/127, pn=Inside,` _(a trigger control group with various levels)_
+- `MQTT, switch, sa=Entry / Egress, lvl=0/255` _(an enable control group with various levels)_
+- `MQTT, button, sa=Outside, img=mdi:gate-open,` _(a lighting group button to open a gate)_
+- `MQTT, bsensor, sa=Carport, on=Motion detected, off=No motion,`
+- `MQTT, sensor, sa=Family room, pn=Alarm state, lvl=Disarmed:0/Armed:1,` _(a lighting group sensor to display alarm state)_
 
 For the bsensor example of a carport motion sensor, set up a CBus group address on the PIR unit to trigger on movement with a short timer like 5s in a block entry and then add the MQTT keywords to that group.
 
 For some PIR sensors, like the 5753PEIRL the light level may be broadcast periodically to a group address. Getting this into HomeAssistant as a percentage is then trivial with keywords like these:
 
-* `MQTT, sensor, sa=Carport, pn=Carport Light Level, unit=%, dec=0, scale=0.390625,`
+- `MQTT, sensor, sa=Carport, pn=Carport Light Level, unit=%, dec=0, scale=0.390625,`
 
 #### The details
+
+##### Philosphy
+
+The C-Bus Automation Controller (SHAC/NAC/AC2/NAC2) can control many different devices. The acMqtt script needs to be told which of those devices (group addresses, or GAs) it should be monitoring. This is achieved by piggy-backing on the 'keywords' property that the Automation Controller preserves for each GA. Adding the `MQTT` keyword will tell acMqtt to monitor that GA, but in general you will also need to pair that with other keywords such as `light`, `sa=Lounge`, `lvl=0/255` etc. Note that keywords are comma-separated, but the Automation Controller web UI seems to take care of this automatically.
+
+##### Keywords
 
 Add the keyword `MQTT` to groups for CBus discovery, plus...
 
 A type of `light`, `fan`, `fan_pct` (or `fanpct`), `cover`, `select`, `sensor`, `switch`, `binary_sensor` (or `binarysensor`), `bsensor`, `isensor`, `event` or `button` (default if not specified is `light`).
-* `light`, `cover`, `select`, `sensor`, `switch`, `binary_sensor` and `button` are self-explanatory, being the Home Assistant equivalents.
-* An `event` is a Home Assistant event entity, with (presently) specific configuration.
-* Using `cover` by default assumes that a L5501RBCP blind relay is in "level translation mode". Using a select would also work well, with predictable level presets for open, closed, and part open at half way. See the cover notes below for more.
-* The `fan` keyword is specifically for sweep fan controllers like a L5501RFCP. See the sweep fan notes below. (For simple exhaust fans use `switch`.)
-* A `bsensor` is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. `State is active`/`State is inactive`. This could be used where there is no appropriate `binary_sensor` device class for the use case. (The state in Home Assistant will be of type text, and not a boolean ON/OFF.)
-* An `isensor` is an inbound sensor, with values subscribed in MQTT topics. Use an automation in Home Assistant to publish sensor values to MQTT.
+
+- `light`, `cover`, `select`, `sensor`, `switch`, `binary_sensor` and `button` are self-explanatory, being the Home Assistant equivalents.
+- An `event` is a Home Assistant event entity, with (presently) specific configuration.
+- Using `cover` by default assumes that a L5501RBCP blind relay is in "level translation mode". Using a select would also work well, with predictable level presets for open, closed, and part open at half way. See the cover notes below for more.
+- The `fan` keyword is specifically for sweep fan controllers like a L5501RFCP. See the sweep fan notes below. (For simple exhaust fans use `switch`.)
+- A `bsensor` is a special-case binary_sensor, where the values are not ON/OFF, but rather configurable, e.g. `State is active`/`State is inactive`. This could be used where there is no appropriate `binary_sensor` device class for the use case. (The state in Home Assistant will be of type text, and not a boolean ON/OFF.)
+- An `isensor` is an inbound sensor, with values subscribed in MQTT topics. Use an automation in Home Assistant to publish sensor values to MQTT.
 
 And in addition to the type...
-* `sa=`     Suggested area
-* `img=`    Image (sensible automated defaults are provided, see below)
-* `pn=`     Preferred name (defaults to CBus group name, however unit parameters have no name, so treat this as mandatory in that special case)
-* `class=`  Device class to use in Home Assistant (User param/sensor/binary_sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
-* `state_class=` State class to use in Home Assistant (User param/sensor/binary_sensor only)
-* `disco=`  Custom discovery parameter to add (see below)
-* `dec=`    Decimal places (User param/sensor only)
-* `unit=`   Unit of measurement (User param/sensor only)
-* `scale=`  Multiplier / divider (User param/sensor only)
-* `lvl=`    List of applicable levels, separated by "/" (Trigger/Enable button, select and lighting sensors only)
-* `on=`     Preferred value shown in HA for a 'bsensor' ON value (bsensor only)
-* `off=`    Preferred value shown in HA for a 'bsensor' OFF value (bsensor only)
-* `rate=`   Rate of cover open/close for tracking, see below (cover only)
-* `delay=`  Delay cover tracking, see below (cover only)
-* `topic=`  A MQTT topic to subscribe to (isensor only)
-* Plus the keyword `includeunits` for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, *not* the `unit=` keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without `includeunits` is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
-* Plus the keyword `preset` in conjunction with `fan_pct` if both a percentage slider and a preset option are desired.
-* Plus the keyword `noleveltranslate` in conjunction with `cover`, see below.
-* Plus the keyword `label`, see below (sets up for eDLT/DLT label changing).
+
+- `sa=` Suggested area
+- `img=` Image (sensible automated defaults are provided, see below)
+- `pn=` Preferred name (defaults to CBus group name, however unit parameters have no name, so treat this as mandatory in that special case)
+- `class=` Device class to use in Home Assistant (User param/sensor/binary_sensor only, see https://www.home-assistant.io/integrations/sensor/#device-class)
+- `state_class=` State class to use in Home Assistant (User param/sensor/binary_sensor only)
+- `disco=` Custom discovery parameter to add (see below)
+- `dec=` Decimal places (User param/sensor only)
+- `unit=` Unit of measurement (User param/sensor only)
+- `scale=` Multiplier / divider (User param/sensor only)
+- `lvl=` List of applicable levels, separated by "/" (Trigger/Enable button, select and lighting sensors only)
+- `on=` Preferred value shown in HA for a 'bsensor' ON value (bsensor only)
+- `off=` Preferred value shown in HA for a 'bsensor' OFF value (bsensor only)
+- `rate=` Rate of cover open/close for tracking, see below (cover only)
+- `delay=` Delay cover tracking, see below (cover only)
+- `topic=` A MQTT topic to subscribe to (isensor only)
+- Plus the keyword `includeunits` for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, _not_ the `unit=` keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without `includeunits` is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
+- Plus the keyword `preset` in conjunction with `fan_pct` if both a percentage slider and a preset option are desired.
+- Plus the keyword `noleveltranslate` in conjunction with `cover`, see below.
+- Plus the keyword `label`, see below (sets up for eDLT/DLT label changing).
 
 #### On `lvl=`
 
@@ -115,11 +129,12 @@ Using `lvl=` for trigger/enable control buttons is highly recommended. This will
 Using `lvl=` for select is mandatory. This defines the selection name and its corresponding CBus level for the group.
 
 There are three options for `lvl=`:
-* Using the format: `lvl=Option 1:0/Option 2:255`, for any name desired and a level number
-* The level numbers: `lvl=0/255`, which will use the level tag
-* The level tags: `lvl=Option 1/Option 2`, which will look up the level number
 
-Further, for `select` only, if it is desirable to allow CBus levels other than the specific select levels to be set then alter the `selectExact` variable in the *MQTT send receive* script, otherwise that script will force the level to be set to the nearest select level.
+- Using the format: `lvl=Option 1:0/Option 2:255`, for any name desired and a level number
+- The level numbers: `lvl=0/255`, which will use the level tag
+- The level tags: `lvl=Option 1/Option 2`, which will look up the level number
+
+Further, for `select` only, if it is desirable to allow CBus levels other than the specific select levels to be set then alter the `selectExact` variable in the _MQTT send receive_ script, otherwise that script will force the level to be set to the nearest select level.
 
 A special case exists to use `lvl=` with a lighting group sensor. This is where it is preferred to present the CBus level display text instead of the group level (or any display text by using the format `lvl=State zero:0/State one:1`, which will not look up the level tag).
 
@@ -131,7 +146,7 @@ Do not use a level of `-1` for the enable control application. The code presentl
 
 The keyword `disco=` is used to add arbitrary discovery variables to the MQTT discovery topic. Example:
 
-* `disco=state_class:measurement/new_ha_parameter:value_x`
+- `disco=state_class:measurement/new_ha_parameter:value_x`
 
 This keyword allows for any current and future variable to be set where an existing tested keyword may not exist.
 
@@ -143,13 +158,24 @@ The `event` type only applies to the trigger application (`202`).
 
 When specified, an event entity will be created in Home Assistant having one possible event outcome: `triggered`.
 
-When the level of the trigger group address is set to level `255` in CBus the triggered event will occur. When the group address is set to any other value the event is not triggered.
+When the level of the trigger group address is set any level (or reset to the same level) in CBus the triggered event will occur. In HA you can trigger on any level event, or filter for specific levels. In order to trigger on these events you need a fairly modern version of HA with support for the `event.received` trigger type. For example:
 
-There are myriad other ways that this *could* be implemented, but this is how it operates. Ideas for expanded capability and function for this feature are welcome.
+```
+trigger: event.received
+  target:
+    entity_id: event.lounge_lighting
+  options:
+    event_type:
+      - triggered
+```
+
+Note that when using HA to look at the activity for the event entity (e.g. `event.lounge_lighting`), it will show `Detected an event` whenever the acMqtt script starts or stops, however these are _not_ `triggered` events. When looking at the entity using developer tools the state of the entity (for example `2026-06-27T03:28:31.413+00:00`) represents the time the last 'real' event was detected, and the properties of that event can be seen in the entities attributes.
+
+There are myriad other ways that this _could_ be implemented, but this is how it operates. Ideas for expanded capability and function for this feature are welcome.
 
 #### eDLT/DLT dynamic label setting
 
-To set eDLT/DLT screen labels from Home Assistant it is possible to publish a MQTT topic with a payload describing the label to set, which *MQTT send receive* will listen for.
+To set eDLT/DLT screen labels from Home Assistant it is possible to publish a MQTT topic with a payload describing the label to set, which _MQTT send receive_ will listen for.
 
 The topic to publish has the form `cbus/write/0/56/16/label`, being set a new label at the 'Local' network, 'Lighting' application, address '16'. To simplify Home Assistant configuration, adding the keyword `label` will create an attribute called `label_topic` that may be referenced in an automation. (Example: `{{ state_attr('light.kitchen_bench_south_lights', 'label_topic') }}`, which will retrieve the correct topic to publish to.) You are, of course free to use a manually constructed topic.
 
@@ -170,23 +196,23 @@ If the label being set is for an action selector (application 202), then a JSON 
 
 > [!NOTE]
 >
-> Only publish MQTT topics _without_ the "Retain" option. If messages are published as retained then *MQTT send receive* will re-set the label on startup. (Hopefully restarts are few and far between, but this behaviour may be unwanted.) QOS does not matter, but I prefer to use `2`, deliver exactly once.
+> Only publish MQTT topics _without_ the "Retain" option. If messages are published as retained then _MQTT send receive_ will re-set the label on startup. (Hopefully restarts are few and far between, but this behaviour may be unwanted.) QOS does not matter, but I prefer to use `2`, deliver exactly once.
 
 An example automation:
 
 ```yaml
 alias: test_label_set
-description: ""
+description: ''
 triggers: []
 conditions: []
 actions:
-  - action: mqtt.publish
-    metadata: {}
-    data:
-      evaluate_payload: false
-      qos: "2"
-      payload: "{\"variant\": 1, \"label\": \"Hello world\"}"
-      topic: "{{ state_attr('light.kitchen_bench_south_lights', 'label_topic') }}"
+    - action: mqtt.publish
+      metadata: {}
+      data:
+          evaluate_payload: false
+          qos: '2'
+          payload: '{"variant": 1, "label": "Hello world"}'
+          topic: "{{ state_attr('light.kitchen_bench_south_lights', 'label_topic') }}"
 mode: single
 ```
 
@@ -204,23 +230,23 @@ There are three modes of operation for cover devices.
 
 Option one may be configured by specifying `MQTT, cover, noleveltranslate,`. This is the simplest mode of operation, usually employed for use with just a slider, where level translation mode may not be desired.
 
-Option two is configured by simply specifying `MQTT, cover,`. In this mode *MQTT send receive* uses open (level 255), close (level 0) and stop (level 5). Level translation mode must be set in the shutter relay global options. For status, when 'open' is selected any slider visible will move to 100% open, and should 'stop' be pressed during travel then the slider will move to 50%, and the reverse of this status for 'close'. This is because there is no position status feedback from a CBus shutter relay, which is where option three comes in.
+Option two is configured by simply specifying `MQTT, cover,`. In this mode _MQTT send receive_ uses open (level 255), close (level 0) and stop (level 5). Level translation mode must be set in the shutter relay global options. For status, when 'open' is selected any slider visible will move to 100% open, and should 'stop' be pressed during travel then the slider will move to 50%, and the reverse of this status for 'close'. This is because there is no position status feedback from a CBus shutter relay, which is where option three comes in.
 
-Option three is configured by specifying `MQTT, cover, rate=x(/x), (delay=x.x),`. In this mode, *MQTT send receive* will utilise a timed approximation of cover travel to update status in Home Assistant. It *must* be calibrated.
+Option three is configured by specifying `MQTT, cover, rate=x(/x), (delay=x.x),`. In this mode, _MQTT send receive_ will utilise a timed approximation of cover travel to update status in Home Assistant. It _must_ be calibrated.
 
 The calibration process is quite simple, and the more accurate the calibration the better the result (within the limits of the shutter - this isn't perfect, but is usually really good). Steps:
 
 1. Time how long it takes the cover to close.
 2. Time how long it takes to open. You do not need to be super accurate yet.
 3. Add these numbers in seconds to a `rate=up/down keyword`. An example for one of my Somfy blinds is `rate=16/16`. You can also just specify one rate value (e.g. `rate=16`) and the same will be used for open and close. (After calibration the final values ended at `rate=15.91/15.85`)
-4. Test and tweak. Start fully open, then close using HA to  almost the bottom but not quite. The blind will then jerk either upwards or downwards a little bit, telling you the timing was not quite right. Adjust the rate, and rinse/repeat, doing the same for opening on the other way up. On closing, if it jerks up on stop, it means the rate value is too low, and if it jerks down the opposite, so adjust slightly. On opening, if it jerks up after stop then the rate is too high, and if it jerks down too low. If it's not just jerking but moving significantly, then go back to the start because the rough timing is not right.
+4. Test and tweak. Start fully open, then close using HA to almost the bottom but not quite. The blind will then jerk either upwards or downwards a little bit, telling you the timing was not quite right. Adjust the rate, and rinse/repeat, doing the same for opening on the other way up. On closing, if it jerks up on stop, it means the rate value is too low, and if it jerks down the opposite, so adjust slightly. On opening, if it jerks up after stop then the rate is too high, and if it jerks down too low. If it's not just jerking but moving significantly, then go back to the start because the rough timing is not right.
 5. If after calibration the slight tweak on stop is not desired then set a variable near the top of the script to false (setCoverLevelAtStop). The approximation of level from timing will always be a little bit off, but going fully open or closed, or to a specific level with a slider will always be 100% accurate.
 
 The current position of the blind is not initially set in storage for tracking mode, but will be once the `rate=` keyword is added and a full open or close is done, or a slider is set to any open level.
 
 A keyword `delay=` is also available. If there is a small delay before a cover begins its travel then this can delay tracking for a period. 1/10th of a second resolution.
 
-Status update smoothness in Home Assistant is dependent on *MQTT send receive* not being interrupted significantly during a tracked transition. Check for keyword changes is usually the reason, especially for large deployments where checking can take 100-300ms, and this makes the status jump a little. If it bothers you then set `checkForChanges` to false at the top of the script, and simply restart *MQTT send receive* should any keywords change. Personally I like the convenience of change checks, and I have it set at quite a frequent interval for development, and not thirty seconds.
+Status update smoothness in Home Assistant is dependent on _MQTT send receive_ not being interrupted significantly during a tracked transition. Check for keyword changes is usually the reason, especially for large deployments where checking can take 100-300ms, and this makes the status jump a little. If it bothers you then set `checkForChanges` to false at the top of the script, and simply restart _MQTT send receive_ should any keywords change. Personally I like the convenience of change checks, and I have it set at quite a frequent interval for development, and not thirty seconds.
 
 > [!NOTE]
 > Movement of the cover is assumed to be linear, however if this is not the case for your particular cover then feel free to open an issue and we can discuss whether there's a way to track it better.
@@ -284,6 +310,7 @@ local imgDefault = { -- Defaults for images - Simple image name, or a table of '
 ```
 
 #### Variables at the top of the script
+
 Aside from the obvious local broker, change checking, and Airtopia, Panasonic and ESPhome support variables at the stop of the script, there are three script behaviour modifying variables. These can be important to select individual preferences.
 
 The first is `entityIdAsIdentifier`. This is important to choose how the entity ID is presented to Home Assistant. If it is set to `true`, then entity IDs will be created using the object identifier (e.g. `light.bathroom_1_fan`), and if false by using C-Bus numbering (e.g. `light.cbus_mqtt_254_56_10`). Choosing `true` may make writing automations, and selecting dashboard items much easier and readable. I recommend it. Entity IDs must be unique, so if `entityIdAsIdentifier=true` then make sure all `sa=`/`pn=` selections are unique. The script currently does not check this, so if there are duplicates they will be revealed in the Home Assistant error log.
@@ -293,13 +320,15 @@ The second is `forceChangeId`. If `entityIdAsIdentifier` is changed, then entity
 The third is `removeSaFromStartOfPn`. By default this is `true`, and I prefer this, but some do not. The script will remove the 'suggested area' from the start of any 'preferred name' entries if present (or from the default C-Bus object name). For example, with a `sa=Bedroom 1`, the `pn=Bedroom 1 Light` would become simply 'Light' in Home Assistant. When this variable is set to `false`, the exact perferred name would be used instead, being 'Bedroom 1 Light'. Including the keyword `exactpn` with `removeSaFromStartOfPn=true` will create an exception for an individual object, allowing the best of both worlds.
 
 ### Philips Hue (HUE send receive)
+
 For Philips Hue devices, bi-directional sync with CBus occurs. I run Home Assistant talking directly to the Hue hub, and also the Automation Controller script via REST API. Add the keyword `HUE` to CBus objects, plus...
+
 - `pn=` Preferred name (needs to match exactly the name of the Hue device.)
 
 Keyword examples:
 
-* `HUE, pn=Steve's bedside light,`
-* `HUE, pn=Steve's electric blanket,`
+- `HUE, pn=Steve's bedside light,`
+- `HUE, pn=Steve's electric blanket,`
 
 A useful result is that Philips Hue devices can then be added to CBus scenes, like an 'All off' function.
 
@@ -308,17 +337,20 @@ The CBus groups for Hue devices are usually not used for any purpose other than 
 > [!NOTE]
 > This script only handles on/off as well as levels for dimmable Hue devices, but not colours/colour temperature, as that's not a CBus thing. Colour details will return to previously set values done in the Hue app.
 
-### Panasonic Air Conditioners (*MQTT send receive*)
+### Panasonic Air Conditioners (_MQTT send receive_)
+
 For Panasonic air conditioners connected to MQTT via ESPHome (see example .yaml file), add the keyword `AC` to user parameters plus...
 
-* `dev=`   ESPHome device name, required, and one of:
-* `func=`  Function (`mode`, `target_temperature`, `fan_mode`, `swing_mode`, which results in `{dev}/climate/panasonic/{func}/#`)
+- `dev=` ESPHome device name, required, and one of:
+- `func=` Function (`mode`, `target_temperature`, `fan_mode`, `swing_mode`, which results in `{dev}/climate/panasonic/{func}/#`)
 
 ... or
-* `sel=`   Select (`vertical_swing_mode`, `horizontal_swing_mode`, which results in `{dev}/select/{sel}/#`)
+
+- `sel=` Select (`vertical_swing_mode`, `horizontal_swing_mode`, which results in `{dev}/select/{sel}/#`)
 
 ... or
-* `sense=` A read only sensor like `current_temperature`, plus `topic=` (e.g. `climate` or `sensor`) with `sensor` as default
+
+- `sense=` A read only sensor like `current_temperature`, plus `topic=` (e.g. `climate` or `sensor`) with `sensor` as default
 
 Mode strings = (`off`, `heat`, `cool`, `heat_cool`, `dry`, `fan_only`)
 Horizontal swing mode strings = (`auto`, `left`, `left_center`, `center`, `right_center`, `right`)
@@ -326,14 +358,14 @@ Vertical swing mode strings = (`auto`, `up`, `up_center`, `center`, `down_center
 
 Panasonic keyword examples:
 
-* `AC, dev=storeac, func=mode,`
-* `AC, dev=storeac, func=target_temperature,`
-* `AC, dev=storeac, func=fan_mode,`
-* `AC, dev=storeac, func=swing_mode,`
-* `AC, dev=storeac, sel=vertical_swing_mode,`
-* `AC, dev=storeac, sel=horizontal_swing_mode,`
-* `AC, dev=storeac, sense=current_temperature, topic=climate,`
-* `AC, dev=storeac, sense=outside_temperature,`
+- `AC, dev=storeac, func=mode,`
+- `AC, dev=storeac, func=target_temperature,`
+- `AC, dev=storeac, func=fan_mode,`
+- `AC, dev=storeac, func=swing_mode,`
+- `AC, dev=storeac, sel=vertical_swing_mode,`
+- `AC, dev=storeac, sel=horizontal_swing_mode,`
+- `AC, dev=storeac, sense=current_temperature, topic=climate,`
+- `AC, dev=storeac, sense=outside_temperature,`
 
 > [!NOTE]
 > The objects `target_temperature`, and the sensors `current_temperature` and `outside_temperature` are integer user parameters, while all others are string user parameters.
@@ -342,36 +374,41 @@ Panasonic keyword examples:
 
 See https://github.com/DomiStyle/esphome-panasonic-ac for ESP32 hardware/wiring hints.
 
-### Airtopia Air Conditioner Controllers (*MQTT send receive*, an ancient IR blaster)
+### Airtopia Air Conditioner Controllers (_MQTT send receive_, an ancient IR blaster)
 
 For Airtopia devices, add the keyword `AT` to user parameters, plus...
 
-*  `dev=`  Airtopia device name (you choose, lowercase word, no spaces), required
-*  `sa=`   Suggested area (to at least one of the device user parameters)
+- `dev=` Airtopia device name (you choose, lowercase word, no spaces), required
+- `sa=` Suggested area (to at least one of the device user parameters)
 
 And one or more of:
-*  `func=`  Function (`power`, `mode`, `vert_swing`, `horiz_swing`, `target_temperature`, `fan`)
+
+- `func=` Function (`power`, `mode`, `vert_swing`, `horiz_swing`, `target_temperature`, `fan`)
 
 ... or
-*  `sense=` A read only sensor like `current_temperature`, `power_consumption`
 
-### Environment Monitors (*MQTT send receive*)
+- `sense=` A read only sensor like `current_temperature`, `power_consumption`
+
+### Environment Monitors (_MQTT send receive_)
+
 Environment monitors can pass sensor data to CBus (using ESPHome devices, see example .yaml).
 
 Add the `ENV` keyword, plus...
-* `dev=`  Device (the name of the ESPHome board)
-* `func=` Function (the sensor name configured in ESPHome) defaults to the User Parameter name in lowercase, spaces replaced with underscore
+
+- `dev=` Device (the name of the ESPHome board)
+- `func=` Function (the sensor name configured in ESPHome) defaults to the User Parameter name in lowercase, spaces replaced with underscore
 
 Environment examples:
 
-* `ENV, dev=outsideenv,`
+- `ENV, dev=outsideenv,`
 
 ## Getting it running
 
 ### Prepare Home Assistant
+
 I don't cover installing Home Assistant here. You probably wouldn't be reading this if you weren't already an avid user, but if you are new then you want 'HAOS' installed somewhere (RPi, NUC, VM, old laptop, etc.), and the Googled how-to guide you want will depend on that 'somewhere'.
 
-Install the official Mosquitto broker. First up, create a HomeAssistant user 'mqtt', and give it a password of 'password' (used in the *MQTT send receive* script), and probably hide it so it doesn't appear on dashboards (it doesn't need to be admin). Then go to Settings, Add-ons, and from 'official' add-ons install and start Mosquitto. Any HA user can be used to authenticate to this Mosquitto instance, explaining the creation of the user 'mqtt'.
+Install the official Mosquitto broker. First up, create a HomeAssistant user 'mqtt', and give it a password of 'password' (used in the _MQTT send receive_ script), and probably hide it so it doesn't appear on dashboards (it doesn't need to be admin). Then go to Settings, Add-ons, and from 'official' add-ons install and start Mosquitto. Any HA user can be used to authenticate to this Mosquitto instance, explaining the creation of the user 'mqtt'.
 
 If you don't want HAOS, then simply get an MQTT broker running elsewhere on your network.
 
@@ -380,7 +417,9 @@ The 'HUE send receive' script communicates directly with the bridge via its REST
 If you want to, go grab MQTT Explorer by Thomas Nordquist at http://mqtt-explorer.com/, which is an excellent tool to gain visibility of what is going on behind the scenes. On second thought, definitely go grab it. After connection the cbus read/homeassistant topics should show all objects having the right keywords.
 
 ### Home Assistant configuration.yaml example:
-Sets up the MQTT connection, plus includes many domains for Google Home (adjust as needed for Alexa, etc.). Note that this is for *my* server, on network 192.168.10.0, and I use a reverse proxy. Yours will be different.
+
+Sets up the MQTT connection, plus includes many domains for Google Home (adjust as needed for Alexa, etc.). Note that this is for _my_ server, on network 192.168.10.0, and I use a reverse proxy. Yours will be different.
+
 ```
 # Loads default set of integrations. Do not remove.
 default_config:
