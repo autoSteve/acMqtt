@@ -59,7 +59,7 @@ Lighting, measurement, user parameter, unit parameter, trigger control and enabl
 #### TL>DR examples
 
 - `MQTT, light, sa=Outside, pn=Outside Laundry Door Light, label,`
-- `MQTT, onoff, sa=Outside, pn=Outside Laundry Door Relay,` _(light entity with ON/OFF only)_
+- `MQTT, light, onoff, sa=Outside, pn=Outside Laundry Door Light,` _(light entity with ON/OFF only)_
 - `MQTT, switch, sa=Bathroom 1, img=mdi:radiator,`
 - `MQTT, fan_pct, preset, sa=Hutch, img=mdi:ceiling-fan,` _(a L5501RFCP sweep fan controller group)_
 - `MQTT, fan, sa=Hutch, img=mdi:ceiling-fan,`
