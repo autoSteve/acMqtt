@@ -84,7 +84,7 @@ For some PIR sensors, like the 5753PEIRL the light level may be broadcast period
 
 #### The details
 
-##### Philosphy
+##### Philosophy
 
 The C-Bus Automation Controller (SHAC/NAC/AC2/NAC2) can control many different devices. The acMqtt script needs to be told which of those devices (group addresses, or GAs) it should be monitoring. This is achieved by piggy-backing on the 'keywords' property that the Automation Controller preserves for each GA. Adding the `MQTT` keyword will tell acMqtt to monitor that GA, but in general you will also need to pair that with other keywords such as `light`, `sa=Lounge`, `lvl=0/255` etc. Note that keywords are comma-separated, but the Automation Controller web UI seems to take care of this automatically.
 
