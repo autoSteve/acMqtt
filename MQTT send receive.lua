@@ -131,7 +131,7 @@ local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
   'MQTT', 'light', 'switch', 'cover', 'event', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'isensor', 'button', 'select',
   'pn=', 'sa=', 'img=', 'unit=', 'class=', 'state_class=', 'disco=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=', 'rate=', 'delay=', 'topic=',
-  'includeunit', 'preset', 'noleveltranslate', 'exactpn', 'label', 'onoff'
+  'includeunits', 'preset', 'noleveltranslate', 'exactpn', 'label', 'onoff'
 }
 local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end cudRaw = nil
 
@@ -833,7 +833,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     topic = '',       -- MQTT topic for inbound sensors
   }
   local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
-  local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false, exactpn = false, label = false, onoff = false }
+  local special = { includeunits = false, preset = false, dec = false, noleveltranslate = false, exactpn = false, label = false, onoff = false }
 
   local lvl = false
   local dType, action, boid, dSa, payload, prefix, tag, k, t
@@ -1035,7 +1035,7 @@ local function addDiscover(net, app, group, channel, tags, name)
           payload.val_tpl = tpl..'{% else %}Unknown{% endif %}'
         end
         if _L.dec ~= 2 or _L.scale ~= 1 then publishAdj[alias] = { dec = _L.dec, scale = _L.scale } end -- Scale, decimals and units only for sensors
-        if _L.unit ~= '' and not special.includeUnit then payload.unit_of_meas = _L.unit else if not str then payload.unit_of_meas = '' end end
+        if _L.unit ~= '' and not special.includeunits then payload.unit_of_meas = _L.unit else if not str then payload.unit_of_meas = '' end end
         return payload
       end
     },
@@ -1165,7 +1165,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   end
 
   if dType == 'light' and app == 228 then dType = 'sensor'; log('Warning: publishing measurement app '..alias..' as a sensor, not light') end -- Measurement app sensor with incorrect/missing type
-  if special.includeUnit then includeUnits[alias] = true if logging then log('Including units for '..alias) end else includeUnits[alias] = nil end
+  if special.includeunits then includeUnits[alias] = true if logging then log('Including units for '..alias) end else includeUnits[alias] = nil end
 
   payload = allow[dType].getPayload()
 
