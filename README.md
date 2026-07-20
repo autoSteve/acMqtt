@@ -59,6 +59,7 @@ Lighting, measurement, user parameter, unit parameter, trigger control and enabl
 #### TL>DR examples
 
 - `MQTT, light, sa=Outside, pn=Outside Laundry Door Light, label,`
+- `MQTT, onoff, sa=Outside, pn=Outside Laundry Door Relay,` _(light entity with ON/OFF only)_
 - `MQTT, switch, sa=Bathroom 1, img=mdi:radiator,`
 - `MQTT, fan_pct, preset, sa=Hutch, img=mdi:ceiling-fan,` _(a L5501RFCP sweep fan controller group)_
 - `MQTT, fan, sa=Hutch, img=mdi:ceiling-fan,`
@@ -120,6 +121,7 @@ And in addition to the type...
 - Plus the keyword `includeunits` for measurement application values only, which appends the unit of measurement (for the measurement app the unit is read from CBus, _not_ the `unit=` keyword). Caution: This will make the sensor value a string, probably breaking any automations in HA that might expect a number, so using measurement app values without `includeunits` is probably what you want to be doing unless just displaying a value, which should probably use the right class anyway...
 - Plus the keyword `preset` in conjunction with `fan_pct` if both a percentage slider and a preset option are desired.
 - Plus the keyword `noleveltranslate` in conjunction with `cover`, see below.
+- Plus the keyword `onoff` in conjunction with `light` (or on its own, as `light` is the default) where an ON/OFF-only light entity is preferred (no brightness slider in Home Assistant).
 - Plus the keyword `label`, see below (sets up for eDLT/DLT label changing).
 
 #### On `lvl=`

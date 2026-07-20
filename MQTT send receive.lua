@@ -131,7 +131,7 @@ local acMsg = { climate = true, select = true, sensor = true, }
 local cudRaw = {             -- All possible keywords for MQTT types, used in CUD function to exclude unrelated keywords for change detection
   'MQTT', 'light', 'switch', 'cover', 'event', 'fan', 'fan_pct', 'fanpct', 'sensor', 'binary_sensor', 'binarysensor', 'bsensor', 'isensor', 'button', 'select',
   'pn=', 'sa=', 'img=', 'unit=', 'class=', 'state_class=', 'disco=', 'dec=', 'scale=', 'on=', 'off=', 'lvl=', 'rate=', 'delay=', 'topic=',
-  'includeunit', 'preset', 'noleveltranslate', 'exactpn', 'label'
+  'includeunit', 'preset', 'noleveltranslate', 'exactpn', 'label', 'onoff'
 }
 local cudAll = {} local param for _, param in ipairs(cudRaw) do cudAll[param] = true end cudRaw = nil
 
@@ -833,7 +833,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     topic = '',       -- MQTT topic for inbound sensors
   }
   local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct' }
-  local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false, exactpn = false, label = false }
+  local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false, exactpn = false, label = false, onoff = false }
 
   local lvl = false
   local dType, action, boid, dSa, payload, prefix, tag, k, t
@@ -942,6 +942,9 @@ local function addDiscover(net, app, group, channel, tags, name)
   local allow = {
     light = {
       getPayload = function()
+        if special.onoff then
+          return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', pl_on = 'ON', pl_off = 'OFF',}
+        end
         return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/switch', bri_stat_t = mqttReadTopic..alias..'/level', bri_cmd_t = mqttWriteTopic..alias..'/ramp', pl_off = 'OFF', on_cmd_type = 'brightness',}
       end
     },
