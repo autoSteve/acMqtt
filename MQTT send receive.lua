@@ -25,7 +25,7 @@ Resident, zero sleep interval, name: 'MQTT send receive'
 Manage CBus, Panasonic and Airtopia AC and environment events for MQTT, and publish discovery topics. Used with Home Assistant.
 
 Documentation available at https://github.com/autoSteve/acMqtt
-Downloaded version: 1.0.0
+Downloaded version: 1.1.0
 --]]
 
 --[[
