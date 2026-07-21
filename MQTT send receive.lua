@@ -858,7 +858,7 @@ local function addDiscover(net, app, group, channel, tags, name)
     delay = 0,        -- Delay before starting cover tracking
     topic = '',       -- MQTT topic for inbound sensors
   }
-  local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct', includeunit = 'includeunits' }
+  local synonym = { binarysensor = 'binary_sensor', fanpct = 'fan_pct', includeunits = 'includeunit' }
   local special = { includeunit = false, preset = false, dec = false, noleveltranslate = false, exactpn = false, label = false, onoff = false }
 
   local lvl = false
@@ -1518,6 +1518,7 @@ local function publishAtState()
       end
       client:publish(topic, level, mqttQoS, RETAIN)
     end
+    ::skipPublishAt::
     local hswing = atDevices[k..'-horiz_swing']
     local vswing = atDevices[k..'-vert_swing']
     if hswing ~= nil and vswing ~= nil then
