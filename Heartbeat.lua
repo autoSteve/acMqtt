@@ -73,7 +73,7 @@ if sendHeartbeat > 0 then
       heartbeat = os.time(); require('socket').udp():sendto(_SCRIPTNAME..'+'..heartbeat, '127.0.0.1', 5433)
     end
   end)
-  if not stat then logger('A fault occurred sending heartbeat. Restarting...'); do return end end
+  if not stat then logger('A fault occurred sending heartbeat. Restarting...'); return end
 end
 
 --]]
@@ -131,7 +131,7 @@ server:settimeout(1)
 if not server:setsockname('127.0.0.1', 5433) then
   logger('Error: Could not listen on port 5433', FORCE)
   socket.sleep(60)
-  do return end
+  return
 end
 
 logger('Heartbeat initialised', FORCE)

@@ -845,7 +845,7 @@ while true do
         logger('Event stream receive failed: Socket error state is '..tostring(err)..', restarting', FORCE)
       end
       pcall(function () sock:close() end)
-      do return end
+      return
     end
   end
 
@@ -863,7 +863,7 @@ while true do
   if socket.gettime() - lastReceived > 60 then
     logger('Timed out getting bridge details, restarting', FORCE)
     pcall(function () sock:close() end)
-    do return end
+    return
   end
 
   -- Check for new messages from CBus
@@ -895,7 +895,7 @@ while true do
       storage.set('hueactive', nil)
       logger('A fault occurred sending heartbeat. f...', FORCE)
       pcall(function () sock:close() end)
-      do return end
+      return
     end
   end
 end
