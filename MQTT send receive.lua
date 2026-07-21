@@ -375,13 +375,15 @@ local function eventCallback(event)
   if mqttDevices[event.dst] then
     local value, ramp
     local parts = string.split(event.dst, '/')
-    local tp = grp.find(event.dst).datatype
+    local grpInfo = grp.find(event.dst)
+    if not grpInfo then log('Error: Group not found for '..event.dst); return end
+    local tp = grpInfo.datatype
     
     if lighting[parts[2]] then
       value = tonumber(string.sub(event.datahex,1,2),16)
       local target = tonumber(string.sub(event.datahex,3,4),16)
       local ramp = tonumber(string.sub(event.datahex,5,8),16)
-      if ramp > 0 then
+      if ramp and ramp > 0 then
         if event.meta == 'admin' then return end
         if value ~= target then return end
       end
@@ -400,7 +402,11 @@ local function eventCallback(event)
       comp = string.format('%.5f', value)
       if comp == pre then
         if logging then log('Not setting '..event.dst..' to '..value..', same as previous value') end
-        if logging then log('Content of datahex: '..event.datahex..'. Type='..grp.find(event.dst).datatype..'. pre='..pre..'. comp='..comp) end
+        if logging then
+          local grpInfo2 = grp.find(event.dst)
+          local typeStr = grpInfo2 and grpInfo2.datatype or 'unknown'
+          log('Content of datahex: '..event.datahex..'. Type='..typeStr..'. pre='..pre..'. comp='..comp)
+        end
         return
       end
     end
@@ -429,7 +435,9 @@ local function eventCallback(event)
   elseif (panasonicSupport and ac[event.dst]) or (airtopiaSupport and at[event.dst]) then
     local parts = string.split(event.dst, '/')
     local value
-    local tp = grp.find(event.dst).datatype
+    local grpInfo = grp.find(event.dst)
+    if not grpInfo then log('Error: Group not found for '..event.dst); return end
+    local tp = grpInfo.datatype
     if convertDatahex[tp] ~= nil then
       value = convertDatahex[tp](event.datahex)
     else
@@ -450,7 +458,7 @@ Publish lighting, user parameter and trigger objects to MQTT
 --]]
 local function publish(alias, app, level, noPre)
   if noPre == nil then noPre = false end
-  if level == nil then log('Warning: Nil CBus level for '..alias); do return end end
+  if level == nil then log('Warning: Nil CBus level for '..alias); return end
   local state = ''
   if cover[alias] then
     if mqttDevices[alias].noleveltranslate then
@@ -556,7 +564,9 @@ local function trackTransitions()
   for k, v in pairs(transition) do
     if t < v.ts then goto next end
     local closing = v.state == 'closing'
+    if not mqttDevices[k] or not mqttDevices[k].rate then goto next end
     local rate = closing and tonumber(mqttDevices[k].rate[2]) or tonumber(mqttDevices[k].rate[1])
+    if not rate then goto next end
     local increment = (t - v.ts) / rate * 256
     if closing then v.level = v.level - increment else v.level = v.level + increment end
     coverLevel[k] = math.floor(v.level + 0.5)
@@ -580,7 +590,7 @@ end
 Publish measurement application objects to MQTT 
 --]]
 local function publishMeasurement(alias, net, group, channel, value)
-  if value == nil then log('Warning: Nil CBus measurement value for '..alias); do return end end
+  if value == nil then log('Warning: Nil CBus measurement value for '..alias); return end
   local units, v
   local adjust = publishAdj[alias]
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
@@ -604,7 +614,7 @@ end
 Publish unit parameter objects to MQTT 
 --]]
 local function publishUnitParam(alias, value)
-  if value == nil then log('Warning: Nil unit parameter value for '..alias); do return end end
+  if value == nil then log('Warning: Nil unit parameter value for '..alias); return end
   local adjust = publishAdj[alias]
   local v
   if adjust then v = tonumber(string.format('%.'..adjust.dec..'f', value * adjust.scale)) else v = value end
@@ -618,7 +628,7 @@ end
 Publish Panasonic ESPHome objects to MQTT 
 --]]
 local function publishAc(alias, level, select)
-  if level == nil then log('Warning: Nil AC level for '..alias); do return end end
+  if level == nil then log('Warning: Nil AC level for '..alias); return end
   if ac[alias].state ~= level then
     if ignoreMqtt[alias] and (socket.gettime() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
       ignoreMqtt[alias] = nil
@@ -655,7 +665,7 @@ end
 Publish Airtopia MODBUS objects to MQTT 
 --]]
 local function publishAt(alias, level)
-  if level == nil then log('Warning: Nil AT level for '..alias); do return end end
+  if level == nil then log('Warning: Nil AT level for '..alias); return end
   if at[alias].state ~= level then
     if ignoreMqtt[alias] and (socket.gettime() - ignoreMqtt[alias] > ignoreTimeout) then -- Don't worry about older 'ignore' flags
       ignoreMqtt[alias] = nil
@@ -681,26 +691,42 @@ local function publishAt(alias, level)
         -- Publish swingha
         local o = atDevices[prefix..'-vert_swing']
         if o ~= nil then
-          parts = string.split(o, '/'); local net = tonumber(parts[1]); local group = tonumber(parts[3]); 
-          local v = bit.lshift(GetUserParam(net, group), 1)
-          local topic = 'airtopia/'..prefix..'/state/swingha'
-          local s = bit.bor(tonumber(level), v) + 1
-          client:publish(topic, atswings[s], mqttQoS, RETAIN)
+          parts = string.split(o, '/');
+          if #parts >= 3 then 
+            local net = tonumber(parts[1]); local group = tonumber(parts[3]); 
+            local v = bit.lshift(GetUserParam(net, group), 1); 
+            local topic = 'airtopia/'..prefix..'/state/swingha'; 
+            local levelNum = tonumber(level); 
+            if levelNum then 
+              local s = bit.bor(levelNum, v) + 1; 
+              client:publish(topic, atswings[s] or 'unknown', mqttQoS, RETAIN) 
+            end 
+          else 
+            log('Error: Invalid vert_swing format')
+          end 
         end
       elseif st == 'vert_swing' then
         -- Publish swingha
         local o = atDevices[prefix..'-horiz_swing']
         if o ~= nil then
-          parts = string.split(o, '/'); local net = tonumber(parts[1]); local group = tonumber(parts[3]); 
-          local h = GetUserParam(net, group)
-          local topic = 'airtopia/'..prefix..'/state/swingha'
-          local v = bit.lshift(tonumber(level), 1)
-          local s = bit.bor(h, v) + 1
-          client:publish(topic, atswings[s], mqttQoS, RETAIN)
+          parts = string.split(o, '/')
+          if #parts >= 3 then 
+            local net = tonumber(parts[1]); local group = tonumber(parts[3]); 
+            local h = GetUserParam(net, group); 
+            local topic = 'airtopia/'..prefix..'/state/swingha'; 
+            local levelNum = tonumber(level); 
+            if levelNum then 
+              local v = bit.lshift(levelNum, 1)
+              local s = bit.bor(h, v) + 1
+              client:publish(topic, atswings[s], mqttQoS, RETAIN)
+            end
+          else
+            log('Error: Invalid horiz_swing format')
+          end
         end
       elseif st == 'fan' then
         -- Publish fanha
-        local fanv = atfans[level+1]
+        local fanv = atfans[level+1] or 'unknown'
         local topic = 'airtopia/'..parts[1]..'/state/fanha'
         client:publish(topic, fanv, mqttQoS, RETAIN)
       end
@@ -965,7 +991,7 @@ local function addDiscover(net, app, group, channel, tags, name)
         else
           mqttDevices[alias].noleveltranslate = false
           if not hasMembers(_L.rate) then log('Warning: No cover open/cose rate specified for '..alias..'. Transition tracking disabled.') end
-          if coverLevel[alias] == nil then coverLevel[alias] = grp.getvalue(alias) log('Warning: Initialising cover level for '..alias..' with '..grp.getvalue(alias)..'. This may not be correct.') end
+          if coverLevel[alias] == nil then coverLevel[alias] = grp.getvalue(alias); log('Warning: Initialising cover level for '..alias..' with '..grp.getvalue(alias)..'. This may not be correct.') end
           return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/open', set_pos_t = mqttWriteTopic..alias..'/ramp',}
         end
       end
@@ -1253,7 +1279,7 @@ local function addAtDiscover(name, sa, unit)
     unit_of_meas = unit,
   }
   local j = json.encode(payload)
-  if logging then log('Publishing'..mqttDiscoveryTopic..'sensor/'..mqttDiscoveryNodeId..oid..'_power'..'/config') end
+  if logging then log('Publishing '..mqttDiscoveryTopic..'sensor/'..mqttDiscoveryNodeId..oid..'_power'..'/config') end
   client:publish(mqttDiscoveryTopic..'sensor/'..mqttDiscoveryNodeId..oid..'_power'..'/config', j, mqttQoS, RETAIN)
 end
 
@@ -1482,33 +1508,39 @@ local function publishAtState()
     local mode = atDevices[k..'-mode']
     local power = atDevices[k..'-power']
     if mode ~= nil and power ~= nil then
-      parts = string.split(mode, '/'); local mnet = tonumber(parts[1]); local mgroup = tonumber(parts[3])
-      parts = string.split(power, '/'); local pnet = tonumber(parts[1]); local pgroup = tonumber(parts[3])
+      parts = string.split(mode, '/'); if #parts < 3 then log('Error: Invalid mode format for '..k); goto skipPublishAt end; local mnet = tonumber(parts[1]); local mgroup = tonumber(parts[3])
+      parts = string.split(power, '/'); if #parts < 3 then log('Error: Invalid power format for '..k); goto skipPublishAt end; local pnet = tonumber(parts[1]); local pgroup = tonumber(parts[3])
       topic = 'airtopia/'..k..'/state/modeha'
       if GetUserParam(pnet, pgroup) == 0 then
         level = 'off'
       else
-        level = atmodes[GetUserParam(mnet, mgroup)]
+        local modeIdx = GetUserParam(mnet, mgroup); level = atmodes[modeIdx] or 'unknown'
       end
       client:publish(topic, level, mqttQoS, RETAIN)
     end
     local hswing = atDevices[k..'-horiz_swing']
     local vswing = atDevices[k..'-vert_swing']
     if hswing ~= nil and vswing ~= nil then
-      parts = string.split(hswing, '/'); local hnet = tonumber(parts[1]); local hgroup = tonumber(parts[3])
-      parts = string.split(vswing, '/'); local vnet = tonumber(parts[1]); local vgroup = tonumber(parts[3])
-      topic = 'airtopia/'..k..'/state/swingha'
-      local h = GetUserParam(hnet, hgroup)
-      local v = bit.lshift(GetUserParam(vnet, vgroup), 1)
-      local s = bit.bor(h, v) + 1
-      client:publish(topic, atswings[s], mqttQoS, RETAIN)
+      local hnet, hgroup, vnet, vgroup
+      parts = string.split(hswing, '/'); if #parts >= 3 then hnet = tonumber(parts[1]); hgroup = tonumber(parts[3]) else log('Error: Invalid hswing format in publishAt'); hswing = nil; end
+      parts = string.split(vswing, '/'); if #parts >= 3 then vnet = tonumber(parts[1]); vgroup = tonumber(parts[3]) else log('Error: Invalid vswing format in publishAt'); vswing = nil; end
+      if hnet and hgroup and vnet and vgroup then
+        topic = 'airtopia/'..k..'/state/swingha'
+        local h = GetUserParam(hnet, hgroup)
+        local v = bit.lshift(GetUserParam(vnet, vgroup), 1)
+        local s = bit.bor(h, v) + 1
+        client:publish(topic, atswings[s], mqttQoS, RETAIN)
+      end
     end
     local fan = atDevices[k..'-fan']
     if fan ~= nil then
-      parts = string.split(fan, '/'); local fnet = tonumber(parts[1]); local fgroup = tonumber(parts[3])
-      topic = 'airtopia/'..k..'/state/fanha'
-      local f = GetUserParam(fnet, fgroup)
-      client:publish(topic, atfans[f+1], mqttQoS, RETAIN)
+      local fnet, fgroup
+      parts = string.split(fan, '/'); if #parts >= 3 then fnet = tonumber(parts[1]); fgroup = tonumber(parts[3]) else log('Error: Invalid fan format'); fan = nil; end
+      if fnet and fgroup then
+        topic = 'airtopia/'..k..'/state/fanha'
+        local f = GetUserParam(fnet, fgroup)
+        client:publish(topic, atfans[f+1], mqttQoS, RETAIN)
+      end
     end
     client:subscribe('airtopia/'..k..'/#', 2)
   end
@@ -1651,7 +1683,7 @@ local function cudCBusTopics()
           if lvl ~= nil then -- Check for levels being changed
             olvl = {}
             if mqttDevices[alias].tags.lvl then
-              local l local p = string.split(mqttDevices[alias].tags.lvl, '/')
+              local p = string.split(mqttDevices[alias].tags.lvl, '/')
               for _, l in ipairs(p) do _, olvl[#olvl+1] = decodeLevel(v.net, v.app, v.group, l) end
             end
             local diff = difference(olvl, lvl)
@@ -1727,7 +1759,7 @@ local function cudCBusTopics()
           local remove = nil
           if act then
             trigger = nil
-            for i, t in ipairs(v.trigger) do if lvl == tonumber(string.match(t, '_(%w+)$')) then trigger = t; remove = i; break end end
+            for i, t in ipairs(v.trigger) do local m = tonumber(string.match(t, '_(%w+)$') or '0'); if lvl == m then trigger = t; remove = i; break end end
             if trigger then
               topic = mqttDiscoveryTopic..v.type..'/'..mqttDiscoveryNodeId..trigger..'/config'
               client:publish(topic, '', mqttQoS, RETAIN); log('Remove discovery topic for '..topic..' (trigger level '..lvl..')')
@@ -1842,7 +1874,7 @@ local function outstandingMqttMessage()
 
     -- Messages from CBus write topics
     if parts[1] == mqttCbus:gsub('/', '') and parts[2] == 'write' then
-      local net = tonumber(parts[3]) local app = tonumber(parts[4]) local group = tonumber(parts[5])
+      local net = tonumber(parts[3]); local app = tonumber(parts[4]); local group = tonumber(parts[5])
       local alias = net..'/'..app..'/'..group
       if logging then log('Set '..topic..' to '..payload) end
 
@@ -1857,19 +1889,23 @@ local function outstandingMqttMessage()
         end
 
       elseif parts[6] == 'select' then
-        if app == 202 then
-          SetTriggerLevel(group, selects[alias][payload]); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
-        elseif app == 203 then
-          SetEnableLevel(group, selects[alias][payload]); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
+        if selects[alias] and selects[alias][payload] then
+          if app == 202 then
+            SetTriggerLevel(group, selects[alias][payload]); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
+          elseif app == 203 then
+            SetEnableLevel(group, selects[alias][payload]); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
+          else
+            SetCBusLevel(net, app, group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
+          end
         else
-          SetCBusLevel(net, app, group, selects[alias][payload], 0); if logging then log('Payload is '..payload..' ('..selects[alias][payload]..') for '..alias) end
+          log('Warning: Invalid select payload '..payload..' for '..alias)
         end
 
       elseif parts[6]:contains('press') and payload == 'PRESS' then -- Lighting group press
         PulseCBusLevel(net, app, group, 255, 0, 1, 0); if logging then log('Payload for '..alias..' is PRESS') end
 
       elseif parts[7] ~= nil and parts[7]:contains('press') and payload == 'PRESS' then -- Trigger level press
-        local level = triggers[group][parts[6]]
+        local level = triggers[group] and triggers[group][parts[6]] or nil
         if level ~= nil then
           SetTriggerLevel(group, level); if logging then log('Payload for '..alias..' is PRESS') end
         else
@@ -1932,7 +1968,7 @@ local function outstandingMqttMessage()
                 toSet = num
               end
               if cover[alias] then
-                coverLevel[alias] = toSet storage.set('coverLevel', coverLevel) mqttDevices[alias].transition = nil
+                coverLevel[alias] = toSet; storage.set('coverLevel', coverLevel); transition[alias] = nil
                 if hasMembers(mqttDevices[alias].rate) then client:publish(mqttReadTopic..alias..'/state', (coverLevel[alias] ~= 0) and 'open' or 'closed', mqttQoS, RETAIN) end
               end
             else
@@ -2008,7 +2044,7 @@ local function outstandingMqttMessage()
           -- Deal with real number imprecision, assuming three decimal places for change detection
           if string.format('%.3f', extant) ~= string.format('%.3f', tonumber(payload)) then SetUserParam(envDevices[device][1], envDevices[device][2], payload) end
         else
-          if extant ~= payload then SetUserParam(net, group, payload) end
+          if extant ~= payload then SetUserParam(envDevices[device][1], envDevices[device][2], payload) end
         end
         env[envDevices[device][3]].state = payload
       end
@@ -2080,9 +2116,11 @@ local function outstandingMqttMessage()
           alias = atDevices[device]
           local p = string.split(alias, '/'); net = tonumber(p[1]); group = tonumber(p[3])
           i = indexOf(atmodes, payload)
-          if i ~= nil then
+          if i ~= nil and parts[2] ~= nil and atBoards[parts[2]] ~= nil then
             local set = false
-            local pwrgrp = tonumber(string.split(atBoards[parts[2]].alias, '/')[3]) -- Get the power user parameter
+            local pwrSplit = string.split(atBoards[parts[2]].alias, '/')
+            if #pwrSplit < 3 then log('Error: Invalid atBoards alias format for '..parts[2]) goto skipMode end
+            local pwrgrp = tonumber(pwrSplit[3]) -- Get the power user parameter
             local extant = GetUserParam(net, pwrgrp)
             local pld = nil
             if payload ~= 'off' then
@@ -2095,8 +2133,8 @@ local function outstandingMqttMessage()
             end
             if set and pld ~= nil then
               -- Send to CBus, ensuring MQTT ignore is set...
-              local alias = atBoards[parts[2]].alias
-              ignoreMqtt[alias] = socket.gettime(); if logging then log('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..pld) end
+              local bAlias = atBoards[parts[2]].alias
+              ignoreMqtt[bAlias] = socket.gettime(); if logging then log('Setting ignoreMqtt for '..bAlias..', oldState='..extant..' payload='..pld) end
               SetUserParam(net, pwrgrp, pld)
             end
             -- publish to CBus
@@ -2105,6 +2143,7 @@ local function outstandingMqttMessage()
               ignoreMqtt[alias] = socket.gettime(); if logging then log('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
               SetUserParam(net, group, i)
             end
+            ::skipMode::
           end
           -- Publish state to broker
           local parts = string.split(at[alias].name, '-')
@@ -2124,8 +2163,8 @@ local function outstandingMqttMessage()
           local board = parts[2]
           local topic = 'airtopia/'..board..'/state/swingha'
           client:publish(topic, payload, mqttQoS, RETAIN)
-          parts = string.split(hswing, '/'); SetUserParam(parts[1], parts[3], h)
-          parts = string.split(vswing, '/'); SetUserParam(parts[1], parts[3], v)
+          parts = string.split(hswing, '/'); if #parts >= 3 then SetUserParam(tonumber(parts[1]), tonumber(parts[3]), h) else log('Error: Invalid hswing format') end
+          parts = string.split(vswing, '/'); if #parts >= 3 then SetUserParam(tonumber(parts[1]), tonumber(parts[3]), v) else log('Error: Invalid vswing format') end
         end
 
       elseif parts[4] == 'fan' then
@@ -2136,7 +2175,7 @@ local function outstandingMqttMessage()
           local board = parts[2]
           local topic = 'airtopia/'..board..'/state/fanha'
           client:publish(topic, payload, mqttQoS, RETAIN)
-          parts = string.split(fan, '/'); SetUserParam(parts[1], parts[3], f)
+          parts = string.split(fan, '/'); if #parts >= 3 then SetUserParam(tonumber(parts[1]), tonumber(parts[3]), f) else log('Error: Invalid fan format') end
         end
 
       else -- Set target temp
@@ -2146,7 +2185,7 @@ local function outstandingMqttMessage()
           pub(alias, payload)
           -- publish to CBus
           local extant = GetUserParam(net, group)
-          if payoad ~= extant then
+          if payload ~= extant then
             ignoreMqtt[alias] = socket.gettime(); if logging then log('Setting ignoreMqtt for '..alias..', oldState='..extant..' payload='..payload) end
             SetUserParam(net, group, payload)
           end
@@ -2187,8 +2226,8 @@ local function outstandingCbusMessage()
         stat, err = pcall(publish, alias, cmd.app, payload) if not stat then log(err) end
         if cover[alias] and not mqttDevices[alias].noleveltranslate and hasMembers(mqttDevices[alias].rate) then
           if not transition[alias] then
-            if payload == 0 then transition[alias] = { state='closing', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to open') end
-            elseif payload == 255 then transition[alias] = { state='opening', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to closed') end
+            if payload == 0 then transition[alias] = { state='closing', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to close') end
+            elseif payload == 255 then transition[alias] = { state='opening', level=coverLevel[alias], ts=socket.gettime() + mqttDevices[alias].delay, } if logging then log('Transitioning '..alias..' to open') end
             end
           else
             if payload == 5 then
@@ -2257,7 +2296,7 @@ if panasonicSupport then cud[#cud + 1] = { name = 'Panasonic', func = cudAc, ini
 if airtopiaSupport then cud[#cud + 1] = { name = 'Airtopia', func = cudAt, init = false } end
 
 local i, c
-for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end -- Set the time to next discover for each function, spread evenly over the check changes interval
+if #cud > 0 then for i, c in ipairs(cud) do c.t = socket.gettime() - checkChanges * 1/#cud * i + checkChanges/#cud end else log('Warning: No support flags enabled (environmentSupport, panasonicSupport, airtopiaSupport)') end -- Set the time to next discover for each function, spread evenly over the check changes interval
 
 local warningTimeout = 30
 local timeout = 1
@@ -2318,7 +2357,7 @@ while true do
     stat, err = pcall(function (b, p, k) client:connect(b, p, k) end, mqttBroker, 1883, 25) -- Requested keep-alive 25 seconds, broker at port 1883
     if not stat then -- Log and abort
       log('Error calling connect to broker: '..err)
-      do return end
+      return
     end
     while mqttStatus ~= 1 do
       client:loop(1) -- Service the client with a generous timeout
@@ -2355,7 +2394,7 @@ while true do
     end
   else
     log('Error: Invalid mqttStatus: '..mqttStatus)
-    do return end
+    return
   end
 
   ::next::
@@ -2366,5 +2405,5 @@ while true do
   If sending the heartbeat faults, then the loop is exited, which will also re-start this
   script (it being resident/sleep zero).
   --]]
-  if not checkHeartbeat() then do return end end
+  if not checkHeartbeat() then return end
 end
