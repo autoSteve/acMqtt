@@ -216,6 +216,21 @@ local function hex2float32(raw) -- Pure Lua IEEE 754 conversion
   return n
 end
 
+local function parseAddress(address, fieldName, name)
+  -- Parse an address string (e.g., "1/250/10" or "1/228/10/5" for measurement with channel).
+  -- Returns net, app, group, channel (channel is nil for 3-part addresses, all nil on error).
+  local parts = string.split(address, '/')
+  if #parts < 3 then
+    log('Error: Invalid '..fieldName..' format for '..name)
+    return nil, nil, nil, nil
+  end
+  local net = tonumber(parts[1])
+  local app = tonumber(parts[2])
+  local group = tonumber(parts[3])
+  local channel = #parts >= 4 and tonumber(parts[4]) or nil
+  return net, app, group, channel
+end
+
 local convertDatahex = { -- Convert a datahex value to the event type
   [dt.text]    = function (dh) return(string.gsub(dh, "(..)", function (x) return string.char(tonumber(x, 16)) end)) end, -- Convert string of hex to string of chars
   [dt.string]  = function (dh) return(string.gsub(dh, "(..)", function (x) return string.char(tonumber(x, 16)) end)) end,
@@ -413,8 +428,10 @@ local function eventCallback(event)
     if logging then log('Setting '..event.dst..' to '..tostring(value)..', previous='..tostring(mqttDevices[event.dst].value)) end
     mqttDevices[event.dst].value = value
     if type(value) == 'boolean' then value = value and 'ON' or 'OFF' end
-    cbusMessages[#cbusMessages + 1] = { ['alias']=event.dst, ['net']=tonumber(parts[1]), ['app']=tonumber(parts[2]), ['group']=tonumber(parts[3]), ['value']=value, }
-    if parts[4] ~= nil then cbusMessages[#cbusMessages].channel = tonumber(parts[4]) end
+    local net, app, group, channel = parseAddress(event.dst, 'address', 'event')
+    if net and app and group then
+      cbusMessages[#cbusMessages + 1] = { ['alias']=event.dst, ['net']=net, ['app']=app, ['group']=group, ['value']=value, ['channel']=channel, }
+    end
 
     -- Check whether to set the level as a tracked lastlevel
     local function setLastLevel(val)
@@ -445,7 +462,10 @@ local function eventCallback(event)
       return
     end
     if logging then log('Setting '..event.dst..' to '..value) end
-    cbusMessages[#cbusMessages + 1] = { ['alias']=event.dst, ['net']=tonumber(parts[1]), ['app']=tonumber(parts[2]), ['group']=tonumber(parts[3]), ['value']=value, }
+    local net, app, group = parseAddress(event.dst, 'address', 'event')
+    if net and app and group then
+      cbusMessages[#cbusMessages + 1] = { ['alias']=event.dst, ['net']=net, ['app']=app, ['group']=group, ['value']=value, }
+    end
   end
 end
 
@@ -691,9 +711,8 @@ local function publishAt(alias, level)
         -- Publish swingha
         local o = atDevices[prefix..'-vert_swing']
         if o ~= nil then
-          parts = string.split(o, '/');
-          if #parts >= 3 then 
-            local net = tonumber(parts[1]); local group = tonumber(parts[3]); 
+          local net, _, group = parseAddress(o, 'vert_swing', prefix)
+          if net and group then 
             local v = bit.lshift(GetUserParam(net, group), 1); 
             local topic = 'airtopia/'..prefix..'/state/swingha'; 
             local levelNum = tonumber(level); 
@@ -709,9 +728,8 @@ local function publishAt(alias, level)
         -- Publish swingha
         local o = atDevices[prefix..'-horiz_swing']
         if o ~= nil then
-          parts = string.split(o, '/')
-          if #parts >= 3 then 
-            local net = tonumber(parts[1]); local group = tonumber(parts[3]); 
+          local net, _, group = parseAddress(o, 'horiz_swing', prefix)
+          if net and group then 
             local h = GetUserParam(net, group); 
             local topic = 'airtopia/'..prefix..'/state/swingha'; 
             local levelNum = tonumber(level); 
@@ -1504,13 +1522,12 @@ Publish the state of Airtopia devices
 local function publishAtState()
   local k
   for k, _ in pairs(atBoards) do
-    local parts, topic, level
+    local topic, level
     local mode = atDevices[k..'-mode']
     local power = atDevices[k..'-power']
     if mode ~= nil and power ~= nil then
-      local mnet, mgroup, pnet, pgroup
-      parts = string.split(mode, '/'); if #parts < 3 then log('Error: Invalid mode format for '..k); mgroup = nil else mnet = tonumber(parts[1]); mgroup = tonumber(parts[3]) end
-      parts = string.split(power, '/'); if #parts < 3 then log('Error: Invalid power format for '..k); pgroup = nil else pnet = tonumber(parts[1]); pgroup = tonumber(parts[3]) end
+      local mnet, _, mgroup = parseAddress(mode, 'mode', k)
+      local pnet, _, pgroup = parseAddress(power, 'power', k)
       if mgroup ~= nil and pgroup ~= nil then 
         topic = 'airtopia/'..k..'/state/modeha'
         if GetUserParam(pnet, pgroup) == 0 then
@@ -1524,9 +1541,8 @@ local function publishAtState()
     local hswing = atDevices[k..'-horiz_swing']
     local vswing = atDevices[k..'-vert_swing']
     if hswing ~= nil and vswing ~= nil then
-      local hnet, hgroup, vnet, vgroup
-      parts = string.split(hswing, '/'); if #parts >= 3 then hnet = tonumber(parts[1]); hgroup = tonumber(parts[3]) else log('Error: Invalid hswing format in publishAt'); hswing = nil; end
-      parts = string.split(vswing, '/'); if #parts >= 3 then vnet = tonumber(parts[1]); vgroup = tonumber(parts[3]) else log('Error: Invalid vswing format in publishAt'); vswing = nil; end
+      local hnet, _, hgroup = parseAddress(hswing, 'horiz_swing', k)
+      local vnet, _, vgroup = parseAddress(vswing, 'vert_swing', k)
       if hnet and hgroup and vnet and vgroup then
         topic = 'airtopia/'..k..'/state/swingha'
         local h = GetUserParam(hnet, hgroup)
@@ -1537,8 +1553,7 @@ local function publishAtState()
     end
     local fan = atDevices[k..'-fan']
     if fan ~= nil then
-      local fnet, fgroup
-      parts = string.split(fan, '/'); if #parts >= 3 then fnet = tonumber(parts[1]); fgroup = tonumber(parts[3]) else log('Error: Invalid fan format'); fan = nil; end
+      local fnet, _, fgroup = parseAddress(fan, 'fan', k)
       if fnet and fgroup then
         topic = 'airtopia/'..k..'/state/fanha'
         local f = GetUserParam(fnet, fgroup)
@@ -2166,8 +2181,10 @@ local function outstandingMqttMessage()
           local board = parts[2]
           local topic = 'airtopia/'..board..'/state/swingha'
           client:publish(topic, payload, mqttQoS, RETAIN)
-          parts = string.split(hswing, '/'); if #parts >= 3 then SetUserParam(tonumber(parts[1]), tonumber(parts[3]), h) else log('Error: Invalid hswing format') end
-          parts = string.split(vswing, '/'); if #parts >= 3 then SetUserParam(tonumber(parts[1]), tonumber(parts[3]), v) else log('Error: Invalid vswing format') end
+          local hnet, _, hgroup = parseAddress(hswing, 'hswing', board)
+          local vnet, _, vgroup = parseAddress(vswing, 'vswing', board)
+          if hnet and hgroup then SetUserParam(hnet, hgroup, h) end
+          if vnet and vgroup then SetUserParam(vnet, vgroup, v) end
         end
 
       elseif parts[4] == 'fan' then
@@ -2178,7 +2195,8 @@ local function outstandingMqttMessage()
           local board = parts[2]
           local topic = 'airtopia/'..board..'/state/fanha'
           client:publish(topic, payload, mqttQoS, RETAIN)
-          parts = string.split(fan, '/'); if #parts >= 3 then SetUserParam(tonumber(parts[1]), tonumber(parts[3]), f) else log('Error: Invalid fan format') end
+          local fnet, _, fgroup = parseAddress(fan, 'fan', board)
+          if fnet and fgroup then SetUserParam(fnet, fgroup, f) end
         end
 
       else -- Set target temp
