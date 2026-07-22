@@ -989,7 +989,7 @@ local function addDiscover(net, app, group, channel, tags, name)
   userParameter[alias] = nil
   unitParameter[alias] = nil
   storeLevel[alias] = nil
-  for s, _ in pairs(special) do mqttDevices[s] = nil end
+  for s, _ in pairs(special) do mqttDevices[alias][s] = nil end
 
   local allow = {
     light = {
@@ -1703,7 +1703,7 @@ local function cudCBusTopics()
         if (v.app == 202 and not event[alias]) or v.app == 203 then
           lvl = nil
           if v.tags.lvl then
-            lvl = {} local l local p = string.split(v.tags.lvl, '/')
+            lvl = {}; local l; local p = string.split(v.tags.lvl, '/')
             for _, l in ipairs(p) do _, lvl[#lvl+1] = decodeLevel(v.net, v.app, v.group, l) end
           end
           if lvl ~= nil then -- Check for levels being changed
