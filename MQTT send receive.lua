@@ -1532,7 +1532,7 @@ local function publishAtState()
     if mode ~= nil and power ~= nil then
       local mnet, _, mgroup = parseAddress(mode, 'mode', k)
       local pnet, _, pgroup = parseAddress(power, 'power', k)
-      if mgroup ~= nil and pgroup ~= nil then 
+      if mnet ~= nil and mgroup ~= nil and pnet ~= nil and pgroup ~= nil then 
         topic = 'airtopia/'..k..'/state/modeha'
         if GetUserParam(pnet, pgroup) == 0 then
           level = 'off'
@@ -1781,7 +1781,10 @@ local function cudCBusTopics()
           local remove = nil
           if act then
             trigger = nil
-            for i, t in ipairs(v.trigger) do local m = tonumber(string.match(t, '_(%w+)$') or '0'); if lvl == m then trigger = t; remove = i; break end end
+            for i, t in ipairs(v.trigger) do
+              local m = tonumber(string.match(t, '_(%d+)$'))
+              if m and lvl == m then trigger = t; remove = i; break end
+            end
             if trigger then
               topic = mqttDiscoveryTopic..v.type..'/'..mqttDiscoveryNodeId..trigger..'/config'
               client:publish(topic, '', mqttQoS, RETAIN); log('Remove discovery topic for '..topic..' (trigger level '..lvl..')')
