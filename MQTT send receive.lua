@@ -221,13 +221,17 @@ local function parseAddress(address, fieldName, name)
   -- Returns net, app, group, channel (channel is nil for 3-part addresses, all nil on error).
   local parts = string.split(address, '/')
   if #parts < 3 then
-    log('Error: Invalid '..fieldName..' format for '..name)
+    log('Error: Invalid '..fieldName..' format for '..name..': '..tostring(address)..', expected format: net/app/group[/channel]')
     return nil, nil, nil, nil
   end
   local net = tonumber(parts[1])
   local app = tonumber(parts[2])
   local group = tonumber(parts[3])
   local channel = #parts >= 4 and tonumber(parts[4]) or nil
+  if net == nil or app == nil or group == nil or (#parts >= 4 and channel == nil) then
+    log('Error: Invalid '..fieldName..' numeric values expected for '..name..': '..tostring(address))
+    return nil, nil, nil, nil
+  end
   return net, app, group, channel
 end
 
@@ -1012,7 +1016,7 @@ local function addDiscover(net, app, group, channel, tags, name)
           return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/level', set_pos_t = mqttWriteTopic..alias..'/ramp',}
         else
           mqttDevices[alias].noleveltranslate = false
-          if not hasMembers(_L.rate) then log('Warning: No cover open/cose rate specified for '..alias..'. Transition tracking disabled.') end
+          if not hasMembers(_L.rate) then log('Warning: No cover open/close rate specified for '..alias..'. Transition tracking disabled.') end
           if coverLevel[alias] == nil then coverLevel[alias] = grp.getvalue(alias); log('Warning: Initialising cover level for '..alias..' with '..grp.getvalue(alias)..'. This may not be correct.') end
           return {stat_t = mqttReadTopic..alias..'/state', cmd_t = mqttWriteTopic..alias..'/ramp', pos_open = 255, pos_clsd = 0, pl_open = 'OPEN', pl_cls = 'CLOSE', pos_t = mqttReadTopic..alias..'/open', set_pos_t = mqttWriteTopic..alias..'/ramp',}
         end
