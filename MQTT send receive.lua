@@ -1508,17 +1508,19 @@ local function publishAtState()
     local mode = atDevices[k..'-mode']
     local power = atDevices[k..'-power']
     if mode ~= nil and power ~= nil then
-      parts = string.split(mode, '/'); if #parts < 3 then log('Error: Invalid mode format for '..k); goto skipPublishAt end; local mnet = tonumber(parts[1]); local mgroup = tonumber(parts[3])
-      parts = string.split(power, '/'); if #parts < 3 then log('Error: Invalid power format for '..k); goto skipPublishAt end; local pnet = tonumber(parts[1]); local pgroup = tonumber(parts[3])
-      topic = 'airtopia/'..k..'/state/modeha'
-      if GetUserParam(pnet, pgroup) == 0 then
-        level = 'off'
-      else
-        local modeIdx = GetUserParam(mnet, mgroup); level = atmodes[modeIdx] or 'unknown'
+      local mnet, mgroup, pnet, pgroup
+      parts = string.split(mode, '/'); if #parts < 3 then log('Error: Invalid mode format for '..k); mgroup = nil else mnet = tonumber(parts[1]); mgroup = tonumber(parts[3]) end
+      parts = string.split(power, '/'); if #parts < 3 then log('Error: Invalid power format for '..k); pgroup = nil else pnet = tonumber(parts[1]); pgroup = tonumber(parts[3]) end
+      if mgroup ~= nil and pgroup ~= nil then 
+        topic = 'airtopia/'..k..'/state/modeha'
+        if GetUserParam(pnet, pgroup) == 0 then
+          level = 'off'
+        else
+          local modeIdx = GetUserParam(mnet, mgroup); level = atmodes[modeIdx] or 'unknown'
+        end
+        client:publish(topic, level, mqttQoS, RETAIN)
       end
-      client:publish(topic, level, mqttQoS, RETAIN)
     end
-    ::skipPublishAt::
     local hswing = atDevices[k..'-horiz_swing']
     local vswing = atDevices[k..'-vert_swing']
     if hswing ~= nil and vswing ~= nil then
@@ -1530,7 +1532,7 @@ local function publishAtState()
         local h = GetUserParam(hnet, hgroup)
         local v = bit.lshift(GetUserParam(vnet, vgroup), 1)
         local s = bit.bor(h, v) + 1
-        client:publish(topic, atswings[s], mqttQoS, RETAIN)
+        client:publish(topic, atswings[s] or 'unknown', mqttQoS, RETAIN)
       end
     end
     local fan = atDevices[k..'-fan']
