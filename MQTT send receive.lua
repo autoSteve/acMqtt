@@ -579,14 +579,15 @@ Tracking of cover transitions, estimating with time travelled
 local function trackTransitions()
   local k, v
   local t = socket.gettime()
-  local kill = {}
+  local kill = {}     -- Transitions that completed (reached 0 or 255), will publish final state
+  local cleanup = {}  -- Invalid transitions to silently remove
   
   for k, v in pairs(transition) do
     if t < v.ts then goto next end
     local closing = v.state == 'closing'
-    if not mqttDevices[k] or not mqttDevices[k].rate then goto next end
+    if not mqttDevices[k] or not mqttDevices[k].rate then cleanup[k] = true; goto next end
     local rate = closing and tonumber(mqttDevices[k].rate[2]) or tonumber(mqttDevices[k].rate[1])
-    if not rate then goto next end
+    if not rate then cleanup[k] = true; goto next end
     local increment = (t - v.ts) / rate * 256
     if closing then v.level = v.level - increment else v.level = v.level + increment end
     coverLevel[k] = math.floor(v.level + 0.5)
@@ -601,6 +602,9 @@ local function trackTransitions()
   if hasMembers(kill) then storage.set('coverLevel', coverLevel) end
   for k, _ in pairs(kill) do
     client:publish(mqttReadTopic..k..'/state', (coverLevel[k] ~= 0) and 'open' or 'closed', mqttQoS, RETAIN)
+    transition[k] = nil
+  end
+  for k, _ in pairs(cleanup) do
     transition[k] = nil
   end
 end
