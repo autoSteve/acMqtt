@@ -822,33 +822,47 @@ end
 Get key/value pairs. Returns a keyword if found in 'allow'. (allow, synonym and special parameters are optional).
 --]]
 local function getKeyValue(alias, tags, _L, synonym, special, allow)
-  if synonym == nil then synonym = {} end
-  if special == nil then special = {} end
-  if allow == nil then allow = {} end
+  synonym = synonym or {}
+  special = special or {}
+  allow = allow or {}
+
   local dType = nil
+
   for k, t in pairs(tags) do
     k = k:trim()
     if t ~= -1 then
-      if special[k] ~= nil then special[k] = true end
+      if special[k] ~= nil then special[k] = true end -- Handle special keys
       local v = t:trim()
-      if _L[k] then
-        if type(_L[k]) == 'number' then _L[k] = tonumber(v) if _L[k] == nil then error('Error: Bad numeric value for '..alias..', keyword "'..k..'="') end
+      if _L[k] then -- Process known keys
+        if type(_L[k]) == 'number' then
+          _L[k] = tonumber(v)
+          if _L[k] == nil then
+            error('Error: Bad numeric value for '..alias..', keyword "'..k..'="')
+          end
         elseif type(_L[k]) == 'table' then
           _L[k] = string.split(v, '/')
-          local i, tv for i, tv in ipairs(_L[k]) do _L[k][i] = tv:trim() end
-        else _L[k] = v end
+          for i, tv in ipairs(_L[k]) do
+            _L[k][i] = tv:trim()
+          end
+        else
+          _L[k] = v
+        end
       end
     else
-      if synonym[k] then k = synonym[k] end
-      if special[k] ~= nil then special[k] = true end
-      if allow[k] then
-        if dType == nil then dType = k else error('Error: More than one "type" keyword used for '..alias) end
+      if synonym[k] then k = synonym[k] end -- Handle synonyms
+      if special[k] ~= nil then special[k] = true end -- Handle special keys
+      if allow[k] then -- Check if the key is allowed
+        if dType == nil then
+          dType = k
+        else
+          error('Error: More than one "type" keyword used for '..alias)
+        end
       end
     end
   end
+
   return dType
 end
-
 
 --[[
 Build and publish a CBus MQTT discovery topic
@@ -949,14 +963,26 @@ local function addDiscover(net, app, group, channel, tags, name)
 
   local function publish(payload, is_boid, oid, entity, name, entity_id)
     -- Publish to MQTT broker
-    if _L.sa == '' then dSa = 'no preferred area' else dSa = _L.sa end
-    if logging then log('Publishing '..mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config as '.._L.pn..' in area '..dSa) end
-    local old_topic
-    if discoveryName[oid] ~= nil and discoveryName[oid] ~= name then old_topic = mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config'; client:publish(old_topic, '', mqttQoS, RETAIN) end -- Remove old discovery topic
-    if forceChangeId then
-      if discoveryId[oid] ~= nil and discoveryId[oid] ~= entity_id then old_topic = mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config'; client:publish(old_topic, '', mqttQoS, RETAIN) end -- Remove old discovery topic
+    local dSa = (_L.sa == '') and 'no preferred area' or _L.sa
+    if logging then
+      log('Publishing '..mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config as '.._L.pn..' in area '..dSa)
     end
+
+    local old_topic
+    if discoveryName[oid] ~= nil and discoveryName[oid] ~= name then
+      old_topic = mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config'
+      client:publish(old_topic, '', mqttQoS, RETAIN) -- Remove old discovery topic
+    end
+
+    if forceChangeId then
+      if discoveryId[oid] ~= nil and discoveryId[oid] ~= entity_id then
+        old_topic = mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config'
+        client:publish(old_topic, '', mqttQoS, RETAIN) -- Remove old discovery topic
+      end
+    end
+
     client:publish(mqttDiscoveryTopic..dType..'/'..mqttDiscoveryNodeId..oid..'/config', payload, mqttQoS, RETAIN)
+
     if not is_boid then
       if special.label then
         label[alias] = mqttAttrTopic..oid
